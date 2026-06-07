@@ -21,8 +21,15 @@ sheet-fn = { path = "../sheet-fn" }
 sheet-format = { path = "../sheet-format" }
 sheet-xlsx = { path = "../sheet-xlsx" }
 sheet-lower = { path = "../sheet-lower" }
-wasm-bindgen.workspace = true
-js-sys.workspace = true
 serde.workspace = true
+# `zip` is already in the tree (sheet-xlsx); used here only to author the
+# embedded empty workbook for the `SheetEngine::new()` start-without-a-file path.
+zip.workspace = true
+
+# wasm-only boundary deps (referenced solely inside #[cfg(target_arch =
+# "wasm32")] mod wasm). On the native build (the conformance test target) they
+# are unused-but-present — harmless; the cargo-tree guard checks the wasm tree.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
 serde-wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true

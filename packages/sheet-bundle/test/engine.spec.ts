@@ -1,8 +1,10 @@
-// sheet.plugin.engine.boot (the facade half — boot itself stays planned
-// until the real wasm lands in Phase 2): the camelCase facade maps 1:1
-// onto the snake_case wasm surface, and bootEngine rejects honestly when
-// the artifact is absent.
+// sheet.plugin.engine.boot: the camelCase facade maps 1:1 onto the
+// snake_case wasm surface; boot is exercised on BOTH sides of the
+// artifact gate (honest rejection when unbuilt, real boot when built).
 
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { LoweredContent } from "@paged-media/sheet-host-model";
@@ -95,10 +97,25 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
   });
 });
 
-describe("sheet_plugin_engine_boot: boot-failure path (S-10)", () => {
+// The two boot paths are environment twins, each gated on the artifact:
+// here the honest FAILURE when bin/ is unbuilt; engine-real.spec.ts the
+// real boot when scripts/build-wasm.sh has produced it.
+const artifactBuilt = existsSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "sheet_js_bg.wasm"),
+);
+
+describe.skipIf(artifactBuilt)("sheet_plugin_engine_boot: boot-failure path (S-10)", () => {
   it("rejects with the 'not built' message when the artifact is absent", async () => {
-    // The artifact (bin/sheet_js.js) is intentionally not in the tree
-    // (Phase 2 builds it) — the dynamic import fails, surfacing honestly.
+    // bin/sheet_js.js is absent until scripts/build-wasm.sh runs — the
+    // dynamic import fails and bootEngine surfaces it honestly.
     await expect(bootEngine()).rejects.toThrow(ENGINE_NOT_BUILT);
+  });
+});
+
+describe.skipIf(!artifactBuilt)("sheet_plugin_engine_boot: built-artifact boot", () => {
+  it("resolves the facade over the real wasm", async () => {
+    const engine = await bootEngine();
+    expect(engine.listSheets()).toEqual([{ id: 0, name: "Sheet1", rows: 0, cols: 0 }]);
+    engine.dispose();
   });
 });

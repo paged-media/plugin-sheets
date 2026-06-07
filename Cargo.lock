@@ -610,6 +610,7 @@ dependencies = [
  "sheet-core",
  "sheet-fn",
  "sheet-format",
+ "sheet-js",
  "sheet-lower",
  "sheet-parser",
  "sheet-xlsx",
@@ -655,7 +656,6 @@ name = "sheet-js"
 version = "0.0.0"
 dependencies = [
  "console_error_panic_hook",
- "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "sheet-calc",
@@ -666,6 +666,7 @@ dependencies = [
  "sheet-parser",
  "sheet-xlsx",
  "wasm-bindgen",
+ "zip",
 ]
 
 [[package]]

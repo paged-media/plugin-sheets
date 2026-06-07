@@ -22,6 +22,11 @@ sheet-fn = { path = "../sheet-fn" }
 sheet-format = { path = "../sheet-format" }
 sheet-xlsx = { path = "../sheet-xlsx" }
 sheet-lower = { path = "../sheet-lower" }
+# sheet-js exposes the rlib `core::SheetSession` (plain Rust); the native
+# js_surface test drives the full load→recalc→set→save→lower loop through it.
+# (sheet-js's wasm `#[wasm_bindgen]` shim compiles only for wasm32; the native
+# logic is the SheetSession this dep reaches — TEST-ONLY, never a ship dep.)
+sheet-js = { path = "../sheet-js" }
 serde.workspace = true
 serde_yaml.workspace = true
 serde_json.workspace = true

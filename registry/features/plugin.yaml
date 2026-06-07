@@ -27,15 +27,19 @@
 
 - id: sheet.plugin.engine.boot
   title: wasm-bindgen engine boot in the bundle realm (S-10 path) — browser url init, Node initSync
-  status: planned
-  # note: STAYS planned — the real sheet-js wasm artifact lands in Phase 2
-  # (scripts/build-wasm.sh). T0 ships the typed facade (wrapEngine, the
-  # snake_case->camelCase map) + the honest boot-failure path (bootEngine
-  # rejects with ENGINE_NOT_BUILT until the artifact exists); engine.spec.ts
-  # covers BOTH. The boot row flips implemented once Phase 2 builds the wasm.
+  status: implemented
+  # The real sheet-js artifact builds via scripts/build-wasm.sh into
+  # packages/sheet-bundle/bin/ (703 KB after wasm-opt, 8 MiB budget).
+  # engine.spec.ts covers the typed facade + the honest boot-failure path;
+  # engine-real.spec.ts boots the ACTUAL wasm in Node (initSync bytes, the
+  # S-10 bundle-realm pattern) and drives entry->recalc->lower->save->reload.
+  # It is artifact-gated (skips when bin/ is unbuilt) so the pure-TS lane
+  # needs no Rust toolchain.
   provenance: ["plugin-sdk wasm-loader.ts precedent", "BREAKAGE S-10"]
   tests:
-    vitest: ["packages/sheet-bundle/test/engine.spec.ts"]
+    vitest:
+      - "packages/sheet-bundle/test/engine.spec.ts"
+      - "packages/sheet-bundle/test/engine-real.spec.ts"
 
 - id: sheet.plugin.manifest.valid
   title: manifest.json validates under plugin-cli (namespaces, capabilities, wasm budget)
