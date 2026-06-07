@@ -1,0 +1,40 @@
+# sheet.calc.spill.* — dynamic-array spill (M1 spill track, spec §6.4).
+# Build-consumed half of the two-registry split. All rows status: planned —
+# the Phase-B spill track creates the conformance files these point at.
+# Schema: id/title/status/provenance/tests (the coverage gate only verifies
+# `implemented` rows, so planned rows need no files yet).
+
+- id: sheet.calc.spill.materialize
+  title: A dynamic-array result spills into the anchor's neighbouring cells (FnResult::Array materialization)
+  status: planned
+  provenance: ["spec §6.4", "Microsoft dynamic-array spill behavior (public docs)"]
+  tests:
+    rust: ["sheet-conformance/tests/spill.rs::sheet_calc_spill_materialize"]
+
+- id: sheet.calc.spill.collision
+  title: A spill blocked by a non-empty cell yields #SPILL! and clears when the blocker is removed
+  status: planned
+  provenance: ["Microsoft #SPILL! error (public docs)"]
+  tests:
+    rust: ["sheet-conformance/tests/spill.rs::sheet_calc_spill_collision"]
+
+- id: sheet.calc.spill.ref-operator
+  title: The spill-range operator (A1#) addresses the whole spilled region
+  status: planned
+  provenance: ["spec §6.4", "Microsoft spilled-range operator (public docs)"]
+  tests:
+    rust: ["sheet-conformance/tests/spill.rs::sheet_calc_spill_ref_operator"]
+
+- id: sheet.calc.spill.cse-parse
+  title: Legacy CSE (Ctrl+Shift+Enter) array formulas parse to the array AST and round-trip
+  status: planned
+  provenance: ["spec §6.4", "ECMA-376 array-formula representation"]
+  tests:
+    rust: ["sheet-conformance/tests/spill.rs::sheet_calc_spill_cse_parse"]
+
+- id: sheet.calc.spill.blocked-recalc
+  title: A spilled region invalidates and recomputes its footprint on dependency change
+  status: planned
+  provenance: ["spec §6.4, §6.2 recalc"]
+  tests:
+    rust: ["sheet-conformance/tests/spill.rs::sheet_calc_spill_blocked_recalc"]

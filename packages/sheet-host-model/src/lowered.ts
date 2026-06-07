@@ -32,11 +32,35 @@ export interface LoweredColumn {
 }
 
 /** One lowered cell: the column it sits in, the FORMATTED text (the
- *  number-format output IS the text — spec §8.3), and its alignment. */
+ *  number-format output IS the text — spec §8.3), and its alignment.
+ *  `styleKey` (IR v2, M1 style-map track) indexes into
+ *  `LoweredContent.styles`; `0` is the default style. ADDITIVE — optional
+ *  here so hand-written fixtures stay valid; the Rust engine always emits
+ *  it (`0` in T0). */
 export interface LoweredCell {
   col: number;
   text: string;
   align: Align;
+  styleKey?: number;
+}
+
+/** One visual cell style (IR v2, M1 style-map track) — the mirror of the
+ *  Rust `LoweredStyle`. `key` indexes `LoweredContent.styles`; the rest is
+ *  a flat, host-ready style description. T0 emits only the default (key 0,
+ *  all-false / all-undefined); the style-map track fills real entries in
+ *  Phase B. ADDITIVE on the wire. */
+export interface LoweredStyle {
+  key: number;
+  bold: boolean;
+  italic: boolean;
+  fontSizePt?: number | null;
+  fontName?: string | null;
+  fillRgb?: string | null;
+  textRgb?: string | null;
+  borderTop: boolean;
+  borderRight: boolean;
+  borderBottom: boolean;
+  borderLeft: boolean;
 }
 
 /** One row's geometry + its populated cells (sparse — empty cells are
@@ -74,12 +98,16 @@ export interface Merge {
 
 /** The complete lowered region for one frame: column + row geometry,
  *  rules, and merges. The translator turns this into host mutations;
- *  it never computes any of it. */
+ *  it never computes any of it. `styles` (IR v2, M1 style-map track) is
+ *  the style table `LoweredCell.styleKey` indexes; key 0 is the default.
+ *  ADDITIVE — optional so existing fixtures stay valid; the Rust engine
+ *  always emits it (a single default entry in T0). */
 export interface LoweredContent {
   cols: LoweredColumn[];
   rows: LoweredRow[];
   rules: Rules;
   merges: Merge[];
+  styles?: LoweredStyle[];
 }
 
 /** Total content width (pt) — the sum of column widths. Pure geometry,

@@ -39,6 +39,7 @@ pub mod names;
 pub mod preserved;
 pub mod refs;
 pub mod style;
+pub mod table;
 pub mod value;
 
 // ---- Crate-root re-exports of the key public types (spec §5). ----
@@ -51,11 +52,15 @@ pub use refs::{
 
 pub use cell::{Cell, FormulaId, StyleId};
 
-pub use ast::{BinOp, Expr, Formula, FuncId, LitValue, NameId, OrderedF64, UnOp};
+pub use ast::{
+    BinOp, Expr, Formula, FuncId, LitValue, NameId, OrderedF64, StructuredRef, TableArea, UnOp,
+};
 
 pub use names::{NameDef, NameScope, NameTable, NameTarget};
 
 pub use style::{Align, CellStyle, NumFmtId, StyleTable};
+
+pub use table::Table;
 
 pub use calc_settings::{CalcSettings, DateSystem};
 

@@ -652,6 +652,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheet-grid"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sheet-core",
+ "sheet-format",
+ "sheet-lower",
+]
+
+[[package]]
 name = "sheet-js"
 version = "0.0.0"
 dependencies = [
@@ -683,6 +694,7 @@ dependencies = [
 name = "sheet-parser"
 version = "0.0.0"
 dependencies = [
+ "compact_str",
  "proptest",
  "sheet-core",
  "smallvec",

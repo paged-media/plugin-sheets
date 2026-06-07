@@ -1,0 +1,26 @@
+[package]
+name = "sheet-grid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet sheets-mode vector grid scene: viewport windowing + virtualization over a sparse sheet (spec §8.1, T1). Pure model -> GridScene IR."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-format = { path = "../sheet-format" }
+# DOCUMENTED DEVIATION from the spec §4 dependency table (which lists only
+# sheet-core/sheet-format for the grid). sheet-grid reuses sheet-lower's
+# frozen LoweredStyle + RuleSet IR types so the grid scene and the page
+# lowering share ONE style/rule wire shape. sheet-lower is itself pure
+# (model -> IR, no SDK), so the §4 SDK isolation rule is not crossed; this
+# is a leaf-IR reuse, not a render-surface dependency.
+sheet-lower = { path = "../sheet-lower" }
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

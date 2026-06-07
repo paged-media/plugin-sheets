@@ -1,0 +1,118 @@
+# sheet.fn.array.* — dynamic-array family (M1, spec §6.4 / §13 M1). Schema:
+# see math.yaml, PLUS `returns_array: true` — these kernels return a 2-D
+# block through dispatch_rich (the scalar dispatch door returns #VALUE!).
+# Rust kernels under sheet-fn/src/families/array.rs (the M1 array track).
+# All rows status: planned. Provenance: public Microsoft dynamic-array
+# function docs.
+
+- id: sheet.fn.array.sequence
+  name: SEQUENCE
+  family: array
+  arity: { min: 1, max: 4 }
+  volatility: none
+  range_aware: false
+  returns_array: true
+  rust: array::sequence
+  status: planned
+  provenance: ["Microsoft SEQUENCE (public docs) — rows, [columns], [start], [step]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_sequence"]
+    corpus: ["corpus/fn-corpus/array/sequence.golden.tsv"]
+
+- id: sheet.fn.array.transpose
+  name: TRANSPOSE
+  family: array
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array::transpose
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TRANSPOSE) — transpose an array/range"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_transpose"]
+    corpus: ["corpus/fn-corpus/array/transpose.golden.tsv"]
+
+- id: sheet.fn.array.unique
+  name: UNIQUE
+  family: array
+  arity: { min: 1, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array::unique
+  status: planned
+  provenance: ["Microsoft UNIQUE (public docs) — array, [by_col], [exactly_once]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_unique"]
+    corpus: ["corpus/fn-corpus/array/unique.golden.tsv"]
+
+- id: sheet.fn.array.sort
+  name: SORT
+  family: array
+  arity: { min: 1, max: 4 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array::sort
+  status: planned
+  provenance: ["Microsoft SORT (public docs) — array, [sort_index], [sort_order], [by_col]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_sort"]
+    corpus: ["corpus/fn-corpus/array/sort.golden.tsv"]
+
+- id: sheet.fn.array.sortby
+  name: SORTBY
+  family: array
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array::sortby
+  status: planned
+  provenance: ["Microsoft SORTBY (public docs) — array, then variadic (by_array, [sort_order]) pairs"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_sortby"]
+    corpus: ["corpus/fn-corpus/array/sortby.golden.tsv"]
+
+- id: sheet.fn.array.filter
+  name: FILTER
+  family: array
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array::filter
+  status: planned
+  provenance: ["Microsoft FILTER (public docs) — array, include, [if_empty]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_filter"]
+    corpus: ["corpus/fn-corpus/array/filter.golden.tsv"]
+
+- id: sheet.fn.array.textsplit
+  name: TEXTSPLIT
+  family: array
+  arity: { min: 2, max: 6 }
+  volatility: none
+  range_aware: false
+  returns_array: true
+  rust: array::textsplit
+  status: planned
+  provenance: ["Microsoft TEXTSPLIT (public docs) — text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_textsplit"]
+    corpus: ["corpus/fn-corpus/array/textsplit.golden.tsv"]
+
+- id: sheet.fn.array.randarray
+  name: RANDARRAY
+  family: array
+  arity: { min: 0, max: 5 }
+  volatility: volatile
+  range_aware: false
+  returns_array: true
+  rust: array::randarray
+  status: planned
+  provenance: ["Microsoft RANDARRAY (public docs) — [rows], [columns], [min], [max], [integer]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_randarray"]
+    corpus: []

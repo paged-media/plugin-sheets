@@ -1,0 +1,40 @@
+# sheet.style.* — visual style mapping into the IR-v2 style table (M1
+# style-map track, spec §8.3). IR v2 ships the LoweredStyle table + per-cell
+# styleKey in Phase A (T0 emits only the default key 0); these rows populate
+# REAL styles in Phase B. All rows status: planned — the Phase-B style-map
+# track creates the conformance files these point at.
+
+- id: sheet.style.xlsx-visual-parse
+  title: Parse xlsx font/fill/border/alignment (styles.xml xf records) into visual cell styles
+  status: planned
+  provenance: ["ECMA-376 §18.8 (styles part)"]
+  tests:
+    rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_xlsx_visual_parse"]
+
+- id: sheet.style.ir-styles-table
+  title: Emit a deduped LoweredStyle table with per-cell styleKey indices (IR v2)
+  status: planned
+  provenance: ["spec §8.3", "sheet-lower IR v2 (LoweredStyle/styleKey)"]
+  tests:
+    rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_ir_styles_table"]
+
+- id: sheet.style.doc-style-group
+  title: Map a LoweredStyle to a document style group on the host surface
+  status: planned
+  provenance: ["spec §8.3 — style group mapping"]
+  tests:
+    rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_doc_style_group"]
+
+- id: sheet.style.applystyle-pour
+  title: Apply-style pour — a cell's resolved style flows into the lowered/poured content
+  status: planned
+  provenance: ["spec §8.3 — style application on pour"]
+  tests:
+    rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_applystyle_pour"]
+
+- id: sheet.style.cross-surface-parity
+  title: A cell's visual style is identical on the page lowering and the grid scene (one style table)
+  status: planned
+  provenance: ["spec §8.1/§8.3 — shared LoweredStyle wire shape"]
+  tests:
+    rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_cross_surface_parity"]

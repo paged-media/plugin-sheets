@@ -70,6 +70,10 @@ fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx) -> CellValue {
         Expr::Unary(op, inner) => eval_unary(model, *op, inner, ctx),
         Expr::Binary(op, a, b) => eval_binary(model, *op, a, b, ctx),
         Expr::Func(fid, args) => eval_func(model, *fid, args, ctx),
+        // M1 Phase B (spill/tables tracks) wires these. Until then a
+        // structured or spill reference evaluates to #NAME? (it is parsed
+        // but not yet resolvable).
+        Expr::StructuredRef(_) | Expr::SpillRef(_) => CellValue::Error(CellError::Name),
     }
 }
 

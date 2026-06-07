@@ -29,7 +29,7 @@
 
 use std::fmt::Write as _;
 
-use sheet_core::ast::{BinOp, Expr, Formula, LitValue, UnOp};
+use sheet_core::ast::{BinOp, Expr, Formula, LitValue, StructuredRef, TableArea, UnOp};
 use sheet_core::{format_a1, CellRef, RangeRef, SheetId};
 
 use crate::SheetNames;
@@ -116,6 +116,98 @@ impl Printer<'_> {
             Expr::Binary(op, a, b) => self.binary(*op, a, b, out),
             Expr::Func(fid, args) => self.func(*fid, args, out),
             Expr::Array(rows) => self.array(rows, out),
+            Expr::StructuredRef(s) => self.structured_ref(s, out),
+            // A spill ref prints as `<inner>#` (M1 spill track).
+            Expr::SpillRef(inner) => {
+                self.expr(inner, out, Prec::ATOM, Side::Whole);
+                out.push('#');
+            }
+        }
+    }
+
+    /// Print a structured (table) reference in the canonical Excel forms
+    /// (ECMA-376 §18.17.2.4 / Microsoft structured-reference syntax):
+    ///
+    /// - bare column, default Data area: `Table1[Col]`
+    /// - whole-area specifier: `Table1[[#All]]`, `Table1[[#Headers]]`,
+    ///   `Table1[[#Totals]]`
+    /// - area + single column: `Table1[[#Headers],[Col]]`
+    /// - a column span: `Table1[[Col1]:[Col2]]`
+    /// - current-row (`ThisRow`) with an empty table name: `[@Col]`
+    ///
+    /// These are the standard Excel spellings; Phase B's parser round-trips
+    /// against exactly these (the canonical-print contract, like A1 refs).
+    fn structured_ref(&self, s: &StructuredRef, out: &mut String) {
+        // ThisRow with an empty table name is the in-table `[@Col]` shorthand.
+        if s.area == TableArea::ThisRow && s.table.is_empty() {
+            out.push_str("[@");
+            // ThisRow always names a column span here (no bare `[@]`).
+            if let Some(c) = &s.col_start {
+                out.push_str(c);
+            }
+            if let Some(c) = &s.col_end {
+                out.push(':');
+                out.push_str(c);
+            }
+            out.push(']');
+            return;
+        }
+
+        out.push_str(&s.table);
+
+        let area_tok = match s.area {
+            TableArea::Data => None, // Data is the default → no `#`-specifier
+            TableArea::All => Some("#All"),
+            TableArea::Headers => Some("#Headers"),
+            TableArea::Totals => Some("#Totals"),
+            TableArea::ThisRow => Some("#This Row"),
+        };
+
+        match (area_tok, &s.col_start, &s.col_end) {
+            // No area specifier and a single column: `Table1[Col]`.
+            (None, Some(c), None) => {
+                out.push('[');
+                out.push_str(c);
+                out.push(']');
+            }
+            // No area specifier and a column span: `Table1[[Col1]:[Col2]]`.
+            (None, Some(c0), Some(c1)) => {
+                out.push('[');
+                push_bracketed(out, c0);
+                out.push(':');
+                push_bracketed(out, c1);
+                out.push(']');
+            }
+            // No area, no column (whole Data body): `Table1[]`.
+            (None, None, _) => {
+                out.push_str("[]");
+            }
+            // An area specifier, no column: `Table1[[#All]]`.
+            (Some(area), None, _) => {
+                out.push('[');
+                push_bracketed(out, area);
+                out.push(']');
+            }
+            // An area specifier with a single column:
+            // `Table1[[#Headers],[Col]]`.
+            (Some(area), Some(c), None) => {
+                out.push('[');
+                push_bracketed(out, area);
+                out.push(',');
+                push_bracketed(out, c);
+                out.push(']');
+            }
+            // An area specifier with a column span:
+            // `Table1[[#Headers],[Col1]:[Col2]]`.
+            (Some(area), Some(c0), Some(c1)) => {
+                out.push('[');
+                push_bracketed(out, area);
+                out.push(',');
+                push_bracketed(out, c0);
+                out.push(':');
+                push_bracketed(out, c1);
+                out.push(']');
+            }
         }
     }
 
@@ -250,13 +342,22 @@ impl Printer<'_> {
     }
 }
 
+/// Wrap `inner` in `[ ]` (a structured-ref bracketed token, e.g. `[Col]`).
+fn push_bracketed(out: &mut String, inner: &str) {
+    out.push('[');
+    out.push_str(inner);
+    out.push(']');
+}
+
 /// The printing precedence of an expression node.
 fn expr_prec(e: &Expr) -> Prec {
     match e {
         Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) | Expr::Name(_) | Expr::Func(_, _) => {
             Prec::ATOM
         }
-        Expr::Array(_) => Prec::ATOM,
+        // Structured/spill refs are atoms (a `#` postfix on an atom is still
+        // atomic for re-parse purposes).
+        Expr::Array(_) | Expr::StructuredRef(_) | Expr::SpillRef(_) => Prec::ATOM,
         Expr::Unary(UnOp::Percent, _) => Prec::PERCENT,
         Expr::Unary(_, _) => Prec::UNARY,
         Expr::Binary(op, _, _) => binop_prec(*op),

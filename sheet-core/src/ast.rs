@@ -39,9 +39,12 @@ pub struct Formula {
 }
 
 /// A formula expression node. `Array` is parse-only in T0 (constructed but
-/// not evaluated). The `StructuredRef`/`SpillRef` variants are reserved for
-/// T1 and are intentionally NOT present yet — adding them is a versioned
-/// amendment, not a drive-by edit (the AST is frozen at M0 phase 0).
+/// not evaluated). The `StructuredRef`/`SpillRef` variants are added by the
+/// M1 Phase A versioned amendment (spec §6.4): their TYPES are frozen here;
+/// construction (parsing) and evaluation are M1 Phase B (the spill/tables
+/// tracks). The variants are wired through the exhaustive AST matches
+/// (print/extract/rewrite/eval) so the crates stay compiling, but the
+/// parser never yet emits them.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Lit(LitValue),
@@ -54,7 +57,42 @@ pub enum Expr {
     /// Array literal `{1,2;3,4}` — outer Vec = rows, inner = columns.
     /// Parse-only in T0.
     Array(Vec<Vec<Expr>>),
-    // T1 slots (documented, not constructed in T0): StructuredRef, SpillRef.
+    /// An Excel structured (table) reference, e.g. `Table1[Col]` or
+    /// `Table1[[#Headers],[Col]]` (spec §6.4). Name-anchored: it carries the
+    /// table name and a column span rather than absolute geometry, so it is
+    /// immune to row/col structural rewrites. M1 Phase B wires parsing/eval.
+    StructuredRef(StructuredRef),
+    /// A spill reference `A1#` — the dynamic-array region that spilled from
+    /// the anchor expression. The boxed inner [`Expr`] is the anchor (e.g. an
+    /// `Expr::Ref`). M1 Phase B (spill track) wires materialization.
+    SpillRef(Box<Expr>),
+}
+
+/// An Excel structured (table) reference (spec §6.4 / ECMA-376 §18.17.2.4).
+/// `table` is the table name (empty for the current-row `[@Col]` form, which
+/// is anchored to the table containing the formula). `area` selects which
+/// rows; `col_start`/`col_end` select the column span (both `None` = the
+/// whole-area span). M1 Phase A freezes the shape; the parser builds these
+/// in Phase B.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StructuredRef {
+    pub table: CompactString,
+    pub area: TableArea,
+    pub col_start: Option<CompactString>,
+    pub col_end: Option<CompactString>,
+}
+
+/// Which rows of a table a [`StructuredRef`] addresses (the `#`-area
+/// specifiers, ECMA-376 §18.17.2.4). `Data` is the body (excludes
+/// header/totals); `All` is the whole extent; `Headers`/`Totals` are the
+/// edge rows; `ThisRow` (`[@…]`) is the row aligned with the formula's cell.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TableArea {
+    Data,
+    All,
+    Headers,
+    Totals,
+    ThisRow,
 }
 
 /// A literal embedded in a formula. Numbers use [`OrderedF64`] so the AST

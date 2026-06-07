@@ -137,6 +137,10 @@ pub struct Worksheet {
     /// Row heights in points.
     pub row_heights: BTreeMap<u32, f64>,
     pub merges: Vec<RangeRef>,
+    /// Excel structured tables (ListObjects) anchored on this sheet (spec
+    /// §6.4). Empty by default; populated by the XLSX `table` part (M1
+    /// Phase B). See [`crate::table::Table`].
+    pub tables: Vec<crate::table::Table>,
 }
 
 impl Worksheet {

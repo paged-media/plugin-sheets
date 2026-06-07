@@ -96,6 +96,12 @@ pub struct LoweredContent {
     pub rows: Vec<LoweredRow>,
     pub rules: RuleSet,
     pub merges: Vec<MergeSpan>,
+    /// The style map (IR v2, M1 style-map track). Indexed by
+    /// [`LoweredCell::style_key`]; key 0 is the default style. T0 emits a
+    /// one-entry table (`[LoweredStyle::default_key0()]`); the style-map
+    /// track populates real styles in Phase B. Additive — the TS mirror
+    /// keeps it optional so existing fixtures stay valid.
+    pub styles: Vec<LoweredStyle>,
 }
 
 /// One column's geometry: its range-relative index and lowered width (pt).
@@ -130,6 +136,53 @@ pub struct LoweredCell {
     /// PascalCase, so we override only the wire form here.
     #[serde(serialize_with = "serialize_align")]
     pub align: Align,
+    /// Index into [`LoweredContent::styles`] (IR v2, M1 style-map track).
+    /// `0` = the default style. T0 emits `0` everywhere (real per-cell
+    /// styles arrive with the style-map track in Phase B). serde camelCase
+    /// → `styleKey`.
+    pub style_key: u32,
+}
+
+/// One visual cell style (IR v2, M1 style-map track). A flat, host-ready
+/// description (bold/italic, font, fills, borders) the translator maps to
+/// frame styling. T0 only ever emits the default ([`LoweredStyle::
+/// default_key0`]); the XLSX visual-parse + IR-styles track fills real
+/// entries in Phase B. All `Option`/`bool` fields are additive on the wire
+/// (the TS mirror keeps them optional).
+#[derive(serde::Serialize, PartialEq, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LoweredStyle {
+    pub key: u32,
+    pub bold: bool,
+    pub italic: bool,
+    pub font_size_pt: Option<f64>,
+    pub font_name: Option<String>,
+    pub fill_rgb: Option<String>,
+    pub text_rgb: Option<String>,
+    pub border_top: bool,
+    pub border_right: bool,
+    pub border_bottom: bool,
+    pub border_left: bool,
+}
+
+impl LoweredStyle {
+    /// The default style at key 0: no emphasis, no explicit font/fill/text
+    /// colour, no borders. T0 emits exactly this single entry.
+    pub fn default_key0() -> Self {
+        LoweredStyle {
+            key: 0,
+            bold: false,
+            italic: false,
+            font_size_pt: None,
+            font_name: None,
+            fill_rgb: None,
+            text_rgb: None,
+            border_top: false,
+            border_right: false,
+            border_bottom: false,
+            border_left: false,
+        }
+    }
 }
 
 /// The horizontal/vertical rule sets (spec §8.2 grid rules).
@@ -286,6 +339,9 @@ pub fn lower_range(
                 col: c - left,
                 text,
                 align,
+                // T0: every cell uses the default style (key 0); the
+                // style-map track populates real keys in Phase B.
+                style_key: 0,
             });
         }
 
@@ -330,6 +386,9 @@ pub fn lower_range(
         rows,
         rules,
         merges,
+        // T0: a single default style entry (key 0). The style-map track
+        // (Phase B) emits real styles and per-cell `style_key`s.
+        styles: vec![LoweredStyle::default_key0()],
     }
 }
 
@@ -802,10 +861,39 @@ mod tests {
             col: 0,
             text: "x".into(),
             align: Align::Right,
+            style_key: 0,
         };
         let json = serde_json::to_string(&cell).unwrap();
-        // camelCase keys + lowercase align variant.
-        assert_eq!(json, r#"{"col":0,"text":"x","align":"right"}"#);
+        // camelCase keys + lowercase align variant + the additive styleKey.
+        assert_eq!(json, r#"{"col":0,"text":"x","align":"right","styleKey":0}"#);
+    }
+
+    #[test]
+    fn sheet_lower_ir_styles_table() {
+        // IR v2 (M1 style-map track): the content carries a styles table and
+        // every cell carries a style_key. T0 emits the single default entry
+        // (key 0) and style_key 0 everywhere.
+        let (m, s) = model_with(&[(0, 0, num(1.0))]);
+        let lc = lower_range(
+            &m,
+            s,
+            CellRange {
+                r0: 0,
+                c0: 0,
+                r1: 0,
+                c1: 0,
+            },
+            &ViewOptions::default(),
+        );
+        assert_eq!(lc.styles, vec![LoweredStyle::default_key0()]);
+        assert_eq!(lc.styles[0].key, 0);
+        assert_eq!(lc.rows[0].cells[0].style_key, 0);
+        // The wire shape carries camelCase `styleKey` and a `styles` array.
+        let json = serde_json::to_string(&lc).unwrap();
+        assert!(json.contains("\"styleKey\":0"));
+        assert!(json.contains("\"styles\":["));
+        assert!(!json.contains("style_key"));
+        assert!(!json.contains("font_size_pt"));
     }
 
     #[test]

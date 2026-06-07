@@ -49,11 +49,13 @@ pub mod ctx;
 pub mod dispatch;
 pub mod families;
 pub mod num;
+pub mod result;
 
 // ---- Crate-root re-exports of the frozen calling convention (spec §7). ----
 
 pub use arg::{Arg, RangeView};
 pub use ctx::EvalCtx;
 pub use num::{Numeric, F64};
+pub use result::FnResult;
 
-pub use dispatch::dispatch;
+pub use dispatch::{dispatch, dispatch_rich};

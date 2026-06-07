@@ -136,6 +136,14 @@ fn rewrite_expr(e: &Expr, plan: &Plan) -> Expr {
                 .map(|row| row.iter().map(|el| rewrite_expr(el, plan)).collect())
                 .collect(),
         ),
+        // Structured refs are NAME-anchored (they address a table by name and
+        // a column by label, not by A1 geometry), so a row/col insert/delete
+        // does not shift them — the table model moves with the edit and the
+        // ref re-resolves through the (unchanged) name. Pass through verbatim.
+        Expr::StructuredRef(_) => e.clone(),
+        // A spill ref's geometry is its anchor's; rewrite the inner anchor and
+        // keep the `#` (spill) wrapper.
+        Expr::SpillRef(inner) => Expr::SpillRef(Box::new(rewrite_expr(inner, plan))),
     }
 }
 

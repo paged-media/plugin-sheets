@@ -1,0 +1,395 @@
+# sheet.fn.stat.* — statistics family (M1, spec §13 M1). Schema: see
+# math.yaml. All rows status: planned — the M1 stat track wires the
+# kernels under sheet-fn/src/families/stat.rs. Provenance: ECMA-376
+# §18.17.7 + public Microsoft function docs. Tests/corpus pointers follow
+# the established conventions (the Phase-B stat track creates the files).
+
+- id: sheet.fn.stat.median
+  name: MEDIAN
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::median
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MEDIAN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_median"]
+    corpus: ["corpus/fn-corpus/stat/median.golden.tsv"]
+
+- id: sheet.fn.stat.mode
+  name: MODE
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::mode
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MODE) — legacy MODE = MODE.SNGL"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_mode"]
+    corpus: ["corpus/fn-corpus/stat/mode.golden.tsv"]
+
+- id: sheet.fn.stat.stdev-s
+  name: STDEV.S
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::stdev_s
+  status: planned
+  provenance: ["Microsoft STDEV.S (public docs) — sample standard deviation"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdev_s"]
+    corpus: ["corpus/fn-corpus/stat/stdev_s.golden.tsv"]
+
+- id: sheet.fn.stat.stdev-p
+  name: STDEV.P
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::stdev_p
+  status: planned
+  provenance: ["Microsoft STDEV.P (public docs) — population standard deviation"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdev_p"]
+    corpus: ["corpus/fn-corpus/stat/stdev_p.golden.tsv"]
+
+- id: sheet.fn.stat.var-s
+  name: VAR.S
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::var_s
+  status: planned
+  provenance: ["Microsoft VAR.S (public docs) — sample variance"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_var_s"]
+    corpus: ["corpus/fn-corpus/stat/var_s.golden.tsv"]
+
+- id: sheet.fn.stat.var-p
+  name: VAR.P
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::var_p
+  status: planned
+  provenance: ["Microsoft VAR.P (public docs) — population variance"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_var_p"]
+    corpus: ["corpus/fn-corpus/stat/var_p.golden.tsv"]
+
+- id: sheet.fn.stat.stdev
+  name: STDEV
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::stdev
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (STDEV) — legacy alias of STDEV.S semantics (sample)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdev"]
+    corpus: ["corpus/fn-corpus/stat/stdev.golden.tsv"]
+
+- id: sheet.fn.stat.stdevp
+  name: STDEVP
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::stdevp
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (STDEVP) — legacy alias of STDEV.P (population)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdevp"]
+    corpus: ["corpus/fn-corpus/stat/stdevp.golden.tsv"]
+
+- id: sheet.fn.stat.var
+  name: VAR
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::var
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (VAR) — legacy VAR is SAMPLE variance (= VAR.S)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_var"]
+    corpus: ["corpus/fn-corpus/stat/var.golden.tsv"]
+
+- id: sheet.fn.stat.varp
+  name: VARP
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::varp
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (VARP) — legacy alias of VAR.P (population)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_varp"]
+    corpus: ["corpus/fn-corpus/stat/varp.golden.tsv"]
+
+- id: sheet.fn.stat.percentile-inc
+  name: PERCENTILE.INC
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::percentile_inc
+  status: planned
+  provenance: ["Microsoft PERCENTILE.INC (public docs) — inclusive k in 0..1"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_percentile_inc"]
+    corpus: ["corpus/fn-corpus/stat/percentile_inc.golden.tsv"]
+
+- id: sheet.fn.stat.quartile-inc
+  name: QUARTILE.INC
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::quartile_inc
+  status: planned
+  provenance: ["Microsoft QUARTILE.INC (public docs) — quart 0..4"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_quartile_inc"]
+    corpus: ["corpus/fn-corpus/stat/quartile_inc.golden.tsv"]
+
+- id: sheet.fn.stat.rank-eq
+  name: RANK.EQ
+  family: stat
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat::rank_eq
+  status: planned
+  provenance: ["Microsoft RANK.EQ (public docs) — ties share the top rank"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rank_eq"]
+    corpus: ["corpus/fn-corpus/stat/rank_eq.golden.tsv"]
+
+- id: sheet.fn.stat.rank
+  name: RANK
+  family: stat
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat::rank
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (RANK) — legacy alias of RANK.EQ"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rank"]
+    corpus: ["corpus/fn-corpus/stat/rank.golden.tsv"]
+
+- id: sheet.fn.stat.large
+  name: LARGE
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::large
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LARGE) — k-th largest"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_large"]
+    corpus: ["corpus/fn-corpus/stat/large.golden.tsv"]
+
+- id: sheet.fn.stat.small
+  name: SMALL
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::small
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SMALL) — k-th smallest"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_small"]
+    corpus: ["corpus/fn-corpus/stat/small.golden.tsv"]
+
+- id: sheet.fn.stat.countifs
+  name: COUNTIFS
+  family: stat
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::countifs
+  status: planned
+  provenance: ["Microsoft COUNTIFS (public docs) — variadic (range, criteria) pairs"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_countifs"]
+    corpus: ["corpus/fn-corpus/stat/countifs.golden.tsv"]
+
+- id: sheet.fn.stat.sumifs
+  name: SUMIFS
+  family: stat
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::sumifs
+  status: planned
+  provenance: ["Microsoft SUMIFS (public docs) — sum_range then variadic (range, criteria) pairs"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_sumifs"]
+    corpus: ["corpus/fn-corpus/stat/sumifs.golden.tsv"]
+
+- id: sheet.fn.stat.averageifs
+  name: AVERAGEIFS
+  family: stat
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::averageifs
+  status: planned
+  provenance: ["Microsoft AVERAGEIFS (public docs) — average_range then variadic pairs"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_averageifs"]
+    corpus: ["corpus/fn-corpus/stat/averageifs.golden.tsv"]
+
+- id: sheet.fn.stat.maxifs
+  name: MAXIFS
+  family: stat
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::maxifs
+  status: planned
+  provenance: ["Microsoft MAXIFS (public docs) — max_range then variadic pairs"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_maxifs"]
+    corpus: ["corpus/fn-corpus/stat/maxifs.golden.tsv"]
+
+- id: sheet.fn.stat.minifs
+  name: MINIFS
+  family: stat
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::minifs
+  status: planned
+  provenance: ["Microsoft MINIFS (public docs) — min_range then variadic pairs"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_minifs"]
+    corpus: ["corpus/fn-corpus/stat/minifs.golden.tsv"]
+
+- id: sheet.fn.stat.sumproduct
+  name: SUMPRODUCT
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::sumproduct
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SUMPRODUCT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_sumproduct"]
+    corpus: ["corpus/fn-corpus/stat/sumproduct.golden.tsv"]
+
+- id: sheet.fn.stat.geomean
+  name: GEOMEAN
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::geomean
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (GEOMEAN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_geomean"]
+    corpus: ["corpus/fn-corpus/stat/geomean.golden.tsv"]
+
+- id: sheet.fn.stat.harmean
+  name: HARMEAN
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::harmean
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (HARMEAN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_harmean"]
+    corpus: ["corpus/fn-corpus/stat/harmean.golden.tsv"]
+
+- id: sheet.fn.stat.avedev
+  name: AVEDEV
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::avedev
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (AVEDEV) — mean absolute deviation"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_avedev"]
+    corpus: ["corpus/fn-corpus/stat/avedev.golden.tsv"]
+
+- id: sheet.fn.stat.devsq
+  name: DEVSQ
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::devsq
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DEVSQ) — sum of squared deviations"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_devsq"]
+    corpus: ["corpus/fn-corpus/stat/devsq.golden.tsv"]
+
+- id: sheet.fn.stat.correl
+  name: CORREL
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::correl
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CORREL) — Pearson correlation of two arrays"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_correl"]
+    corpus: ["corpus/fn-corpus/stat/correl.golden.tsv"]
+
+- id: sheet.fn.stat.slope
+  name: SLOPE
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::slope
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SLOPE) — linear-regression slope (known_y, known_x)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_slope"]
+    corpus: ["corpus/fn-corpus/stat/slope.golden.tsv"]
+
+- id: sheet.fn.stat.intercept
+  name: INTERCEPT
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::intercept
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (INTERCEPT) — linear-regression intercept"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_intercept"]
+    corpus: ["corpus/fn-corpus/stat/intercept.golden.tsv"]
+
+- id: sheet.fn.stat.rsq
+  name: RSQ
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::rsq
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (RSQ) — square of the Pearson correlation"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rsq"]
+    corpus: ["corpus/fn-corpus/stat/rsq.golden.tsv"]

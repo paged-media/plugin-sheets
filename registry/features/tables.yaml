@@ -1,0 +1,46 @@
+# sheet.table.* — Excel structured tables / ListObjects (M1 tables track,
+# spec §6.4). All rows status: planned — the Phase-B tables track creates
+# the conformance files these point at. Schema: id/title/status/provenance/
+# tests.
+
+- id: sheet.table.model
+  title: Table model (name, range, columns, header/totals rows, style) on the worksheet
+  status: planned
+  provenance: ["spec §6.4", "ECMA-376 §18.5 (table part)"]
+  tests:
+    rust: ["sheet-conformance/tests/tables.rs::sheet_table_model"]
+
+- id: sheet.table.xlsx-part
+  title: Parse + preserve the xl/tables/tableN.xml part into the table model (round-trip safe)
+  status: planned
+  provenance: ["ECMA-376 §18.5 (table)", "spec §10.2 preservation invariant"]
+  tests:
+    rust: ["sheet-conformance/tests/tables.rs::sheet_table_xlsx_part"]
+
+- id: sheet.table.structured-ref.parse
+  title: Parse structured references (Table1[Col], [[#All]], [@Col], [[Col1]:[Col2]]) to the StructuredRef AST
+  status: planned
+  provenance: ["spec §6.4", "ECMA-376 §18.17.2.4 (structured references)"]
+  tests:
+    rust: ["sheet-conformance/tests/tables.rs::sheet_table_structured_ref_parse"]
+
+- id: sheet.table.structured-ref.eval
+  title: Evaluate a structured reference to its addressed area (resolve table + column + #-area)
+  status: planned
+  provenance: ["spec §6.4", "ECMA-376 §18.17.2.4"]
+  tests:
+    rust: ["sheet-conformance/tests/tables.rs::sheet_table_structured_ref_eval"]
+
+- id: sheet.table.structured-ref.print
+  title: Print a StructuredRef back to canonical Excel text (parse-print fixpoint)
+  status: planned
+  provenance: ["spec §6.4", "Microsoft structured-reference syntax (public docs)"]
+  tests:
+    rust: ["sheet-conformance/tests/tables.rs::sheet_table_structured_ref_print"]
+
+- id: sheet.table.rewrite
+  title: Structured refs survive row/col insert/delete unchanged (name-anchored, not geometry-shifted)
+  status: planned
+  provenance: ["spec §6.1/§6.4 — structured refs are name-anchored"]
+  tests:
+    rust: ["sheet-conformance/tests/tables.rs::sheet_table_rewrite"]

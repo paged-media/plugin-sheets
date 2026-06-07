@@ -1,8 +1,9 @@
 # paged.sheet — Rust workspace. Crates live at REPO TOP LEVEL per the
 # spec (§4 of thoughts/docs/paged/plugin-sheets/base-idea.md), not under
 # crates/. references/ is NEVER a member (read-only clean-room mounts —
-# NOT mounted in T0). Reserved members (T1/T2, spec §4): sheet-grid,
-# sheet-chart — added when their tiers land.
+# NOT mounted in T0). sheet-grid joins at M1 (T1, spec §8.1 — the
+# sheets-mode vector grid scene). Reserved member (T2, spec §4):
+# sheet-chart — added when its tier lands.
 [workspace]
 resolver = "2"
 members = [
@@ -13,6 +14,7 @@ members = [
     "sheet-format",
     "sheet-xlsx",
     "sheet-lower",
+    "sheet-grid",
     "sheet-js",
     "sheet-conformance",
 ]

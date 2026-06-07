@@ -1,0 +1,41 @@
+# sheet.grid.* — sheets-mode vector grid scene (M1 grid track, spec §8.1,
+# S-02). sheet-grid lands its viewport windowing in Phase A (covered by the
+# crate's own unit tests); these registry rows stay `planned` until the
+# Phase-B grid track creates the conformance file `tests/grid.rs` that
+# joins the engine-side scene to the panel edit contract. Schema:
+# id/title/status/provenance/tests.
+
+- id: sheet.grid.scene-windowing
+  title: Generate a GridScene for a viewport — cumulative offsets + visible-cell materialization (Phase A landed in sheet-grid unit tests)
+  status: planned
+  provenance: ["spec §8.1", "sheet-grid/src/lib.rs::grid_scene"]
+  tests:
+    rust: ["sheet-conformance/tests/grid.rs::sheet_grid_scene_windowing"]
+
+- id: sheet.grid.virtualization
+  title: Windowing touches only viewport-visible populated cells (O(visible), not O(sheet)) on a 1M-row sheet
+  status: planned
+  provenance: ["spec §8.1 virtualization"]
+  tests:
+    rust: ["sheet-conformance/tests/grid.rs::sheet_grid_virtualization"]
+
+- id: sheet.grid.formatted-parity
+  title: Grid cell text equals the page-lowering formatted value for the same cell (one render path)
+  status: planned
+  provenance: ["spec §8.3 — the lowered/grid text IS the formatted value"]
+  tests:
+    rust: ["sheet-conformance/tests/grid.rs::sheet_grid_formatted_parity"]
+
+- id: sheet.grid.selection
+  title: Selection rectangle carried on the scene (anchor + span)
+  status: planned
+  provenance: ["spec §8.1 — the panel supplies selection"]
+  tests:
+    rust: ["sheet-conformance/tests/grid.rs::sheet_grid_selection"]
+
+- id: sheet.grid.panel-edit-contract
+  title: The grid panel edit/commit contract (cell edit -> mutation) over the scene
+  status: planned
+  provenance: ["spec §8.1, S-02 grid surface"]
+  tests:
+    rust: ["sheet-conformance/tests/grid.rs::sheet_grid_panel_edit_contract"]

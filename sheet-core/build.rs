@@ -46,6 +46,10 @@ struct FnRow {
     range_aware: bool,
     #[serde(default)]
     ref_args: bool,
+    /// True for dynamic-array kernels (M1 array track) — `dispatch_rich`
+    /// calls them directly; the scalar `dispatch` door returns `#VALUE!`.
+    #[serde(default)]
+    returns_array: bool,
     #[serde(default)]
     status: String,
     // Other fields (rust, provenance, tests) are intentionally ignored
@@ -140,6 +144,7 @@ fn main() {
          \x20   pub volatile: bool,\n\
          \x20   pub range_aware: bool,\n\
          \x20   pub ref_args: bool,\n\
+         \x20   pub returns_array: bool,\n\
          \x20   pub implemented: bool,\n\
          }\n\n",
     );
@@ -155,8 +160,8 @@ fn main() {
         };
         writeln!(
             out,
-            "    FuncMeta {{ id: {:?}, name: {:?}, family: {:?}, min_args: {}, max_args: {}, volatile: {}, range_aware: {}, ref_args: {}, implemented: {} }},",
-            r.id, r.name, r.family, r.arity.min, max, volatile, r.range_aware, r.ref_args, implemented
+            "    FuncMeta {{ id: {:?}, name: {:?}, family: {:?}, min_args: {}, max_args: {}, volatile: {}, range_aware: {}, ref_args: {}, returns_array: {}, implemented: {} }},",
+            r.id, r.name, r.family, r.arity.min, max, volatile, r.range_aware, r.ref_args, r.returns_array, implemented
         )
         .unwrap();
     }

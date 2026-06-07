@@ -27,3 +27,16 @@ pub mod logical;
 pub mod lookup;
 pub mod math;
 pub mod text;
+
+// ---- M1 family tracks (spec §13 M1). Seeded EMPTY here so the workspace
+// builds while every M1 row is `planned`; each module is populated by its
+// named M1 track (the row's `rust:` symbol lands then). ----
+pub mod array;
+pub mod date2;
+pub mod fin;
+pub mod info2;
+pub mod logical2;
+pub mod lookup2;
+pub mod math2;
+pub mod stat;
+pub mod text2;

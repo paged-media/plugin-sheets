@@ -1,0 +1,46 @@
+# sheet.lower.paginate.* — multi-frame pagination of a lowered range (M1
+# pagination track, spec §8.2/§8.3). T0 is a single frame; M1 splits a tall
+# range across frames with repeated headers. All rows status: planned — the
+# Phase-B pagination track creates the conformance files these point at.
+
+- id: sheet.lower.paginate.split
+  title: Split a tall range across multiple frames at row boundaries (no row spans a frame break)
+  status: planned
+  provenance: ["spec §8.2/§8.3 — T1 pagination"]
+  tests:
+    rust: ["sheet-conformance/tests/paginate.rs::sheet_lower_paginate_split"]
+
+- id: sheet.lower.paginate.repeated-headers
+  title: Repeat the header_rows at the top of every continuation frame
+  status: planned
+  provenance: ["spec §8.2 — header_rows carried since T0, applied at T1"]
+  tests:
+    rust: ["sheet-conformance/tests/paginate.rs::sheet_lower_paginate_repeated_headers"]
+
+- id: sheet.lower.paginate.continued-marker
+  title: A continuation frame carries a continued-from marker for the host chrome
+  status: planned
+  provenance: ["spec §8.3 degradation/continuation"]
+  tests:
+    rust: ["sheet-conformance/tests/paginate.rs::sheet_lower_paginate_continued_marker"]
+
+- id: sheet.lower.paginate.keep-rows
+  title: Keep-together row groups are not split across a frame break when they fit
+  status: planned
+  provenance: ["spec §8.2 keep-with semantics"]
+  tests:
+    rust: ["sheet-conformance/tests/paginate.rs::sheet_lower_paginate_keep_rows"]
+
+- id: sheet.lower.paginate.tall-row
+  title: A single row taller than a frame is placed on its own frame (no infinite loop)
+  status: planned
+  provenance: ["spec §8.2 — oversize-row degradation"]
+  tests:
+    rust: ["sheet-conformance/tests/paginate.rs::sheet_lower_paginate_tall_row"]
+
+- id: sheet.lower.paginate.convergence
+  title: Pagination terminates (every row lands on exactly one frame; no drops, no duplicates)
+  status: planned
+  provenance: ["spec §12.4 determinism — pagination convergence"]
+  tests:
+    rust: ["sheet-conformance/tests/paginate.rs::sheet_lower_paginate_convergence"]

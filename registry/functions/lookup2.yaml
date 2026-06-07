@@ -1,0 +1,118 @@
+# sheet.fn.lookup.* (M1 additions) — lookup/reference family. Schema: see
+# math.yaml. Rust kernels under sheet-fn/src/families/lookup2.rs (the M1
+# lookup track). All rows status: planned.
+#
+# T1 ruling (OFFSET/INDIRECT): in T0/T1 these do NOT return a first-class
+# reference object — they return the VALUE (a 1x1) or a materialized
+# range-view of the addressed region. The kernel resolves the address and
+# reads the already-computed cells (ref_args lets the convention hand the
+# anchor reference in). Recorded per-row.
+
+- id: sheet.fn.lookup.xlookup
+  name: XLOOKUP
+  family: lookup
+  arity: { min: 3, max: 6 }
+  volatility: none
+  range_aware: true
+  rust: lookup2::xlookup
+  status: planned
+  provenance: ["Microsoft XLOOKUP (public docs) — lookup, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_xlookup"]
+    corpus: ["corpus/fn-corpus/lookup/xlookup.golden.tsv"]
+
+- id: sheet.fn.lookup.xmatch
+  name: XMATCH
+  family: lookup
+  arity: { min: 2, max: 4 }
+  volatility: none
+  range_aware: true
+  rust: lookup2::xmatch
+  status: planned
+  provenance: ["Microsoft XMATCH (public docs) — lookup, lookup_array, [match_mode], [search_mode]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_xmatch"]
+    corpus: ["corpus/fn-corpus/lookup/xmatch.golden.tsv"]
+
+- id: sheet.fn.lookup.offset
+  name: OFFSET
+  family: lookup
+  arity: { min: 3, max: 5 }
+  volatility: volatile
+  range_aware: true
+  ref_args: true
+  rust: lookup2::offset
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (OFFSET) — reference, rows, cols, [height], [width]. T1 ruling: returns the VALUE/range view, not a first-class reference object"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_offset"]
+    corpus: []
+
+- id: sheet.fn.lookup.indirect
+  name: INDIRECT
+  family: lookup
+  arity: { min: 1, max: 2 }
+  volatility: volatile
+  range_aware: true
+  ref_args: true
+  rust: lookup2::indirect
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (INDIRECT) — ref_text, [a1]. T1 ruling: returns the VALUE/range view of the parsed address, not a first-class reference object"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_indirect"]
+    corpus: []
+
+- id: sheet.fn.lookup.address
+  name: ADDRESS
+  family: lookup
+  arity: { min: 2, max: 5 }
+  volatility: none
+  range_aware: false
+  rust: lookup2::address
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ADDRESS) — row_num, col_num, [abs_num], [a1], [sheet_text]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_address"]
+    corpus: ["corpus/fn-corpus/lookup/address.golden.tsv"]
+
+- id: sheet.fn.lookup.rows
+  name: ROWS
+  family: lookup
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: lookup2::rows
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ROWS) — row count of a reference/array"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_rows"]
+    corpus: ["corpus/fn-corpus/lookup/rows.golden.tsv"]
+
+- id: sheet.fn.lookup.columns
+  name: COLUMNS
+  family: lookup
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: lookup2::columns
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COLUMNS) — column count of a reference/array"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_columns"]
+    corpus: ["corpus/fn-corpus/lookup/columns.golden.tsv"]
+
+- id: sheet.fn.lookup.formulatext
+  name: FORMULATEXT
+  family: lookup
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: lookup2::formulatext
+  status: planned
+  provenance: ["Microsoft FORMULATEXT (public docs) — the formula text of a reference"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_formulatext"]
+    corpus: ["corpus/fn-corpus/lookup/formulatext.golden.tsv"]

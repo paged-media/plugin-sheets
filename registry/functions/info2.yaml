@@ -1,0 +1,111 @@
+# sheet.fn.info.* (M1 additions) — information family. Schema: see
+# math.yaml. Rust kernels under sheet-fn/src/families/info2.rs (the M1
+# info track). All rows status: planned. Provenance: ECMA-376 §18.17.7 +
+# public Microsoft function docs.
+
+- id: sheet.fn.info.n
+  name: N
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info2::n
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (N) — coerce value to a number"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_n"]
+    corpus: ["corpus/fn-corpus/info/n.golden.tsv"]
+
+- id: sheet.fn.info.type
+  name: TYPE
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info2::type_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TYPE) — 1 number, 2 text, 4 logical, 16 error, 64 array"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_type"]
+    corpus: ["corpus/fn-corpus/info/type.golden.tsv"]
+
+- id: sheet.fn.info.error-type
+  name: ERROR.TYPE
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info2::error_type
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ERROR.TYPE) — numeric code of an error value"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_error_type"]
+    corpus: ["corpus/fn-corpus/info/error_type.golden.tsv"]
+
+- id: sheet.fn.info.sheet
+  name: SHEET
+  family: info
+  arity: { min: 0, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: info2::sheet
+  status: planned
+  provenance: ["Microsoft SHEET (public docs) — sheet number of a reference; current when absent"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_sheet"]
+    corpus: ["corpus/fn-corpus/info/sheet.golden.tsv"]
+
+- id: sheet.fn.info.sheets
+  name: SHEETS
+  family: info
+  arity: { min: 0, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: info2::sheets
+  status: planned
+  provenance: ["Microsoft SHEETS (public docs) — number of sheets in a reference; workbook count when absent"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_sheets"]
+    corpus: ["corpus/fn-corpus/info/sheets.golden.tsv"]
+
+- id: sheet.fn.info.iseven
+  name: ISEVEN
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info2::iseven
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISEVEN) — true if the (truncated) number is even"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_iseven"]
+    corpus: ["corpus/fn-corpus/info/iseven.golden.tsv"]
+
+- id: sheet.fn.info.isodd
+  name: ISODD
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info2::isodd
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISODD) — true if the (truncated) number is odd"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isodd"]
+    corpus: ["corpus/fn-corpus/info/isodd.golden.tsv"]
+
+- id: sheet.fn.info.isformula
+  name: ISFORMULA
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: info2::isformula
+  status: planned
+  provenance: ["Microsoft ISFORMULA (public docs) — true if the reference is a formula cell"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isformula"]
+    corpus: ["corpus/fn-corpus/info/isformula.golden.tsv"]

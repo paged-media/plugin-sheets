@@ -9,6 +9,7 @@ export {
   type LoweredColumn,
   type LoweredRow,
   type LoweredContent,
+  type LoweredStyle,
   type Merge,
   type Rule,
   type Rules,

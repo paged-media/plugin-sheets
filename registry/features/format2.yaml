@@ -1,0 +1,46 @@
+# sheet.format.* (M1 additions) — advanced number-format engine features
+# (M1 format track, spec §9). All rows status: planned — the Phase-B format
+# track creates the conformance files these point at. Schema:
+# id/title/status/provenance/tests.
+
+- id: sheet.format.elapsed-brackets
+  title: Elapsed time formats ([h], [mm], [ss]) — bracketed accumulators that exceed a single unit
+  status: planned
+  provenance: ["ECMA-376 §18.8.31 (elapsed-time codes)"]
+  tests:
+    rust: ["sheet-conformance/tests/format2.rs::sheet_format_elapsed_brackets"]
+
+- id: sheet.format.fractions
+  title: Fraction formats (# ?/?, # ??/??) — denominator fitting
+  status: planned
+  provenance: ["ECMA-376 §18.8.31 (fraction codes)"]
+  tests:
+    rust: ["sheet-conformance/tests/format2.rs::sheet_format_fractions"]
+
+- id: sheet.format.conditional-sections
+  title: Conditional format sections ([>=100]...;[<0]...) — comparison-gated section selection
+  status: planned
+  provenance: ["ECMA-376 §18.8.31 (conditional format brackets)"]
+  tests:
+    rust: ["sheet-conformance/tests/format2.rs::sheet_format_conditional_sections"]
+
+- id: sheet.format.color-brackets
+  title: Color brackets ([Red], [Blue], [Color12]) carried through to the lowered style
+  status: planned
+  provenance: ["ECMA-376 §18.8.31 (color codes)"]
+  tests:
+    rust: ["sheet-conformance/tests/format2.rs::sheet_format_color_brackets"]
+
+- id: sheet.format.padding
+  title: Repeat/skip-width tokens (* and _) — fill-to-width and skip-a-char-width padding
+  status: planned
+  provenance: ["ECMA-376 §18.8.31 (* and _ tokens)"]
+  tests:
+    rust: ["sheet-conformance/tests/format2.rs::sheet_format_padding"]
+
+- id: sheet.format.locale-currency-token
+  title: Locale/currency tokens ([$-409], [$EUR]) parsed and rendered
+  status: planned
+  provenance: ["ECMA-376 §18.8.31 (currency/locale tokens)"]
+  tests:
+    rust: ["sheet-conformance/tests/format2.rs::sheet_format_locale_currency_token"]

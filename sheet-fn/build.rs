@@ -45,6 +45,11 @@ struct FnRow {
     /// Only consulted for `implemented` rows.
     #[serde(default)]
     rust: String,
+    /// True for dynamic-array kernels (M1 array track). An `implemented`
+    /// array row's kernel is `fn(&[Arg], &EvalCtx) -> FnResult`; a scalar
+    /// row's kernel is `fn(&[Arg], &EvalCtx) -> CellValue`.
+    #[serde(default)]
+    returns_array: bool,
     #[serde(default)]
     status: String,
     // Unknown fields (family, volatility, provenance, tests, …) ignored.
@@ -133,7 +138,19 @@ fn main() {
 
     for (i, r) in rows.iter().enumerate() {
         let implemented = r.status.eq_ignore_ascii_case("implemented");
-        if implemented {
+        if implemented && r.returns_array {
+            // A dynamic-array row is uncallable through the SCALAR door: it
+            // has no `-> CellValue` kernel. The scalar door stays total and
+            // returns #VALUE! — the evaluator must route array rows through
+            // `dispatch_rich`. (M1 array track; documented in dispatch.rs.)
+            writeln!(
+                out,
+                "        {i} => CellValue::Error(CellError::Value), // {name} (returns_array — use dispatch_rich)",
+                i = i,
+                name = r.name,
+            )
+            .unwrap();
+        } else if implemented {
             // `rust: math::sum` → `crate::families::math::sum`.
             let path = format!("crate::families::{}", r.rust.trim());
             // Arity guard: len < min || (max.is_some() && len > max).
@@ -170,6 +187,89 @@ fn main() {
 
     out.push_str(
         "        _ => CellValue::Error(CellError::Name),\n\
+         \x20   }\n\
+         }\n\n",
+    );
+
+    // ---- Emit the rich dispatch function (dynamic-array door). ----
+    out.push_str(
+        "/// Rich registry-driven dispatch (spec §6.4, M1 array track). The\n\
+         /// dynamic-array door: an `implemented` `returns_array` row calls its\n\
+         /// `-> FnResult` kernel directly (after the same arity guard); a\n\
+         /// scalar `implemented` row is wrapped `FnResult::Scalar(<kernel>)`;\n\
+         /// a `planned` row returns `FnResult::Scalar(#NAME?)`; an arity\n\
+         /// violation returns `FnResult::Scalar(#VALUE!)`. Every formula\n\
+         /// function call SHOULD route here so array results are not lost; the\n\
+         /// scalar `dispatch` stays for callers that only ever need a scalar\n\
+         /// (and returns #VALUE! for array rows).\n\
+         #[allow(clippy::len_zero, clippy::absurd_extreme_comparisons, unused_comparisons)]\n\
+         pub fn dispatch_rich(\n\
+         \x20   id: sheet_core::FuncId,\n\
+         \x20   args: &[crate::arg::Arg],\n\
+         \x20   ctx: &crate::ctx::EvalCtx,\n\
+         ) -> crate::result::FnResult {\n\
+         \x20   use sheet_core::value::{CellError, CellValue};\n\
+         \x20   use crate::result::FnResult;\n\
+         \x20   let _ = (args, ctx);\n\
+         \x20   match id.0 {\n",
+    );
+
+    for (i, r) in rows.iter().enumerate() {
+        let implemented = r.status.eq_ignore_ascii_case("implemented");
+        if implemented {
+            let path = format!("crate::families::{}", r.rust.trim());
+            let max_guard = match r.arity.max {
+                Some(m) => format!(" || args.len() > {m}"),
+                None => String::new(),
+            };
+            if r.returns_array {
+                // Array kernel: returns FnResult directly.
+                writeln!(
+                    out,
+                    "        {i} => {{ // {name} (returns_array)\n\
+                     \x20           if args.len() < {min}{max_guard} {{\n\
+                     \x20               return FnResult::Scalar(CellValue::Error(CellError::Value));\n\
+                     \x20           }}\n\
+                     \x20           {path}(args, ctx)\n\
+                     \x20       }}",
+                    i = i,
+                    name = r.name,
+                    min = r.arity.min,
+                    max_guard = max_guard,
+                    path = path,
+                )
+                .unwrap();
+            } else {
+                // Scalar kernel: wrap in FnResult::Scalar.
+                writeln!(
+                    out,
+                    "        {i} => {{ // {name}\n\
+                     \x20           if args.len() < {min}{max_guard} {{\n\
+                     \x20               return FnResult::Scalar(CellValue::Error(CellError::Value));\n\
+                     \x20           }}\n\
+                     \x20           FnResult::Scalar({path}(args, ctx))\n\
+                     \x20       }}",
+                    i = i,
+                    name = r.name,
+                    min = r.arity.min,
+                    max_guard = max_guard,
+                    path = path,
+                )
+                .unwrap();
+            }
+        } else {
+            writeln!(
+                out,
+                "        {i} => FnResult::Scalar(CellValue::Error(CellError::Name)), // {name} (planned)",
+                i = i,
+                name = r.name,
+            )
+            .unwrap();
+        }
+    }
+
+    out.push_str(
+        "        _ => FnResult::Scalar(CellValue::Error(CellError::Name)),\n\
          \x20   }\n\
          }\n",
     );

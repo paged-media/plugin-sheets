@@ -1,0 +1,199 @@
+# sheet.fn.text.* (M1 additions) — text family. Schema: see math.yaml.
+# Rust kernels under sheet-fn/src/families/text2.rs (the M1 text track).
+# All rows status: planned. Provenance: ECMA-376 §18.17.7 + public
+# Microsoft function docs.
+
+- id: sheet.fn.text.textjoin
+  name: TEXTJOIN
+  family: text
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  rust: text2::textjoin
+  status: planned
+  provenance: ["Microsoft TEXTJOIN (public docs) — delimiter, ignore_empty, then variadic text/ranges"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_textjoin"]
+    corpus: ["corpus/fn-corpus/text/textjoin.golden.tsv"]
+
+- id: sheet.fn.text.exact
+  name: EXACT
+  family: text
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: text2::exact
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (EXACT) — case-sensitive text equality"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_exact"]
+    corpus: ["corpus/fn-corpus/text/exact.golden.tsv"]
+
+- id: sheet.fn.text.proper
+  name: PROPER
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::proper
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (PROPER) — title-case each word"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_proper"]
+    corpus: ["corpus/fn-corpus/text/proper.golden.tsv"]
+
+- id: sheet.fn.text.char
+  name: CHAR
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::char
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CHAR) — code point 1..255 to character"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_char"]
+    corpus: ["corpus/fn-corpus/text/char.golden.tsv"]
+
+- id: sheet.fn.text.code
+  name: CODE
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::code
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CODE) — first character's code point"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_code"]
+    corpus: ["corpus/fn-corpus/text/code.golden.tsv"]
+
+- id: sheet.fn.text.unichar
+  name: UNICHAR
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::unichar
+  status: planned
+  provenance: ["Microsoft UNICHAR (public docs) — Unicode code point to character"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_unichar"]
+    corpus: ["corpus/fn-corpus/text/unichar.golden.tsv"]
+
+- id: sheet.fn.text.unicode
+  name: UNICODE
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::unicode
+  status: planned
+  provenance: ["Microsoft UNICODE (public docs) — first character's Unicode code point"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_unicode"]
+    corpus: ["corpus/fn-corpus/text/unicode.golden.tsv"]
+
+- id: sheet.fn.text.clean
+  name: CLEAN
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::clean
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CLEAN) — strip non-printable characters"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_clean"]
+    corpus: ["corpus/fn-corpus/text/clean.golden.tsv"]
+
+- id: sheet.fn.text.t
+  name: T
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text2::t
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (T) — value if text else empty string"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_t"]
+    corpus: ["corpus/fn-corpus/text/t.golden.tsv"]
+
+- id: sheet.fn.text.numbervalue
+  name: NUMBERVALUE
+  family: text
+  arity: { min: 1, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: text2::numbervalue
+  status: planned
+  provenance: ["Microsoft NUMBERVALUE (public docs) — text, [decimal_separator], [group_separator]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_numbervalue"]
+    corpus: ["corpus/fn-corpus/text/numbervalue.golden.tsv"]
+
+- id: sheet.fn.text.fixed
+  name: FIXED
+  family: text
+  arity: { min: 1, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: text2::fixed
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (FIXED) — number, [decimals], [no_commas]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_fixed"]
+    corpus: ["corpus/fn-corpus/text/fixed.golden.tsv"]
+
+- id: sheet.fn.text.dollar
+  name: DOLLAR
+  family: text
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: text2::dollar
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DOLLAR) — number, [decimals] with currency format"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_dollar"]
+    corpus: ["corpus/fn-corpus/text/dollar.golden.tsv"]
+
+- id: sheet.fn.text.replace
+  name: REPLACE
+  family: text
+  arity: { min: 4, max: 4 }
+  volatility: none
+  range_aware: false
+  rust: text2::replace
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (REPLACE) — old_text, start_num, num_chars, new_text"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_replace"]
+    corpus: ["corpus/fn-corpus/text/replace.golden.tsv"]
+
+- id: sheet.fn.text.textbefore
+  name: TEXTBEFORE
+  family: text
+  arity: { min: 2, max: 6 }
+  volatility: none
+  range_aware: false
+  rust: text2::textbefore
+  status: planned
+  provenance: ["Microsoft TEXTBEFORE (public docs) — text, delimiter, [instance], [match_mode], [match_end], [if_not_found]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_textbefore"]
+    corpus: ["corpus/fn-corpus/text/textbefore.golden.tsv"]
+
+- id: sheet.fn.text.textafter
+  name: TEXTAFTER
+  family: text
+  arity: { min: 2, max: 6 }
+  volatility: none
+  range_aware: false
+  rust: text2::textafter
+  status: planned
+  provenance: ["Microsoft TEXTAFTER (public docs) — text, delimiter, [instance], [match_mode], [match_end], [if_not_found]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_textafter"]
+    corpus: ["corpus/fn-corpus/text/textafter.golden.tsv"]

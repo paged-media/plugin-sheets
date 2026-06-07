@@ -18,6 +18,9 @@
 //! (in `sheet-calc`) consumes this to build edges; ranges are kept as
 //! intervals (normalized), never exploded per-cell.
 
+use compact_str::CompactString;
+use smallvec::SmallVec;
+
 use sheet_core::ast::{Expr, Formula, NameId};
 use sheet_core::{CellRef, RangeRef};
 
@@ -30,6 +33,11 @@ pub struct RefSet {
     pub ranges: Vec<RangeRef>,
     /// Defined-name ids referenced.
     pub names: Vec<NameId>,
+    /// Structured-reference table names (M1 tables track). A structured ref
+    /// depends on its table by NAME, not by A1 geometry; the dependency
+    /// graph resolves the name to a range when the table model is wired
+    /// (M1 Phase B). Usually 0 or 1 entry, so a `SmallVec<[_; 1]>`.
+    pub tables: SmallVec<[CompactString; 1]>,
     /// True if any called function is registry-`volatile`.
     pub has_volatile: bool,
 }
@@ -67,5 +75,16 @@ fn walk(e: &Expr, set: &mut RefSet) {
                 }
             }
         }
+        // A structured ref depends on its table by name (the ThisRow
+        // `[@Col]` form carries an empty table name — the in-table anchor is
+        // resolved from the formula's own cell in Phase B, so an empty name
+        // is not recorded as a dependency).
+        Expr::StructuredRef(s) => {
+            if !s.table.is_empty() {
+                set.tables.push(s.table.clone());
+            }
+        }
+        // A spill ref's dependency is its anchor expression.
+        Expr::SpillRef(inner) => walk(inner, set),
     }
 }
