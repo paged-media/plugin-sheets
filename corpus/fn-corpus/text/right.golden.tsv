@@ -4,7 +4,7 @@
 right-basic	=RIGHT(A1,2)	A1=text:hello	lo
 right-default-one	=RIGHT(A1)	A1=text:hello	o
 right-clamp-past-end	=RIGHT(A1,10)	A1=text:hi	hi
-right-zero	=RIGHT(A1,0)	A1=text:hello
+right-zero	=RIGHT(A1,0)	A1=text:hello	
 right-negative-value-error	=RIGHT(A1,-3)	A1=text:hello	#VALUE!
 right-number-coerced	=RIGHT(A1,2)	A1=4567	67
 right-error-propagates	=RIGHT(A1,2)	A1=#REF!	#REF!

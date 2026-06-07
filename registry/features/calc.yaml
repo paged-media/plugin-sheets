@@ -1,39 +1,49 @@
 # sheet.calc.* — calculation-engine features and rulings (spec §6).
 # Build-consumed half of the two-registry split; the state-repo row is
 # the status ledger. Schema: id/title/status/provenance/tests
-# (+ ruling: for documented Excel-compat decisions).
+# (+ ruling:/note: for documented Excel-compat decisions).
 
 - id: sheet.calc.graph.cell-edges
   title: Dependency graph — per-cell edges from reference extraction
-  status: planned
+  status: implemented
   provenance: ["spec §6.2"]
   tests:
     rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_graph_cell_edges"]
 
 - id: sheet.calc.graph.range-invalidation
   title: Range deps as single nodes with bounding-box invalidation (T0; interval index is the M1 upgrade)
-  status: planned
+  status: implemented
   provenance: ["spec §6.2 — range edges interval-tracked, not exploded per-cell"]
+  note: >
+    A range reference is one normalized RangeKey node, not exploded per-cell.
+    A write at (sheet,row,col) dirties every registered range box that contains
+    it via a LINEAR SCAN over the range keys — the documented M1 interval-index
+    upgrade seam (sheet-calc/src/graph.rs::DepGraph::dependents_of).
   tests:
     rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_graph_range_invalidation"]
 
 - id: sheet.calc.dirty.transitive
   title: Dirty propagation — committed edit marks dependents dirty transitively
-  status: planned
+  status: implemented
   provenance: ["spec §6.2"]
   tests:
     rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_dirty_transitive"]
 
 - id: sheet.calc.recalc.topo
   title: Topological recalc of the dirty cut (Kahn, stable frontier ordering)
-  status: planned
+  status: implemented
   provenance: ["spec §6.2"]
+  note: >
+    Kahn over the dirty subgraph with a STABLE frontier (a BinaryHeap keyed by
+    the reversed CellRef so the smallest CellRef pops first), so iteration order
+    never depends on hash order — determinism (sheet.calc.recalc.order-independence)
+    falls out by construction (sheet-calc/src/topo.rs).
   tests:
     rust: ["sheet-conformance/tests/calc_order.rs::sheet_calc_recalc_topo"]
 
 - id: sheet.calc.recalc.order-independence
   title: Determinism — recalculation order must not affect results (property)
-  status: planned
+  status: implemented
   provenance: ["spec §6.2 / §12.4"]
   tests:
     rust: ["sheet-conformance/tests/calc_order.rs::sheet_calc_recalc_order_independence"]
@@ -41,21 +51,42 @@
 - id: sheet.calc.circular
   title: Circular references with iteration off — cycle members get the internal Circular diagnostic (displays #REF!-class, reported on RecalcResult.circular); iterative calc is D-7/T2
   ruling: "Excel raises a circular warning; we surface the cycle set to glue. Not one of the 8 wire error codes."
-  status: planned
+  note: >
+    CIRCULAR ENCODING (the exact T0 contract): CellError has no Circular variant
+    (the wire enum is frozen at 8 codes). When the scheduler (sheet-calc/src/topo.rs)
+    finds a cycle, each cycle member's STORED value becomes
+    CellValue::Error(CellError::Ref) — the #REF!-class display this row's title
+    calls for — AND the full cycle set is reported on RecalcResult.circular
+    (sheet-calc/src/lib.rs::Engine::recalc_dirty). The glue surfaces the circular
+    WARNING from `circular`; the cell displays the #REF!-class error. Breaking the
+    cycle (re-entering a member as a non-cyclic formula or a literal) clears both
+    on the next recalc.
+  status: implemented
   provenance: ["spec §6.2, D-7"]
   tests:
     rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_circular"]
 
 - id: sheet.calc.volatile
   title: Volatile functions reseeded dirty every recalc pass (NOW/TODAY/RAND/RANDBETWEEN per registry volatility flag)
-  status: planned
+  status: implemented
   provenance: ["spec §6.2"]
+  note: >
+    Volatile formula cells (extract_refs.has_volatile) live in a separate set
+    reseeded dirty at the START of every recalc_* pass (sheet-calc/src/dirty.rs).
+    The RNG seed is derived from EngineConfig.rng_seed mixed with a monotonic
+    pass counter and the cell address (sheet-calc/src/volatile.rs::cell_seed) —
+    so RAND varies across recalcs yet is reproducible under a fixed seed.
   tests:
     rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_volatile"]
 
 - id: sheet.calc.rewrite.structural
   title: Row/col insert/delete rewrite formulas (shift refs; deleted-span refs become #REF!)
-  status: planned
+  status: implemented
   provenance: ["spec §6.1 — rewrite rules are registry-tested features"]
+  note: >
+    Engine::apply_edit physically shifts cells, col_widths, row_heights, and
+    merges, rewrites every formula via sheet_parser::rewrite (deleted-span refs
+    collapse to #REF!), rebuilds the dependency graph, and recalcs
+    (sheet-calc/src/lib.rs).
   tests:
     rust: ["sheet-conformance/tests/calc_rewrite.rs::sheet_calc_rewrite_structural"]

@@ -6,5 +6,5 @@ trim-edges	=TRIM(A1)	A1=text:  hello  	hello
 trim-internal-runs	=TRIM(A1)	A1=text:hello   world	hello world
 trim-both	=TRIM(A1)	A1=text:  a   b  	a b
 trim-nochange	=TRIM(A1)	A1=text:nochange	nochange
-trim-all-spaces	=TRIM(A1)	A1=text:
+trim-all-spaces	=TRIM(A1)	A1=text:	
 trim-error-propagates	=TRIM(A1)	A1=#REF!	#REF!

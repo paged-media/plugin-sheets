@@ -4,7 +4,7 @@
 left-basic	=LEFT(A1,2)	A1=text:hello	he
 left-default-one	=LEFT(A1)	A1=text:hello	h
 left-clamp-past-end	=LEFT(A1,10)	A1=text:hi	hi
-left-zero	=LEFT(A1,0)	A1=text:hello
+left-zero	=LEFT(A1,0)	A1=text:hello	
 left-negative-value-error	=LEFT(A1,-1)	A1=text:hello	#VALUE!
 left-number-coerced	=LEFT(A1,2)	A1=123	12
 left-error-propagates	=LEFT(A1,2)	A1=#N/A	#N/A
