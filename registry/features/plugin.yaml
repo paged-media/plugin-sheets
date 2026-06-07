@@ -3,21 +3,24 @@
 
 - id: sheet.plugin.bundle.activate
   title: Bundle activates against BundleHost — panel + commands registered, clean dispose
-  status: planned
+  status: implemented
   provenance: ["plugin-api BundleHost contract"]
   tests:
     vitest: ["packages/sheet-bundle/test/activate.spec.ts"]
 
 - id: sheet.plugin.lower.mutations
-  title: LoweredContent -> Mutation[] translation (two-phase: frame batch + text pour; S-03 degradation)
-  status: planned
+  title: "LoweredContent -> Mutation[] translation (two-phase: frame batch + text pour; S-03 degradation)"
+  status: implemented
   provenance: ["plugin-api wire.d.ts mutation vocabulary", "BREAKAGE S-03"]
   tests:
-    vitest: ["packages/sheet-host-model/test/lower-to-mutations.spec.ts"]
+    vitest:
+      - "packages/sheet-host-model/test/lower-to-mutations.spec.ts"
+      - "packages/sheet-host-model/test/placement.spec.ts"
+      - "packages/sheet-bundle/test/lower-flow.spec.ts"
 
 - id: sheet.plugin.binding.metadata
   title: Frame binding envelope via setPluginMetadata (x-paged:media.paged.sheet), IDML round-trip carrier
-  status: planned
+  status: implemented
   provenance: ["plugin-api setPluginMetadata / v33 Label carrier"]
   tests:
     vitest: ["packages/sheet-host-model/test/binding.spec.ts"]
@@ -25,13 +28,19 @@
 - id: sheet.plugin.engine.boot
   title: wasm-bindgen engine boot in the bundle realm (S-10 path) — browser url init, Node initSync
   status: planned
+  # note: STAYS planned — the real sheet-js wasm artifact lands in Phase 2
+  # (scripts/build-wasm.sh). T0 ships the typed facade (wrapEngine, the
+  # snake_case->camelCase map) + the honest boot-failure path (bootEngine
+  # rejects with ENGINE_NOT_BUILT until the artifact exists); engine.spec.ts
+  # covers BOTH. The boot row flips implemented once Phase 2 builds the wasm.
   provenance: ["plugin-sdk wasm-loader.ts precedent", "BREAKAGE S-10"]
   tests:
     vitest: ["packages/sheet-bundle/test/engine.spec.ts"]
 
 - id: sheet.plugin.manifest.valid
   title: manifest.json validates under plugin-cli (namespaces, capabilities, wasm budget)
-  status: planned
+  status: implemented
   provenance: ["plugin-cli paged-plugin.mjs"]
   tests:
+    vitest: ["packages/sheet-bundle/test/manifest.spec.ts"]
     cli: ["pnpm validate:manifest"]
