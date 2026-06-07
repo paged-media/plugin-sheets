@@ -12,4 +12,206 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
-//! Number-format engine — populated in Phase 1 (Track FMT).
+//! # sheet-format — the paged.sheet number-format engine (spec §9)
+//!
+//! Compiles ECMA-376 number-format codes (T0 core; §18.8.31) and renders
+//! [`CellValue`]s through them. The calc engine stays pure `f64`; *all*
+//! display rounding, 15-significant-digit `General` semantics, and the
+//! 1900/1904 serial-date conversions (with the leap-bug ruling) live here.
+//!
+//! ## Public API (FROZEN — `sheet-fn`'s TEXT, `sheet-lower`, `sheet-js`
+//! build against exactly this)
+//!
+//! - [`compile`] — format code -> [`CompiledFormat`] (memoized via
+//!   [`FormatCache`]).
+//! - [`format_value`] — a [`CellValue`] + [`CompiledFormat`] + [`FormatCtx`]
+//!   -> the typeset string.
+//! - [`format_general`] — the `General` path (number->text coercion and
+//!   General cells; ruling `sheet.format.general`).
+//! - [`serial`] — calendar <-> serial conversion for both date systems.
+//!
+//! ## Section model (spec §9)
+//!
+//! A format code is up to four `;`-separated sections —
+//! `positive;negative;zero;text`. With one section, all numbers use it
+//! (negatives gain an automatic `-`). With two, section 1 covers positives
+//! and zero, section 2 covers negatives (its minus is *implicit* — no auto
+//! sign). Three sections split positive/negative/zero; a fourth adds the
+//! text mask (`@`). Text values with no 4th section pass through unchanged.
+
+pub mod cache;
+pub mod datetime;
+pub mod general;
+pub mod number;
+pub mod parse;
+pub mod sections;
+pub mod serial;
+
+use sheet_core::{CellValue, DateSystem};
+
+pub use cache::FormatCache;
+pub use general::format_general;
+pub use parse::{compile, FormatError};
+pub use sections::CompiledFormat;
+
+/// Context for a format pass: currently the workbook date system (spec §9).
+/// Reserved for locale once the v1 locale set lands (D-8).
+#[derive(Copy, Clone, Debug)]
+pub struct FormatCtx {
+    pub date_system: DateSystem,
+}
+
+impl Default for FormatCtx {
+    fn default() -> Self {
+        FormatCtx {
+            date_system: DateSystem::Date1900,
+        }
+    }
+}
+
+/// Format a [`CellValue`] through a compiled format (spec §9). Section
+/// selection, `General` fallback, the date/time vs numeric split, and the
+/// text mask all resolve here.
+pub fn format_value(v: &CellValue, fmt: &CompiledFormat, ctx: &FormatCtx) -> String {
+    match v {
+        // Errors render as their token regardless of the code. Text/bool use
+        // the text section (4th) when present, else pass through.
+        CellValue::Error(e) => e.as_str().to_string(),
+        CellValue::Text(_) | CellValue::Bool(_) => format_text_value(v, fmt),
+        CellValue::Empty => match &fmt.text {
+            Some(sec) => render_text_section(sec, ""),
+            None => String::new(),
+        },
+        CellValue::Number(n) => format_number_value(*n, fmt, ctx),
+    }
+}
+
+/// Render a numeric cell: pick the section, then dispatch to the date/time
+/// or numeric renderer. An empty section means `General`.
+fn format_number_value(n: f64, fmt: &CompiledFormat, ctx: &FormatCtx) -> String {
+    let (section, force_minus) = fmt.select_numeric(n);
+
+    // The General keyword (or empty whole-code) renders via General.
+    if section.general {
+        return format_general(&CellValue::Number(n));
+    }
+    // An explicitly empty section (e.g. from `;;;`) hides the value.
+    if section.tokens.is_empty() {
+        return String::new();
+    }
+
+    match section.kind {
+        sections::SectionKind::DateTime => {
+            match datetime::render_datetime(n, section, ctx.date_system) {
+                Some(s) => s,
+                // Out-of-domain serial: Excel shows ###### but for typeset
+                // output we fall back to General.
+                None => format_general(&CellValue::Number(n)),
+            }
+        }
+        sections::SectionKind::Number => number::render_number(n, section, force_minus),
+        // A text-classified section selected for a number renders its
+        // literals only (no @ substitution for numbers).
+        sections::SectionKind::Text => render_text_section(section, ""),
+    }
+}
+
+/// Render a text or bool value. The applicable text section is the 4th when
+/// present, else the 1st section IF it is itself text-classified (a
+/// single-section code like `@@` or `"Note: "@` applies to text). Otherwise
+/// the raw text passes through (bools as TRUE/FALSE).
+fn format_text_value(v: &CellValue, fmt: &CompiledFormat) -> String {
+    let raw = match v {
+        CellValue::Text(t) => t.to_string(),
+        CellValue::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+        _ => format_general(v),
+    };
+    let text_section = fmt.text.as_ref().or({
+        // A single-section text-classified code is the text mask only when no
+        // negative/zero/text section was supplied (i.e. it is the sole code).
+        if fmt.neg.is_none() && fmt.pos.kind == sections::SectionKind::Text {
+            Some(&fmt.pos)
+        } else {
+            None
+        }
+    });
+    match text_section {
+        Some(sec) => render_text_section(sec, &raw),
+        None => raw,
+    }
+}
+
+/// Substitute `@` placeholders in a text section with `value`, emitting other
+/// literals verbatim.
+fn render_text_section(section: &sections::Section, value: &str) -> String {
+    use sections::Token;
+    let mut out = String::new();
+    for t in &section.tokens {
+        match t {
+            Token::TextPlaceholder => out.push_str(value),
+            Token::Literal(s) => out.push_str(s),
+            _ => {}
+        }
+    }
+    // A section with no @ (e.g. ";;;") hides the value — matches Excel.
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fv(code: &str, v: CellValue) -> String {
+        let f = compile(code).unwrap();
+        format_value(&v, &f, &FormatCtx::default())
+    }
+
+    #[test]
+    fn two_section_negative_implicit_minus() {
+        // section 2 (negatives) has no '-': value formats unsigned, with the
+        // author's own parens.
+        assert_eq!(fv("0.00;(0.00)", CellValue::Number(-5.0)), "(5.00)");
+        assert_eq!(fv("0.00;(0.00)", CellValue::Number(5.0)), "5.00");
+    }
+
+    #[test]
+    fn three_section_zero() {
+        assert_eq!(fv("0;-0;\"zero\"", CellValue::Number(0.0)), "zero");
+        assert_eq!(fv("0;-0;\"zero\"", CellValue::Number(3.0)), "3");
+    }
+
+    #[test]
+    fn text_section_at() {
+        assert_eq!(fv("0;0;0;\"<\"@\">\"", CellValue::from("hi")), "<hi>");
+    }
+
+    #[test]
+    fn text_passthrough_no_section() {
+        assert_eq!(fv("0.00", CellValue::from("note")), "note");
+    }
+
+    #[test]
+    fn error_always_token() {
+        assert_eq!(
+            fv("0.00", CellValue::Error(sheet_core::CellError::Na)),
+            "#N/A"
+        );
+    }
+
+    #[test]
+    fn general_via_empty_section() {
+        assert_eq!(fv("General", CellValue::Number(1.5)), "1.5");
+    }
+
+    #[test]
+    fn date_value() {
+        assert_eq!(fv("yyyy-mm-dd", CellValue::Number(44197.0)), "2021-01-01");
+    }
+
+    #[test]
+    fn hidden_all_sections() {
+        // ";;;" hides every value type.
+        assert_eq!(fv(";;;", CellValue::Number(5.0)), "");
+        assert_eq!(fv(";;;", CellValue::from("x")), "");
+    }
+}

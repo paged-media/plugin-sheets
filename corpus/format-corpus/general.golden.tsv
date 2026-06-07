@@ -1,0 +1,20 @@
+# sheet.format.general — General format goldens (spec §9; ruling sheet.format.general).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+# value: bare number | text:... | bool:true/false
+gen-int	General	0	0
+gen-one	General	1	1
+gen-neg	General	-42	-42
+gen-thousand	General	1000	1000
+gen-half	General	1.5	1.5
+gen-tenth	General	0.1	0.1
+gen-neg-quarter	General	-0.25	-0.25
+gen-15sig	General	123456789012345	123456789012345
+gen-1e15	General	1000000000000000	1000000000000000
+gen-sci-big	General	1e21	1E+21
+gen-sci-small	General	0.000000015	1.5E-08
+gen-e-minus7	General	0.0000001	0.0000001
+gen-neg-zero	General	-0	0
+gen-pi	General	3.14159265358979	3.14159265358979
+gen-bool-true	General	bool:true	TRUE
+gen-bool-false	General	bool:false	FALSE
+gen-text	General	text:hello	hello

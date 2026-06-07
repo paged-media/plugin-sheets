@@ -15,3 +15,7 @@ sheet-core = { path = "../sheet-core" }
 compact_str.workspace = true
 ryu.workspace = true
 rustc-hash.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

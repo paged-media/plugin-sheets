@@ -1,0 +1,14 @@
+# sheet.format.sections — 4-section codes (positive;negative;zero;text) and selection (spec §9).
+# The 2-section negative case has an IMPLICIT minus (section 2 carries its own sign/parens).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+sec-neg-parens	0.00;(0.00)	-5	(5.00)
+sec-pos	0.00;(0.00)	5	5.00
+sec-zero-uses-pos	0.00;(0.00)	0	0.00
+sec-zero-literal	0;-0;"zero"	0	zero
+sec-three-pos	0;-0;"zero"	3	3
+sec-three-neg	0;-0;"zero"	-3	-3
+sec-red-neg	#,##0;[Red]-#,##0	-1234	-1,234
+sec-zero-dash	0.0;;"-"	0	-
+sec-plus-pos	+0;-0	5	+5
+sec-hide-all	;;;	5
+sec-paren-neg	0;(0)	-7	(7)

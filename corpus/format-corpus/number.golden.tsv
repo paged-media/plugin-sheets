@@ -1,0 +1,22 @@
+# sheet.format.number.placeholders — digit placeholders 0 # ?, decimal point,
+# thousands grouping, and trailing-comma thousand-scaling (spec §9; ECMA-376 §18.8.31).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+num-fixed2	0.00	1.5	1.50
+num-fixed2-int	0.00	1	1.00
+num-trunc	0	1.4	1
+num-round-half	0	1.5	2
+num-round-half2	0	2.5	3
+num-optional	#.##	1.5	1.5
+num-optional-int	#.##	1	1
+num-leadzero-frac	0.##	0.5	0.5
+num-group	#,##0	1234	1,234
+num-group-millions	#,##0	1234567	1,234,567
+num-group-decimals	#,##0.00	1234.5	1,234.50
+num-scale-k	0,	12000	12
+num-scale-k-dec	0.0,	12500	12.5
+num-scale-m	0,,	12000000	12
+num-pad-zeros	000	7	007
+num-pad-zeros-dec	00.0	7.5	07.5
+num-neg	0.00	-1.5	-1.50
+num-zero-plain	0	0	0
+num-zero-fixed	0.00	0	0.00

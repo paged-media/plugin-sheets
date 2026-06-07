@@ -2,7 +2,7 @@
 
 - id: sheet.format.general
   title: General format — shortest round-trip capped at 15 significant digits, scientific switch for extreme magnitudes
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.30 (General)", "Excel 15-digit display semantics (public docs)"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_general"]
@@ -10,7 +10,7 @@
 
 - id: sheet.format.number.placeholders
   title: "Digit placeholders 0 # ? with decimal point, thousands separator, and , scaling"
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (number format codes)"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_number_placeholders"]
@@ -18,7 +18,7 @@
 
 - id: sheet.format.percent
   title: Percent formats (value scaling by 100 + % literal)
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.31"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_percent"]
@@ -26,7 +26,7 @@
 
 - id: sheet.format.scientific
   title: Scientific notation (0.00E+00)
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.31"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_scientific"]
@@ -34,7 +34,7 @@
 
 - id: sheet.format.sections
   title: 4-section format codes (positive;negative;zero;text) with section selection
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.31"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_sections"]
@@ -42,7 +42,7 @@
 
 - id: sheet.format.datetime.tokens
   title: Date/time tokens (yyyy/yy, mmmm/mmm/mm/m, dddd/ddd/dd/d, hh/h, mm/m minutes-context, ss/s, AM/PM)
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (date-time codes)"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_datetime_tokens"]
@@ -50,7 +50,7 @@
 
 - id: sheet.format.date.serial-1900
   title: 1900 date system serial<->calendar conversion
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.4.1", "OpenFormula date conventions"]
   tests:
     rust: ["sheet-conformance/tests/serial_date.rs::sheet_format_date_serial_1900"]
@@ -58,21 +58,21 @@
 - id: sheet.format.date.leap1900
   title: "1900 leap-year bug — serial 60 is the nonexistent 1900-02-29 (deliberate Excel-compat defect)"
   ruling: "Adopted bug-for-bug: serials 1-59 map to 1900-01-01..1900-02-28, serial 60 renders 1900-02-29, serial 61 is 1900-03-01. Lotus 1-2-3 heritage."
-  status: planned
+  status: implemented
   provenance: ["Microsoft KB 214326 (public)", "ECMA-376 date-system notes"]
   tests:
     rust: ["sheet-conformance/tests/serial_date.rs::sheet_format_date_leap1900"]
 
 - id: sheet.format.date.serial-1904
   title: 1904 date system (serial 0 = 1904-01-01, no leap bug)
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.4.1 (date1904)"]
   tests:
     rust: ["sheet-conformance/tests/serial_date.rs::sheet_format_date_serial_1904"]
 
 - id: sheet.format.text-section
   title: Text section and @ placeholder
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.8.31"]
   tests:
     rust: ["sheet-conformance/tests/format.rs::sheet_format_text_section"]

@@ -1,0 +1,18 @@
+# sheet.format.datetime.tokens — date/time tokens (spec §9; ECMA-376 §18.8.31).
+# 1900 date system; serial 44197 = 2021-01-01 (a Friday). The phantom serial 60
+# is NOT tested here — the serial_date tests cover the leap-bug ruling.
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+dt-iso-epoch	yyyy-mm-dd	1	1900-01-01
+dt-iso	yyyy-mm-dd	44197	2021-01-01
+dt-longmonth	mmm d, yyyy	44197	Jan 1, 2021
+dt-fullmonth	mmmm	44228	February
+dt-weekday	dddd	44197	Friday
+dt-weekday-abbr	ddd	44197	Fri
+dt-time-full	hh:mm:ss	0.5	12:00:00
+dt-time-eve	hh:mm	0.75	18:00
+dt-ampm-noon	h:mm AM/PM	0.5	12:00 PM
+dt-ampm-midnight	h:mm AM/PM	0	12:00 AM
+dt-ampm-morning	h:mm AM/PM	0.25	6:00 AM
+dt-us	m/d/yyyy	44197	1/1/2021
+dt-yy	yy	44197	21
+dt-datetime	mm/dd/yyyy hh:mm	44197.5	01/01/2021 12:00

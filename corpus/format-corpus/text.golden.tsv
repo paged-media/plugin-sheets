@@ -1,0 +1,13 @@
+# sheet.format.text-section — text section and the @ placeholder (spec §9; ECMA-376 §18.8.31).
+# value column is text:... for these rows. A text value with no 4th section passes through.
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+txt-angle	0;0;0;"<"@">"	text:hi	<hi>
+txt-at-only	@	text:plain	plain
+txt-prefix	"Note: "@	text:alpha	Note: alpha
+txt-suffix	0;0;0;@" units"	text:5	5 units
+txt-general	General	text:passthrough	passthrough
+txt-number-code	0.00	text:note	note
+txt-hidden	;;;	text:hidden
+txt-double-at	@@	text:x	xx
+txt-bracket	0;0;0;"["@"]"	text:tag	[tag]
+txt-arrows	0;0;0;">>"@	text:v	>>v
