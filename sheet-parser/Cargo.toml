@@ -14,3 +14,6 @@ workspace = true
 sheet-core = { path = "../sheet-core" }
 thiserror.workspace = true
 smallvec.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

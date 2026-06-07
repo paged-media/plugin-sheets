@@ -613,6 +613,7 @@ dependencies = [
  "sheet-lower",
  "sheet-parser",
  "sheet-xlsx",
+ "zip",
 ]
 
 [[package]]
@@ -642,9 +643,11 @@ name = "sheet-format"
 version = "0.0.0"
 dependencies = [
  "compact_str",
+ "proptest",
  "rustc-hash",
  "ryu",
  "sheet-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -670,6 +673,7 @@ name = "sheet-lower"
 version = "0.0.0"
 dependencies = [
  "serde",
+ "serde_json",
  "sheet-core",
  "sheet-format",
 ]
@@ -678,6 +682,7 @@ dependencies = [
 name = "sheet-parser"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "sheet-core",
  "smallvec",
  "thiserror",
