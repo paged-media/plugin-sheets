@@ -383,14 +383,20 @@ impl Lexer<'_> {
             return Ok(TokKind::Bool(false));
         }
 
-        // A1 cell?
-        if let Some((row, col, row_abs, col_abs)) = sheet_core::parse_a1(tok) {
-            return Ok(TokKind::Cell {
-                row,
-                col,
-                row_abs,
-                col_abs,
-            });
+        // A1 cell? — but a run immediately followed by `(` is a CALL, never a
+        // ref: `LOG10` is the one registered name that is also a valid A1
+        // address (cols L-O-G, row 10), and Excel itself resolves `LOG10(` as
+        // the function. The `(`-peek keeps `LOG10(8)` a call while a bare
+        // `LOG10` stays the cell ref (matching Excel's own disambiguation).
+        if self.peek() != Some(b'(') {
+            if let Some((row, col, row_abs, col_abs)) = sheet_core::parse_a1(tok) {
+                return Ok(TokKind::Cell {
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                });
+            }
         }
 
         // Plain identifier (name or function). Reject a `$` here: `$foo` is

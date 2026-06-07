@@ -107,6 +107,24 @@ fn lex_bool_vs_function() {
 }
 
 #[test]
+fn lex_cell_vs_function() {
+    // LOG10 is the one registered name that is also a valid A1 address
+    // (cols L-O-G, row 10). Followed by `(` it is the CALL (Excel's own
+    // disambiguation); bare, it stays the cell reference.
+    let call = p("LOG10(100)");
+    let log10 = sheet_core::funcs::lookup_func("LOG10").unwrap();
+    assert!(matches!(call.root, Expr::Func(id, ref a) if id == log10 && a.len() == 1));
+    assert_eq!(roundtrip("LOG10(100)"), "LOG10(100)");
+    let bare = p("LOG10");
+    let log_col = sheet_core::a1_to_col("LOG").unwrap();
+    assert!(
+        matches!(bare.root, Expr::Ref(r) if r.row == 9 && r.col == log_col),
+        "bare LOG10 must stay the A1 ref"
+    );
+    assert_eq!(roundtrip("LOG10"), "LOG10");
+}
+
+#[test]
 fn lex_error_literals() {
     for tok in [
         "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A", "#NULL!", "#SPILL!",
