@@ -49,4 +49,52 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
     e.free();
     e2.free();
   });
+
+  // FREEZE AMENDMENT (audit finding 1): a full-sheet lowered range must throw a
+  // JS error across the wasm door — NOT abort the allocator and poison the
+  // wasm-bindgen borrow (which used to brick every later &mut call). The
+  // session must stay usable after the rejection.
+  it("rejects an oversize lowered range and stays usable (finding 1)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+
+    // The full-sheet range A1:XFD1048576 (~1.7e10 cells) throws, it does not
+    // crash the module.
+    expect(() => e.get_range_lowered(0, "A1:XFD1048576", {})).toThrow(/T0 lowering cap/);
+
+    // The session is NOT poisoned: a following &mut call still works.
+    e.set_cell(0, 0, 0, "42");
+    expect(e.get_cell_display(0, 0, 0)).toBe("42");
+
+    // A range exactly at the cap is still accepted end-to-end.
+    const atCap = e.get_range_lowered(0, "A1:A1048576", {});
+    expect(atCap.rows.length).toBe(1_048_576);
+    expect(atCap.rows[0].cells[0].text).toBe("42");
+    e.free();
+  });
+
+  // FREEZE AMENDMENT (audit finding 2): set_cell with an out-of-range sheet id
+  // must throw a JS error and must NOT auto-create a phantom sheet (whose data
+  // would silently drop on save). The workbook stays one sheet, clean.
+  it("rejects an out-of-range sheet id without phantom sheets (finding 2)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+
+    expect(e.list_sheets().length).toBe(1);
+
+    // set_cell(5, ...) on a 1-sheet workbook throws across the door.
+    expect(() => e.set_cell(5, 0, 0, "boom")).toThrow(/out of range/);
+
+    // No phantom sheet was created; the workbook stays clean (not dirty).
+    expect(e.list_sheets().length).toBe(1);
+    expect(e.metadata().dirty).toBe(false);
+
+    // get_cell_display on the OOB sheet returns "" by contract, creating
+    // nothing.
+    expect(e.get_cell_display(5, 0, 0)).toBe("");
+    expect(e.list_sheets().length).toBe(1);
+    e.free();
+  });
 });

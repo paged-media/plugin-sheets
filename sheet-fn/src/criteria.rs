@@ -157,8 +157,14 @@ pub fn matches(c: &Criteria, candidate: &CellValue) -> bool {
             apply_text_op(*op, cand.as_str(), rhs.as_str())
         }
         Kind::TextMatch { matcher, negate } => {
-            let cand = coerce::to_text(candidate);
-            matcher.is_match(cand.as_str()) ^ *negate
+            // A wildcard/text PATTERN matches TEXT cells only — Excel's `*`/`?`
+            // never match numbers, bools, or blanks (audit finding 3). A
+            // non-text candidate fails the pattern; under `<>` the negation
+            // then makes it trivially TRUE (a number is "not like a*").
+            let CellValue::Text(t) = candidate else {
+                return *negate;
+            };
+            matcher.is_match(t.as_str()) ^ *negate
         }
         Kind::BareEq { number, matcher } => {
             // Number↔text equality: a numeric criterion matches numeric
@@ -177,7 +183,17 @@ pub fn matches(c: &Criteria, candidate: &CellValue) -> bool {
                 }
             }
             // ...and the wildcard text path covers text candidates (and the
-            // textual spelling of the criterion).
+            // textual spelling of the criterion). When the pattern carries an
+            // actual unescaped wildcard, it is a TEXT pattern — it matches TEXT
+            // cells only, never numbers/bools/blanks (audit finding 3). A bare
+            // literal (no wildcard) keeps the case-insensitive text-equality
+            // path, which already only matches the textual spelling.
+            if matcher.has_wildcard() {
+                let CellValue::Text(t) = candidate else {
+                    return false;
+                };
+                return matcher.is_match(t.as_str());
+            }
             let cand = coerce::to_text(candidate);
             matcher.is_match(cand.as_str())
         }
@@ -267,6 +283,16 @@ impl Matcher {
             }
         }
         Matcher { tokens }
+    }
+
+    /// Whether the compiled pattern contains an actual (unescaped) `*` or `?`
+    /// wildcard. A `~`-escaped metachar compiles to a [`Tok::Lit`], so it does
+    /// NOT count — `"a~*"` is the literal text `"a*"`, not a wildcard pattern.
+    /// Drives the "wildcards match text cells only" ruling (audit finding 3).
+    pub fn has_wildcard(&self) -> bool {
+        self.tokens
+            .iter()
+            .any(|t| matches!(t, Tok::Star | Tok::Any))
     }
 
     /// Test the whole candidate string against the pattern (anchored both
@@ -405,5 +431,44 @@ mod tests {
         let c = parse_criteria(&txt(">m"));
         assert!(matches(&c, &txt("n")));
         assert!(!matches(&c, &txt("a")));
+    }
+
+    #[test]
+    fn wildcard_matches_text_cells_only() {
+        // Audit finding 3: `*`/`?` patterns match TEXT cells only — numbers,
+        // bools, and blanks NEVER match (Excel semantics). The exact audit
+        // scenario is over {100, "hello", 200, "5"(text), empty}.
+        let star = parse_criteria(&txt("*"));
+        assert!(matches(&star, &txt("hello")), "* matches text");
+        assert!(matches(&star, &txt("5")), "* matches numeric-LOOKING text");
+        assert!(!matches(&star, &num(100.0)), "* must NOT match a number");
+        assert!(!matches(&star, &num(200.0)), "* must NOT match a number");
+        assert!(
+            !matches(&star, &CellValue::Empty),
+            "* must NOT match a blank"
+        );
+        assert!(
+            !matches(&star, &CellValue::Bool(true)),
+            "* must NOT match a bool"
+        );
+
+        // "?*" (at least one char) also matches only text cells.
+        let q = parse_criteria(&txt("?*"));
+        assert!(matches(&q, &txt("hello")));
+        assert!(matches(&q, &txt("5")));
+        assert!(!matches(&q, &num(100.0)));
+
+        // A `<>`-prefixed wildcard over a non-text cell is trivially true (a
+        // number is "not like" a text pattern).
+        let ne = parse_criteria(&txt("<>a*"));
+        assert!(matches(&ne, &num(100.0)), "number is not like a*");
+        assert!(matches(&ne, &txt("banana")));
+        assert!(!matches(&ne, &txt("apple")));
+
+        // Escaped wildcards stay literal text (no `has_wildcard` trigger): a
+        // literal "a*b" still only equals the text "a*b".
+        let lit = parse_criteria(&txt("a~*b"));
+        assert!(matches(&lit, &txt("a*b")));
+        assert!(!matches(&lit, &num(0.0)));
     }
 }

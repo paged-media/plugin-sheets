@@ -127,6 +127,21 @@ pub struct SheetSession {
     unparsed_formulas: u32,
 }
 
+/// The T0 cap on cells materialized by a single [`SheetSession::get_range_lowered`]
+/// call (FREEZE AMENDMENT, audit finding 1).
+///
+/// `lower_range` eagerly materializes `rows * cols` [`sheet_lower::LoweredCell`]s
+/// to cover the range positionally. A full-sheet range like `A1:XFD1048576`
+/// (1,048,576 rows × 16,384 cols ≈ 1.7e10 cells) would abort the wasm
+/// allocator and poison the wasm-bindgen borrow, bricking the session. We
+/// reject the lowering BEFORE materializing whenever the range area exceeds
+/// this cap. The cap is the Excel single-column row count (1,048,576) — exactly
+/// one full column lowers in well under a second (it is sparse/empty), while
+/// any genuinely huge rectangle is rejected. T1 virtualization (S-02 sheets
+/// grid) will lift this; until then a degraded-text frame over a million-cell
+/// rectangle is not a real publishing target.
+const T0_LOWER_CELL_CAP: u64 = 1_048_576;
+
 /// Error type — a plain string the wasm shim maps to `JsValue::from_str`.
 /// Calc errors (`#DIV/0!` etc.) are NOT boundary errors; they are display
 /// strings, never surfaced here.
@@ -291,6 +306,24 @@ impl SheetSession {
         col: u32,
         input: &str,
     ) -> Result<SetCellResult, SessionError> {
+        // Validate the sheet id BEFORE entering (FREEZE AMENDMENT, audit
+        // finding 2). `Engine::enter` -> `ensure_sheet` would otherwise
+        // AUTO-CREATE phantom sheets for an out-of-range id; their data then
+        // silently drops on save. The session is the boundary that rejects an
+        // OOB id (`sheet-calc` stays frozen).
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
+        if (sheet as usize) >= sheet_count {
+            return Err(SessionError(format!(
+                "sheet id {sheet} out of range ({sheet_count} sheets)"
+            )));
+        }
+
         let engine = self.engine.as_mut().expect("engine present");
         let result = engine
             .enter(sheet, row, col, input)
@@ -349,6 +382,40 @@ impl SheetSession {
         opts: LowerOptions,
     ) -> Result<sheet_lower::LoweredContent, SessionError> {
         let cell_range = parse_range(range)?;
+
+        // Validate the sheet id (FREEZE AMENDMENT, audit finding 2). Lowering
+        // an unknown sheet is itself harmless (it yields an empty-but-shaped
+        // region), but the boundary rejects an OOB id for the same contract as
+        // `set_cell`.
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
+        if (sheet as usize) >= sheet_count {
+            return Err(SessionError(format!(
+                "sheet id {sheet} out of range ({sheet_count} sheets)"
+            )));
+        }
+
+        // Cap the materialized area BEFORE lowering (FREEZE AMENDMENT, audit
+        // finding 1). u64 math so a full-sheet range (XFD1048576) cannot
+        // overflow `rows * cols`.
+        let (top, left, bottom, right) = (
+            cell_range.r0.min(cell_range.r1) as u64,
+            cell_range.c0.min(cell_range.c1) as u64,
+            cell_range.r0.max(cell_range.r1) as u64,
+            cell_range.c0.max(cell_range.c1) as u64,
+        );
+        let area = (bottom - top + 1) * (right - left + 1);
+        if area > T0_LOWER_CELL_CAP {
+            return Err(SessionError(format!(
+                "range exceeds the T0 lowering cap ({T0_LOWER_CELL_CAP} cells)"
+            )));
+        }
+
         let view = ViewOptions {
             include_grid_rules: opts.include_grid_rules.unwrap_or(true),
             header_rows: opts.header_rows.unwrap_or(0),

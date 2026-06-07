@@ -84,9 +84,11 @@ pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> O
         )
     });
 
-    // serial::serial_to_ymd rejects serial < 1 (1900) / < 0 (1904); for a
-    // time-only value (date_serial == 0) we still render time tokens. Only
-    // bail when the section actually needs the date.
+    // serial::serial_to_ymd rejects NEGATIVE serials (both systems); under
+    // 1900 serial 0 is the day-zero epoch 1900-01-00 (audit finding 4), so a
+    // date-needing section over serial 0 renders "1900-01-00" rather than
+    // falling back. We only bail when the section needs a date AND the serial
+    // is genuinely out of domain.
     let date = serial::serial_to_ymd(date_serial, sys);
     if needs_date && date.is_none() {
         return None;
@@ -217,6 +219,13 @@ mod tests {
         assert_eq!(dt("yyyy-mm-dd", 1.0), "1900-01-01");
         // serial 44197 = 2021-01-01
         assert_eq!(dt("yyyy-mm-dd", 44197.0), "2021-01-01");
+    }
+
+    #[test]
+    fn day_zero_serial0() {
+        // Audit finding 4: serial 0 is Excel's day-zero epoch 1900-01-00 — the
+        // date tokens render day 0 (zero-padded "00"), not General/#NUM!.
+        assert_eq!(dt("yyyy-mm-dd", 0.0), "1900-01-00");
     }
 
     #[test]

@@ -98,8 +98,21 @@ fn phantom_day_round_trips() {
 }
 
 #[test]
+fn serial_zero_1900_is_day_zero() {
+    // Audit finding 4: serial 0 under the 1900 system is Excel's day-zero epoch
+    // 1900-01-00 (NOT out of domain), with a symmetric inverse. The property
+    // tests above start their 1900 domain at serial 1, so this anchors 0
+    // explicitly. NEGATIVE serials remain rejected.
+    assert_eq!(serial_to_ymd(0.0, DateSystem::Date1900), Some((1900, 1, 0)));
+    assert_eq!(ymd_to_serial(1900, 1, 0, DateSystem::Date1900), Some(0.0));
+    assert_eq!(serial_to_ymd(-1.0, DateSystem::Date1900), None);
+}
+
+#[test]
 fn out_of_domain_is_none() {
-    assert_eq!(serial_to_ymd(0.0, DateSystem::Date1900), None); // < serial 1
+    // Serial 0 under 1900 is the day-zero epoch (see `serial_zero_1900_is_day_zero`),
+    // NOT out of domain; only NEGATIVE 1900 serials are None.
+    assert_eq!(serial_to_ymd(-1.0, DateSystem::Date1900), None);
     assert_eq!(serial_to_ymd(-1.0, DateSystem::Date1904), None);
     assert_eq!(
         serial_to_ymd((MAX_1900 + 1) as f64, DateSystem::Date1900),

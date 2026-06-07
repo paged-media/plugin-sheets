@@ -288,6 +288,35 @@ fn sheet_fn_date_day_leap1900() {
     assert_eq!(num("MONTH", &[n(60.0)], &ctx()), 2.0);
 }
 
+#[test]
+fn sheet_fn_date_day_zero_serial0() {
+    // Audit finding 4: Excel accepts serial 0 (the day-zero epoch 1900-01-00)
+    // where it previously yielded #NUM!. YEAR(0)=1900, MONTH(0)=1, DAY(0)=0.
+    assert_eq!(num("YEAR", &[n(0.0)], &ctx()), 1900.0);
+    assert_eq!(num("MONTH", &[n(0.0)], &ctx()), 1.0);
+    assert_eq!(num("DAY", &[n(0.0)], &ctx()), 0.0);
+    // Still rejects NEGATIVE serials.
+    assert_eq!(
+        call("YEAR", &[n(-1.0)], &ctx()),
+        CellValue::Error(CellError::Num)
+    );
+}
+
+#[test]
+fn sheet_fn_date_date_day_zero() {
+    // DATE(1900,1,0) is Excel's day-zero -> serial 0 (audit finding 4), via the
+    // rolling path (day-1 offset from 1900-01-01 = serial 1).
+    assert_eq!(num("DATE", &[n(1900.0), n(1.0), n(0.0)], &ctx()), 0.0);
+}
+
+#[test]
+fn sheet_fn_date_weekday_serial0() {
+    // WEEKDAY(0) under 1900: serial index 0 -> Saturday. Type 1 = 7 (audit
+    // finding 4); the serial-index anchors with rem_euclid: (0-1).rem_euclid(7)
+    // = 6 (Sat, sun0) -> type 1 = 7.
+    assert_eq!(num("WEEKDAY", &[n(0.0)], &ctx()), 7.0);
+}
+
 // ---------------------------------------------------------------------- TIME
 
 #[test]

@@ -22,6 +22,11 @@
 //!   inherited Lotus 1-2-3's belief that 1900 was a leap year. Serials
 //!   `1..=59` map to 1900-01-01..1900-02-28, serial `60` renders as
 //!   1900-02-29 (which never existed), and serial `61` is 1900-03-01.
+//!   Serial `0` is Excel's day-zero epoch `1900-01-00` (a second adopted
+//!   bug-for-bug ruling; audit finding 4): `YEAR/MONTH/DAY(0)` yield
+//!   `1900/1/0`, `TEXT(0,"yyyy-mm-dd")` renders `"1900-01-00"`, and
+//!   `DATE(1900,1,0)` produces serial `0`. Only NEGATIVE serials are rejected
+//!   under 1900.
 //! - **1904** (legacy Mac epoch). Serial `0` = 1904-01-01. No leap bug.
 //!
 //! Conversions use Howard Hinnant's branchless `days_from_civil` /
@@ -86,6 +91,12 @@ fn max_civil_days() -> i64 {
 /// fractional part via [`time_fraction`]).
 pub fn ymd_to_serial(y: i32, m: u32, d: u32, sys: DateSystem) -> Option<f64> {
     if m == 0 || m > 12 || d == 0 || d > 31 {
+        // Excel's day-zero epoch: 1900-01-00 IS serial 0 under the 1900
+        // system (the symmetric inverse of `serial_to_ymd(0.0)`; audit
+        // finding 4).
+        if sys == DateSystem::Date1900 && y == 1900 && m == 1 && d == 0 {
+            return Some(0.0);
+        }
         // Phantom 1900-02-29 under the 1900 system is the lone valid
         // "impossible" date.
         if sys == DateSystem::Date1900 && y == 1900 && m == 2 && d == 29 {
@@ -150,8 +161,16 @@ pub fn serial_to_ymd(serial: f64, sys: DateSystem) -> Option<(i32, u32, u32)> {
             Some(civil_from_days(days))
         }
         DateSystem::Date1900 => {
-            if n < 1 {
+            if n < 0 {
                 return None;
+            }
+            if n == 0 {
+                // Excel's day-zero epoch: serial 0 IS 1900-01-00 (the literal
+                // "1900-01-00" Excel renders, and the value DATE(1900,1,0)
+                // produces). A deliberately adopted bug-for-bug ruling
+                // (`sheet.format.date.serial-1900` day-zero note, audit
+                // finding 4). The 1904 system keeps serial 0 = 1904-01-01.
+                return Some((1900, 1, 0));
             }
             if n == 60 {
                 // The phantom 1900-02-29.

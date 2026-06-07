@@ -367,6 +367,51 @@ fn sheet_fn_agg_countif_number_text_equality() {
 }
 
 #[test]
+fn sheet_fn_agg_countif_wildcard_matches_text_only() {
+    // Audit finding 3: wildcard criteria match TEXT cells only — numbers and
+    // blanks NEVER match. The exact audit range: {100, "hello", 200, "5"(text),
+    // empty}. COUNTIF(range,"*") == 2 (the two text cells), NOT 5.
+    let cells = [
+        num(100.0),
+        txt("hello"),
+        num(200.0),
+        txt("5"), // numeric-LOOKING text — still a text cell, so it matches
+        CellValue::Empty,
+    ];
+    let star = [Arg::Range(row_view(&cells)), Arg::Scalar(txt("*"))];
+    assert_eq!(
+        call("COUNTIF", &star),
+        num(2.0),
+        "COUNTIF(*) = text cells only"
+    );
+
+    // "?*" (at least one character) likewise matches only the two text cells.
+    let qstar = [Arg::Range(row_view(&cells)), Arg::Scalar(txt("?*"))];
+    assert_eq!(
+        call("COUNTIF", &qstar),
+        num(2.0),
+        "COUNTIF(?*) = text cells"
+    );
+}
+
+#[test]
+fn sheet_fn_agg_sumif_wildcard_ignores_numeric_criteria_cells() {
+    // Audit finding 3, SUMIF form: a wildcard criterion over a criteria range
+    // that mixes numbers and text must IGNORE the numeric criteria cells
+    // (they never match `*`), summing only the offset-aligned amounts of the
+    // matched TEXT rows.
+    let labels = [num(100.0), txt("hello"), num(200.0), txt("world")];
+    let amounts = [num(1.0), num(10.0), num(100.0), num(1000.0)];
+    let args = [
+        Arg::Range(row_view(&labels)),
+        Arg::Scalar(txt("*")),
+        Arg::Range(row_view(&amounts)),
+    ];
+    // Only the text labels ("hello", "world") match -> 10 + 1000 = 1010.
+    assert_eq!(call("SUMIF", &args), num(1010.0));
+}
+
+#[test]
 fn sheet_fn_agg_countif_arity_violation() {
     // arity is exactly 2.
     assert_eq!(

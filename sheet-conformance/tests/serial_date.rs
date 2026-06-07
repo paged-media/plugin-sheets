@@ -47,9 +47,26 @@ fn sheet_format_date_serial_1900() {
             "ymd {ymd:?} (1900)"
         );
     }
-    // Below/above the domain is None.
-    assert_eq!(serial_to_ymd(0.0, DateSystem::Date1900), None);
+    // Above the domain is None; NEGATIVE serials are None. Serial 0 is NOT
+    // out of domain under 1900 — it is the day-zero epoch (see
+    // `sheet_format_date_serial0_1900`).
+    assert_eq!(serial_to_ymd(-1.0, DateSystem::Date1900), None);
     assert_eq!(serial_to_ymd(2958466.0, DateSystem::Date1900), None);
+}
+
+#[test]
+fn sheet_format_date_serial0_1900() {
+    // Audit finding 4: Excel's day-zero epoch. Under the 1900 system serial 0
+    // IS 1900-01-00 (a deliberately adopted bug-for-bug ruling), with a
+    // symmetric inverse. NEGATIVE serials remain rejected.
+    assert_eq!(serial_to_ymd(0.0, DateSystem::Date1900), Some((1900, 1, 0)));
+    assert_eq!(ymd_to_serial(1900, 1, 0, DateSystem::Date1900), Some(0.0));
+    assert_eq!(serial_to_ymd(-1.0, DateSystem::Date1900), None);
+
+    // The day-zero date does NOT exist in the 1904 system (serial 0 there is
+    // 1904-01-01) — 1900-01-00 is rejected as a calendar date.
+    assert_eq!(ymd_to_serial(1900, 1, 0, DateSystem::Date1904), None);
+    assert_eq!(serial_to_ymd(0.0, DateSystem::Date1904), Some((1904, 1, 1)));
 }
 
 #[test]

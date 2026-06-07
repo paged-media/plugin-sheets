@@ -50,10 +50,13 @@
 
 - id: sheet.format.date.serial-1900
   title: 1900 date system serial<->calendar conversion
+  ruling: "Day-zero epoch (audit finding 4): under the 1900 system serial 0 IS 1900-01-00 (Excel's literal day-zero), with a symmetric inverse ymd_to_serial(1900,1,0)=0. A deliberately adopted bug-for-bug ruling — YEAR/MONTH/DAY(0) yield 1900/1/0, TEXT(0,\"yyyy-mm-dd\")=\"1900-01-00\", DATE(1900,1,0)=0, WEEKDAY(0)=7 (Saturday, type 1). Only NEGATIVE serials are rejected under 1900; the 1904 system keeps serial 0 = 1904-01-01."
   status: implemented
-  provenance: ["ECMA-376 §18.17.4.1", "OpenFormula date conventions"]
+  provenance: ["ECMA-376 §18.17.4.1", "OpenFormula date conventions", "Excel day-zero (1900-01-00) display behavior (public docs)"]
   tests:
-    rust: ["sheet-conformance/tests/serial_date.rs::sheet_format_date_serial_1900"]
+    rust:
+      - "sheet-conformance/tests/serial_date.rs::sheet_format_date_serial_1900"
+      - "sheet-conformance/tests/serial_date.rs::sheet_format_date_serial0_1900"
 
 - id: sheet.format.date.leap1900
   title: "1900 leap-year bug — serial 60 is the nonexistent 1900-02-29 (deliberate Excel-compat defect)"

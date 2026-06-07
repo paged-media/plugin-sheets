@@ -286,6 +286,88 @@ fn sheet_js_get_range_lowered_returns_formatted_rows() {
         .is_err());
 }
 
+/// FREEZE AMENDMENT (audit finding 1): a full-sheet lowered range must be a
+/// boundary error, NOT a panic/allocation abort, AND the session must remain
+/// usable afterwards (the old bug poisoned the wasm-bindgen borrow so every
+/// later `&mut` call threw). A range exactly AT the cap is accepted shape-wise.
+#[test]
+fn sheet_js_get_range_lowered_caps_full_sheet() {
+    let mut s = SheetSession::new();
+
+    // (a) The full-sheet range A1:XFD1048576 (~1.7e10 cells) is rejected as a
+    //     boundary error rather than panicking/aborting.
+    let oversize = s.get_range_lowered(0, "A1:XFD1048576", LowerOptions::default());
+    let err = oversize.expect_err("full-sheet range must be Err, not a panic");
+    assert!(
+        err.to_string().contains("T0 lowering cap"),
+        "message names the cap: {err}"
+    );
+
+    // (b) The session REMAINS USABLE after the rejection: set_cell still works
+    //     (the old poisoned-borrow bug would have made this throw).
+    s.set_cell(0, 0, 0, "42")
+        .expect("set_cell works after rejection");
+    assert_eq!(s.get_cell_display(0, 0, 0), "42");
+
+    // (c) A range EXACTLY at the cap (A1:A1048576 = 1 col × 1,048,576 rows =
+    //     1,048,576 cells) is accepted shape-wise. It is sparse/empty so it
+    //     materializes fast (asserted under ~2s).
+    let start = std::time::Instant::now();
+    let at_cap = s
+        .get_range_lowered(0, "A1:A1048576", LowerOptions::default())
+        .expect("a range exactly at the cap is accepted");
+    let elapsed = start.elapsed();
+    assert_eq!(at_cap.rows.len(), 1_048_576);
+    assert_eq!(at_cap.cols.len(), 1);
+    // A1 is the value we just set; the rest are empty positional "".
+    assert_eq!(at_cap.rows[0].cells[0].text, "42");
+    assert_eq!(at_cap.rows[1].cells[0].text, "");
+    assert!(
+        elapsed.as_secs() < 2,
+        "at-cap lowering took {elapsed:?} (>2s); reconsider the cap"
+    );
+
+    // One cell over the cap (A1:B1048576 = 2,097,152 cells) is rejected.
+    assert!(s
+        .get_range_lowered(0, "A1:B1048576", LowerOptions::default())
+        .is_err());
+}
+
+/// FREEZE AMENDMENT (audit finding 2): `set_cell` with an out-of-range sheet id
+/// must be a boundary error and must NOT auto-create a phantom sheet (which
+/// would silently drop its data on save). The workbook stays 1 sheet, clean.
+#[test]
+fn sheet_js_set_cell_rejects_oob_sheet() {
+    let mut s = SheetSession::new();
+    assert_eq!(s.list_sheets().len(), 1, "fresh workbook has one sheet");
+
+    // set_cell(5, ...) on a 1-sheet workbook -> Err.
+    let err = s
+        .set_cell(5, 0, 0, "boom")
+        .expect_err("OOB sheet id must be Err");
+    assert!(
+        err.to_string().contains("out of range"),
+        "boundary message: {err}"
+    );
+
+    // No phantom sheet was created; metadata stays clean.
+    assert_eq!(s.list_sheets().len(), 1, "no phantom sheet auto-created");
+    assert!(
+        !s.metadata().dirty,
+        "rejected edit leaves the workbook clean"
+    );
+
+    // get_range_lowered on the OOB sheet is also a boundary error.
+    assert!(s
+        .get_range_lowered(5, "A1", LowerOptions::default())
+        .is_err());
+
+    // get_cell_display on an OOB sheet returns "" by contract and CANNOT create
+    // a sheet (it borrows &self) — the listing is unchanged.
+    assert_eq!(s.get_cell_display(5, 0, 0), "");
+    assert_eq!(s.list_sheets().len(), 1, "get_cell_display creates nothing");
+}
+
 // ── sheet.js.set_now ────────────────────────────────────────────────────────
 
 /// `set_now` updates the clock without panicking; a NOW-driven cell reflects
