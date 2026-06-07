@@ -1,0 +1,31 @@
+{
+  "id": "media.paged.sheet",
+  "name": "paged.sheet",
+  "version": "0.1.0",
+  "apiVersion": "^0.2",
+  "publisher": "paged.media",
+  "capabilities": {
+    "document": {
+      "read": "broad",
+      "write": "scoped"
+    },
+    "rendering": ["hitTest"],
+    "network": false,
+    "clipboard": "none",
+    "wasm": [
+      {
+        "name": "sheet-engine",
+        "path": "bin/sheet_js_bg.wasm",
+        "purpose": "compute",
+        "maxBytes": 8388608
+      }
+    ]
+  },
+  "contributes": {
+    "panels": ["media.paged.sheet.panel.workbook"],
+    "commands": [
+      "media.paged.sheet.command.importXlsx",
+      "media.paged.sheet.command.lowerToFrame"
+    ]
+  }
+}

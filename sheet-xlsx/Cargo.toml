@@ -1,0 +1,18 @@
+[package]
+name = "sheet-xlsx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet XLSX I/O (spec §10): OPC zip + SpreadsheetML parse, the preservation invariant, writer. Zero-edit round-trip is byte-identical (modulo the calcChain ruling)."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+zip.workspace = true
+quick-xml.workspace = true
+thiserror.workspace = true
+compact_str.workspace = true

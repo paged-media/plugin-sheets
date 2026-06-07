@@ -1,0 +1,196 @@
+# sheet.fn.text.* — text family (T0, spec §11). Schema: see math.yaml.
+
+- id: sheet.fn.text.len
+  name: LEN
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text::len
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LEN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_len"]
+    corpus: ["corpus/fn-corpus/text/len.golden.tsv"]
+
+- id: sheet.fn.text.left
+  name: LEFT
+  family: text
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: text::left
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LEFT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_left"]
+    corpus: ["corpus/fn-corpus/text/left.golden.tsv"]
+
+- id: sheet.fn.text.right
+  name: RIGHT
+  family: text
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: text::right
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (RIGHT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_right"]
+    corpus: ["corpus/fn-corpus/text/right.golden.tsv"]
+
+- id: sheet.fn.text.mid
+  name: MID
+  family: text
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: text::mid
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MID)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_mid"]
+    corpus: ["corpus/fn-corpus/text/mid.golden.tsv"]
+
+- id: sheet.fn.text.concat
+  name: CONCAT
+  family: text
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: text::concat
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CONCAT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_concat"]
+    corpus: ["corpus/fn-corpus/text/concat.golden.tsv"]
+
+- id: sheet.fn.text.concatenate
+  name: CONCATENATE
+  family: text
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: false
+  rust: text::concatenate
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CONCATENATE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_concatenate"]
+    corpus: ["corpus/fn-corpus/text/concatenate.golden.tsv"]
+
+- id: sheet.fn.text.upper
+  name: UPPER
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text::upper
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (UPPER)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_upper"]
+    corpus: ["corpus/fn-corpus/text/upper.golden.tsv"]
+
+- id: sheet.fn.text.lower
+  name: LOWER
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text::lower
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LOWER)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_lower"]
+    corpus: ["corpus/fn-corpus/text/lower.golden.tsv"]
+
+- id: sheet.fn.text.trim
+  name: TRIM
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text::trim
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TRIM)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_trim"]
+    corpus: ["corpus/fn-corpus/text/trim.golden.tsv"]
+
+- id: sheet.fn.text.text
+  name: TEXT
+  family: text
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: text::text
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TEXT) — format codes via sheet-format"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_text"]
+    corpus: ["corpus/fn-corpus/text/text.golden.tsv"]
+
+- id: sheet.fn.text.find
+  name: FIND
+  family: text
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: text::find
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (FIND) — case-sensitive, no wildcards"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_find"]
+    corpus: ["corpus/fn-corpus/text/find.golden.tsv"]
+
+- id: sheet.fn.text.search
+  name: SEARCH
+  family: text
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: text::search
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SEARCH) — case-insensitive"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_search"]
+    corpus: ["corpus/fn-corpus/text/search.golden.tsv"]
+
+- id: sheet.fn.text.substitute
+  name: SUBSTITUTE
+  family: text
+  arity: { min: 3, max: 4 }
+  volatility: none
+  range_aware: false
+  rust: text::substitute
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SUBSTITUTE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_substitute"]
+    corpus: ["corpus/fn-corpus/text/substitute.golden.tsv"]
+
+- id: sheet.fn.text.rept
+  name: REPT
+  family: text
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: text::rept
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (REPT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_rept"]
+    corpus: ["corpus/fn-corpus/text/rept.golden.tsv"]
+
+- id: sheet.fn.text.value
+  name: VALUE
+  family: text
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: text::value
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (VALUE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_value"]
+    corpus: ["corpus/fn-corpus/text/value.golden.tsv"]

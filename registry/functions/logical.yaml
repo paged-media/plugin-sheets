@@ -1,0 +1,92 @@
+# sheet.fn.logical.* — logical family (T0, spec §11). Schema: see math.yaml.
+
+- id: sheet.fn.logical.if
+  name: IF
+  family: logical
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: logical::if_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (IF)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_if"]
+    corpus: ["corpus/fn-corpus/logical/if.golden.tsv"]
+
+- id: sheet.fn.logical.and
+  name: AND
+  family: logical
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: logical::and_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (AND)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_and"]
+    corpus: ["corpus/fn-corpus/logical/and.golden.tsv"]
+
+- id: sheet.fn.logical.or
+  name: OR
+  family: logical
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: logical::or_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (OR)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_or"]
+    corpus: ["corpus/fn-corpus/logical/or.golden.tsv"]
+
+- id: sheet.fn.logical.not
+  name: NOT
+  family: logical
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: logical::not_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (NOT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_not"]
+    corpus: ["corpus/fn-corpus/logical/not.golden.tsv"]
+
+- id: sheet.fn.logical.true
+  name: TRUE
+  family: logical
+  arity: { min: 0, max: 0 }
+  volatility: none
+  range_aware: false
+  rust: logical::true_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TRUE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_true"]
+    corpus: ["corpus/fn-corpus/logical/true.golden.tsv"]
+
+- id: sheet.fn.logical.false
+  name: FALSE
+  family: logical
+  arity: { min: 0, max: 0 }
+  volatility: none
+  range_aware: false
+  rust: logical::false_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (FALSE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_false"]
+    corpus: ["corpus/fn-corpus/logical/false.golden.tsv"]
+
+- id: sheet.fn.logical.iferror
+  name: IFERROR
+  family: logical
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: logical::iferror
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (IFERROR)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_iferror"]
+    corpus: ["corpus/fn-corpus/logical/iferror.golden.tsv"]

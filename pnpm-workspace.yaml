@@ -1,0 +1,5 @@
+# The TS side of the bundle — thin glue ONLY (the calc engine, formats,
+# XLSX I/O and lowering geometry are the Rust workspace; spec §4 +
+# CLAUDE.md hard rule). Layout follows plugin-draw/plugin-web.
+packages:
+  - "packages/*"

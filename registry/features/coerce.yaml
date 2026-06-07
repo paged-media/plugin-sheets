@@ -1,0 +1,53 @@
+# sheet.fn.coerce.* — argument-coercion rules: shared machinery with its
+# own registry rows (spec §7) because this is where cross-engine
+# incompatibilities live. NOT dispatchable functions — excluded from the
+# functions/ codegen on purpose.
+
+- id: sheet.fn.coerce.to-number
+  title: "Coercion to number: numeric text parses, bools are 1/0, empty is 0, non-numeric text is #VALUE!"
+  status: planned
+  provenance: ["ECMA-376 implicit conversion rules", "OpenFormula §6.3"]
+  tests:
+    rust: ["sheet-conformance/tests/coerce.rs::sheet_fn_coerce_to_number"]
+    corpus: ["corpus/fn-corpus/coerce/to_number.golden.tsv"]
+
+- id: sheet.fn.coerce.to-text
+  title: "Coercion to text: numbers via General, bools as TRUE/FALSE, empty as \"\""
+  status: planned
+  provenance: ["ECMA-376 implicit conversion rules"]
+  tests:
+    rust: ["sheet-conformance/tests/coerce.rs::sheet_fn_coerce_to_text"]
+    corpus: ["corpus/fn-corpus/coerce/to_text.golden.tsv"]
+
+- id: sheet.fn.coerce.to-bool
+  title: "Coercion to bool: 0 is FALSE, nonzero numbers TRUE, text TRUE/FALSE (case-insensitive), other text #VALUE!"
+  status: planned
+  provenance: ["ECMA-376 implicit conversion rules"]
+  tests:
+    rust: ["sheet-conformance/tests/coerce.rs::sheet_fn_coerce_to_bool"]
+    corpus: ["corpus/fn-corpus/coerce/to_bool.golden.tsv"]
+
+- id: sheet.fn.coerce.error-propagation
+  title: First-error-wins propagation through operators and non-error-handling functions
+  status: planned
+  provenance: ["ECMA-376 error semantics"]
+  tests:
+    rust: ["sheet-conformance/tests/coerce.rs::sheet_fn_coerce_error_propagation"]
+    corpus: ["corpus/fn-corpus/coerce/errors.golden.tsv"]
+
+- id: sheet.fn.coerce.empty-semantics
+  title: Empty-cell semantics (empty vs 0 vs \"\" in arithmetic, comparison, COUNT vs COUNTA)
+  status: planned
+  provenance: ["Excel observed behavior (oracle-verified later)", "OpenFormula §6.3"]
+  tests:
+    rust: ["sheet-conformance/tests/coerce.rs::sheet_fn_coerce_empty_semantics"]
+    corpus: ["corpus/fn-corpus/coerce/empty.golden.tsv"]
+
+- id: sheet.fn.coerce.comparison
+  title: "Comparison coercion + cross-type ordering ruling: number < text < bool; text compare case-insensitive"
+  ruling: "Excel total order across types adopted for sort/compare operators."
+  status: planned
+  provenance: ["Excel observed behavior (documented)", "OpenFormula §6.3"]
+  tests:
+    rust: ["sheet-conformance/tests/coerce.rs::sheet_fn_coerce_comparison"]
+    corpus: ["corpus/fn-corpus/coerce/comparison.golden.tsv"]

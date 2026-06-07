@@ -1,0 +1,17 @@
+[package]
+name = "sheet-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet number-format engine (spec §9): ECMA-376 format codes (T0 core), General semantics, 1900/1904 date serials with the leap-bug ruling."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+compact_str.workspace = true
+ryu.workspace = true
+rustc-hash.workspace = true

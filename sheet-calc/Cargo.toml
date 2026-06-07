@@ -1,0 +1,18 @@
+[package]
+name = "sheet-calc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet dependency graph, dirty propagation, topological recalc, cycle detection, volatility, deterministic RNG (spec §6.2)."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-parser = { path = "../sheet-parser" }
+sheet-fn = { path = "../sheet-fn" }
+rustc-hash.workspace = true
+smallvec.workspace = true

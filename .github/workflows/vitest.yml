@@ -1,0 +1,49 @@
+name: vitest
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vitest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vitest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin-sheets
+      - uses: actions/checkout@v4
+        with:
+          repository: paged-media/sdk
+          path: sdk
+          token: ${{ secrets.STATE_DISPATCH_TOKEN || github.token }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install (sdk sibling satisfies the link chain)
+        run: pnpm install --frozen-lockfile --dir plugin-sheets
+      - name: contract-import lint (fail fast)
+        run: node plugin-sheets/scripts/check-contract-imports.mjs
+      - name: vitest (junit per package; red results still publish)
+        run: |
+          pnpm -r --no-bail --dir plugin-sheets exec \
+            vitest run --reporter=junit --outputFile=junit.xml || true
+          cat plugin-sheets/packages/*/junit.xml > junit-all.xml
+          [ -s junit-all.xml ]
+      - uses: paged-media/state/actions/publish-results@main
+        with:
+          source: plugin-sheets
+          suite: vitest
+          format: nextest-junit
+          path: junit-all.xml
+          map: "true"
+          dispatch-token: ${{ secrets.STATE_DISPATCH_TOKEN }}

@@ -1,0 +1,16 @@
+[package]
+name = "sheet-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet formula lexer + Pratt parser -> canonical AST (Excel dialect, spec §6.1); printer, reference extraction, structural rewrite."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+thiserror.workspace = true
+smallvec.workspace = true

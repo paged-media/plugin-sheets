@@ -1,0 +1,59 @@
+# sheet.parser.* — formula dialect features (spec §6.1). Excel-first
+# (D-2); OpenFormula maps onto the same canonical AST later.
+
+- id: sheet.parser.literals
+  title: Literals — numbers, strings (doubled-quote escapes), bools, error codes
+  status: planned
+  provenance: ["ECMA-376 §18.17.2 (formula grammar)"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_literals"]
+
+- id: sheet.parser.refs.a1
+  title: A1 references with $ absolute flags, ranges (:), sheet-qualified ('Quoted Name'!A1)
+  status: planned
+  provenance: ["ECMA-376 §18.17.2"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_refs_a1"]
+
+- id: sheet.parser.operators
+  title: "Operator set + Excel precedence: : > % > ^ > unary +- > * / > + - > & > comparisons"
+  status: planned
+  provenance: ["ECMA-376 §18.17.2", "Microsoft operator-precedence documentation (public)"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_operators"]
+
+- id: sheet.parser.functions
+  title: Function calls resolved via the generated registry name table (unregistered name parses to #NAME? at eval)
+  status: planned
+  provenance: ["spec §7 registry-driven dispatch"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_functions"]
+
+- id: sheet.parser.union-intersection
+  title: Union (,) and intersection (space) operators — parse-only in T0 (evaluation is oracle-gated, T1)
+  ruling: "Implicit intersection is a top cross-engine disagreement source; grammar accepts, evaluator returns #VALUE! until the oracle lands."
+  status: planned
+  provenance: ["ECMA-376 §18.17.2", "spec §7 coercion note"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_union_intersection"]
+
+- id: sheet.parser.array-literals
+  title: "Array literals {1,2;3,4} — parse-only in T0 (dynamic arrays are T1 §6.4)"
+  status: planned
+  provenance: ["ECMA-376 §18.17.2"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_array_literals"]
+
+- id: sheet.parser.print.canonical
+  title: AST -> canonical text; parse∘print is an AST fixpoint (property)
+  status: planned
+  provenance: ["spec §6.1 display round-trip"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_print_canonical"]
+
+- id: sheet.parser.names
+  title: Defined names (workbook + sheet scope) resolve through the name table
+  status: planned
+  provenance: ["ECMA-376 §18.2.5 (definedNames)"]
+  tests:
+    rust: ["sheet-conformance/tests/parser_roundtrip.rs::sheet_parser_names"]

@@ -1,0 +1,30 @@
+[package]
+name = "sheet-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet TEST-ONLY conformance: golden corpora, property tests, env-gated LibreOffice oracle skeleton, the coverage gate. Never a dependency of any shipping crate."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "coverage-gate"
+path = "src/bin/coverage_gate.rs"
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-parser = { path = "../sheet-parser" }
+sheet-calc = { path = "../sheet-calc" }
+sheet-fn = { path = "../sheet-fn" }
+sheet-format = { path = "../sheet-format" }
+sheet-xlsx = { path = "../sheet-xlsx" }
+sheet-lower = { path = "../sheet-lower" }
+serde.workspace = true
+serde_yaml.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

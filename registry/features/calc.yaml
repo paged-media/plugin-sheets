@@ -1,0 +1,61 @@
+# sheet.calc.* — calculation-engine features and rulings (spec §6).
+# Build-consumed half of the two-registry split; the state-repo row is
+# the status ledger. Schema: id/title/status/provenance/tests
+# (+ ruling: for documented Excel-compat decisions).
+
+- id: sheet.calc.graph.cell-edges
+  title: Dependency graph — per-cell edges from reference extraction
+  status: planned
+  provenance: ["spec §6.2"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_graph_cell_edges"]
+
+- id: sheet.calc.graph.range-invalidation
+  title: Range deps as single nodes with bounding-box invalidation (T0; interval index is the M1 upgrade)
+  status: planned
+  provenance: ["spec §6.2 — range edges interval-tracked, not exploded per-cell"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_graph_range_invalidation"]
+
+- id: sheet.calc.dirty.transitive
+  title: Dirty propagation — committed edit marks dependents dirty transitively
+  status: planned
+  provenance: ["spec §6.2"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_dirty_transitive"]
+
+- id: sheet.calc.recalc.topo
+  title: Topological recalc of the dirty cut (Kahn, stable frontier ordering)
+  status: planned
+  provenance: ["spec §6.2"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_order.rs::sheet_calc_recalc_topo"]
+
+- id: sheet.calc.recalc.order-independence
+  title: Determinism — recalculation order must not affect results (property)
+  status: planned
+  provenance: ["spec §6.2 / §12.4"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_order.rs::sheet_calc_recalc_order_independence"]
+
+- id: sheet.calc.circular
+  title: Circular references with iteration off — cycle members get the internal Circular diagnostic (displays #REF!-class, reported on RecalcResult.circular); iterative calc is D-7/T2
+  ruling: "Excel raises a circular warning; we surface the cycle set to glue. Not one of the 8 wire error codes."
+  status: planned
+  provenance: ["spec §6.2, D-7"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_circular"]
+
+- id: sheet.calc.volatile
+  title: Volatile functions reseeded dirty every recalc pass (NOW/TODAY/RAND/RANDBETWEEN per registry volatility flag)
+  status: planned
+  provenance: ["spec §6.2"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_graph.rs::sheet_calc_volatile"]
+
+- id: sheet.calc.rewrite.structural
+  title: Row/col insert/delete rewrite formulas (shift refs; deleted-span refs become #REF!)
+  status: planned
+  provenance: ["spec §6.1 — rewrite rules are registry-tested features"]
+  tests:
+    rust: ["sheet-conformance/tests/calc_rewrite.rs::sheet_calc_rewrite_structural"]

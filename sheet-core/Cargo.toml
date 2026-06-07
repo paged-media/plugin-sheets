@@ -1,0 +1,21 @@
+[package]
+name = "sheet-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet frozen core types (spec §5): CellValue, CellRef/RangeRef, SheetModel, the canonical AST, interners. Leaf crate — depends on nothing in the workspace. Registry codegen (name->FuncId table) via build.rs."
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+compact_str.workspace = true
+smallvec.workspace = true
+serde.workspace = true
+
+[build-dependencies]
+serde.workspace = true
+serde_yaml.workspace = true

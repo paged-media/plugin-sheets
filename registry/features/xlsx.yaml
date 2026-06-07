@@ -1,0 +1,82 @@
+# sheet.xlsx.* — XLSX I/O features on the fidelity ladder (spec §10.4):
+# parsed -> preserved -> calculated -> rendered -> round-trips.
+
+- id: sheet.xlsx.opc.container
+  title: OPC zip container — parts, [Content_Types].xml, relationships
+  tier: parsed
+  status: planned
+  provenance: ["ECMA-376 Part 2 (OPC)"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_opc_container"]
+
+- id: sheet.xlsx.workbook
+  title: workbook.xml — sheet list, defined names, date1904 flag
+  tier: parsed
+  status: planned
+  provenance: ["ECMA-376 §18.2"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_workbook"]
+
+- id: sheet.xlsx.worksheet.cells
+  title: sheetN.xml — cell values (n/s/str/b/e types), formulas, dims, merges, col widths, row heights
+  tier: parsed
+  status: planned
+  provenance: ["ECMA-376 §18.3"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_worksheet_cells"]
+
+- id: sheet.xlsx.shared-strings
+  title: sharedStrings.xml <-> string interner (plain + preserved rich-text runs)
+  tier: parsed
+  status: planned
+  provenance: ["ECMA-376 §18.4"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_shared_strings"]
+
+- id: sheet.xlsx.styles
+  title: styles.xml — numFmts, fonts, fills, borders, cellXfs into the interned style table
+  tier: parsed
+  status: planned
+  provenance: ["ECMA-376 §18.8"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_styles"]
+
+- id: sheet.xlsx.preserve.unknown-parts
+  title: Unknown parts preserved byte-identical with relationships intact (pivot caches, vbaProject.bin, custom XML)
+  tier: preserved
+  status: planned
+  provenance: ["spec §10.2 preservation invariant"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_preserve_unknown_parts"]
+
+- id: sheet.xlsx.preserve.unknown-subtrees
+  title: Unknown elements/attributes inside understood parts preserved via raw-subtree retention, re-emitted in place
+  tier: preserved
+  status: planned
+  provenance: ["spec §10.2"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_preserve_unknown_subtrees"]
+
+- id: sheet.xlsx.roundtrip.zero-edit
+  title: Zero-edit round-trip — open->save byte-identical for every untouched part (lazy-verbatim), modulo the calcChain ruling
+  tier: round-trips
+  status: planned
+  provenance: ["spec §10.2 — 'Paged never destroys a workbook'"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_roundtrip_zero_edit"]
+
+- id: sheet.xlsx.calcchain.drop
+  title: calcChain.xml dropped on write (spec-permitted; consumers regenerate)
+  ruling: "ECMA-376 permits absent calc chain; Excel rebuilds it. Dropping avoids maintaining a stale chain after edits."
+  status: planned
+  provenance: ["ECMA-376 §18.6 (calculation chain, optional part)"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_calcchain_drop"]
+
+- id: sheet.xlsx.writer.valid-strict
+  title: Writer maintains content types, rels, shared strings so files stay valid for strict readers
+  tier: round-trips
+  status: planned
+  provenance: ["ECMA-376 Part 2"]
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_writer_valid_strict"]

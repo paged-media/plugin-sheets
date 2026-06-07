@@ -1,0 +1,105 @@
+# sheet.fn.agg.* — agg family (T0, spec §11). Schema: see math.yaml.
+
+- id: sheet.fn.agg.average
+  name: AVERAGE
+  family: agg
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: agg::average
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (AVERAGE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_average"]
+    corpus: ["corpus/fn-corpus/agg/average.golden.tsv"]
+
+- id: sheet.fn.agg.min
+  name: MIN
+  family: agg
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: agg::min
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MIN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_min"]
+    corpus: ["corpus/fn-corpus/agg/min.golden.tsv"]
+
+- id: sheet.fn.agg.max
+  name: MAX
+  family: agg
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: agg::max
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MAX)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_max"]
+    corpus: ["corpus/fn-corpus/agg/max.golden.tsv"]
+
+- id: sheet.fn.agg.count
+  name: COUNT
+  family: agg
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: agg::count
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COUNT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_count"]
+    corpus: ["corpus/fn-corpus/agg/count.golden.tsv"]
+
+- id: sheet.fn.agg.counta
+  name: COUNTA
+  family: agg
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: agg::counta
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COUNTA)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_counta"]
+    corpus: ["corpus/fn-corpus/agg/counta.golden.tsv"]
+
+- id: sheet.fn.agg.countblank
+  name: COUNTBLANK
+  family: agg
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  rust: agg::countblank
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COUNTBLANK)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_countblank"]
+    corpus: ["corpus/fn-corpus/agg/countblank.golden.tsv"]
+
+- id: sheet.fn.agg.sumif
+  name: SUMIF
+  family: agg
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: agg::sumif
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SUMIF) — criteria grammar shared with COUNTIF"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_sumif"]
+    corpus: ["corpus/fn-corpus/agg/sumif.golden.tsv"]
+
+- id: sheet.fn.agg.countif
+  name: COUNTIF
+  family: agg
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: agg::countif
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COUNTIF)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_countif"]
+    corpus: ["corpus/fn-corpus/agg/countif.golden.tsv"]

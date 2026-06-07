@@ -1,0 +1,407 @@
+# sheet.fn.math.* — math/trig family (T0, spec §11).
+# Schema (FROZEN, M0 phase 0 — consumed by sheet-core/build.rs and
+# sheet-fn/build.rs; an unregistered function is uncallable by
+# construction):
+#   id          immutable feature id (joins the state registry by id)
+#   name        the callable name (UPPER, Excel dialect)
+#   family      module under sheet-fn/src/families/
+#   arity       { min, max } — max: null = variadic
+#   volatility  none | volatile
+#   range_aware true when the fn accepts Arg::Range
+#   ref_args    true when args must arrive as references (ROW/COLUMN)
+#   rust        symbol under sheet_fn::families:: implementing
+#               fn(&[Arg], &EvalCtx) -> CellValue
+#   status      planned | implemented   (gates dispatch + coverage)
+#   provenance  sources (ECMA-376 / OpenFormula / public docs / oracle)
+#   tests       rust test pointers + golden corpus paths (the coverage
+#               gate verifies both for every implemented row)
+
+- id: sheet.fn.math.sum
+  name: SUM
+  family: math
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: math::sum
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SUM)", "OpenFormula §6.16.61"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sum"]
+    corpus: ["corpus/fn-corpus/math/sum.golden.tsv"]
+
+- id: sheet.fn.math.product
+  name: PRODUCT
+  family: math
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: math::product
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (PRODUCT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_product"]
+    corpus: ["corpus/fn-corpus/math/product.golden.tsv"]
+
+- id: sheet.fn.math.abs
+  name: ABS
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::abs
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ABS)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_abs"]
+    corpus: ["corpus/fn-corpus/math/abs.golden.tsv"]
+
+- id: sheet.fn.math.sign
+  name: SIGN
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::sign
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SIGN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sign"]
+    corpus: ["corpus/fn-corpus/math/sign.golden.tsv"]
+
+- id: sheet.fn.math.sqrt
+  name: SQRT
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::sqrt
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SQRT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sqrt"]
+    corpus: ["corpus/fn-corpus/math/sqrt.golden.tsv"]
+
+- id: sheet.fn.math.exp
+  name: EXP
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::exp
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (EXP)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_exp"]
+    corpus: ["corpus/fn-corpus/math/exp.golden.tsv"]
+
+- id: sheet.fn.math.ln
+  name: LN
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::ln
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_ln"]
+    corpus: ["corpus/fn-corpus/math/ln.golden.tsv"]
+
+- id: sheet.fn.math.log10
+  name: LOG10
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::log10
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LOG10)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_log10"]
+    corpus: ["corpus/fn-corpus/math/log10.golden.tsv"]
+
+- id: sheet.fn.math.log
+  name: LOG
+  family: math
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::log
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (LOG)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_log"]
+    corpus: ["corpus/fn-corpus/math/log.golden.tsv"]
+
+- id: sheet.fn.math.power
+  name: POWER
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::power
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (POWER)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_power"]
+    corpus: ["corpus/fn-corpus/math/power.golden.tsv"]
+
+- id: sheet.fn.math.mod
+  name: MOD
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::mod_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MOD) — sign follows divisor (Excel ruling)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_mod"]
+    corpus: ["corpus/fn-corpus/math/mod.golden.tsv"]
+
+- id: sheet.fn.math.round
+  name: ROUND
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::round
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ROUND) — half away from zero (Excel ruling)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_round"]
+    corpus: ["corpus/fn-corpus/math/round.golden.tsv"]
+
+- id: sheet.fn.math.roundup
+  name: ROUNDUP
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::roundup
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ROUNDUP)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_roundup"]
+    corpus: ["corpus/fn-corpus/math/roundup.golden.tsv"]
+
+- id: sheet.fn.math.rounddown
+  name: ROUNDDOWN
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::rounddown
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ROUNDDOWN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_rounddown"]
+    corpus: ["corpus/fn-corpus/math/rounddown.golden.tsv"]
+
+- id: sheet.fn.math.trunc
+  name: TRUNC
+  family: math
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::trunc
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TRUNC)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_trunc"]
+    corpus: ["corpus/fn-corpus/math/trunc.golden.tsv"]
+
+- id: sheet.fn.math.int
+  name: INT
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::int
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (INT) — floor toward negative infinity"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_int"]
+    corpus: ["corpus/fn-corpus/math/int.golden.tsv"]
+
+- id: sheet.fn.math.ceiling
+  name: CEILING
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::ceiling
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CEILING) — classic 2-arg form (T0)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_ceiling"]
+    corpus: ["corpus/fn-corpus/math/ceiling.golden.tsv"]
+
+- id: sheet.fn.math.floor
+  name: FLOOR
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::floor
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (FLOOR) — classic 2-arg form (T0)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_floor"]
+    corpus: ["corpus/fn-corpus/math/floor.golden.tsv"]
+
+- id: sheet.fn.math.pi
+  name: PI
+  family: math
+  arity: { min: 0, max: 0 }
+  volatility: none
+  range_aware: false
+  rust: math::pi
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (PI)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_pi"]
+    corpus: ["corpus/fn-corpus/math/pi.golden.tsv"]
+
+- id: sheet.fn.math.sin
+  name: SIN
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::sin
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SIN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sin"]
+    corpus: ["corpus/fn-corpus/math/sin.golden.tsv"]
+
+- id: sheet.fn.math.cos
+  name: COS
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::cos
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COS)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_cos"]
+    corpus: ["corpus/fn-corpus/math/cos.golden.tsv"]
+
+- id: sheet.fn.math.tan
+  name: TAN
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::tan
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TAN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_tan"]
+    corpus: ["corpus/fn-corpus/math/tan.golden.tsv"]
+
+- id: sheet.fn.math.asin
+  name: ASIN
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::asin
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ASIN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_asin"]
+    corpus: ["corpus/fn-corpus/math/asin.golden.tsv"]
+
+- id: sheet.fn.math.acos
+  name: ACOS
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::acos
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ACOS)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_acos"]
+    corpus: ["corpus/fn-corpus/math/acos.golden.tsv"]
+
+- id: sheet.fn.math.atan
+  name: ATAN
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::atan
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ATAN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_atan"]
+    corpus: ["corpus/fn-corpus/math/atan.golden.tsv"]
+
+- id: sheet.fn.math.atan2
+  name: ATAN2
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math::atan2
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ATAN2) — (x, y) argument order per Excel"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_atan2"]
+    corpus: ["corpus/fn-corpus/math/atan2.golden.tsv"]
+
+- id: sheet.fn.math.degrees
+  name: DEGREES
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::degrees
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DEGREES)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_degrees"]
+    corpus: ["corpus/fn-corpus/math/degrees.golden.tsv"]
+
+- id: sheet.fn.math.radians
+  name: RADIANS
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math::radians
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (RADIANS)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_radians"]
+    corpus: ["corpus/fn-corpus/math/radians.golden.tsv"]
+
+- id: sheet.fn.math.rand
+  name: RAND
+  family: math
+  arity: { min: 0, max: 0 }
+  volatility: volatile
+  range_aware: false
+  rust: math::rand
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (RAND) — deterministic seeded RNG in tests"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_rand"]
+    corpus: []
+
+- id: sheet.fn.math.randbetween
+  name: RANDBETWEEN
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: volatile
+  range_aware: false
+  rust: math::randbetween
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (RANDBETWEEN)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_randbetween"]
+    corpus: []

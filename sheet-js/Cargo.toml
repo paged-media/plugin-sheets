@@ -1,0 +1,28 @@
+[package]
+name = "sheet-js"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet wasm-bindgen surface (spec §4 sheet-js): the SheetHandle the bundle consumes. crate-type cdylib for the wasm artifact."
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-parser = { path = "../sheet-parser" }
+sheet-calc = { path = "../sheet-calc" }
+sheet-fn = { path = "../sheet-fn" }
+sheet-format = { path = "../sheet-format" }
+sheet-xlsx = { path = "../sheet-xlsx" }
+sheet-lower = { path = "../sheet-lower" }
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+serde.workspace = true
+serde-wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true

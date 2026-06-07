@@ -1,0 +1,20 @@
+[package]
+name = "sheet-fn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet registry-driven function library (spec §7): pure fn(&[Arg], &EvalCtx) -> CellValue kernels, coercion machinery, generated dispatch. Depends ONLY on sheet-core + sheet-format (spec §4 rule 1)."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-format = { path = "../sheet-format" }
+compact_str.workspace = true
+
+[build-dependencies]
+serde.workspace = true
+serde_yaml.workspace = true

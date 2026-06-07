@@ -1,0 +1,16 @@
+[package]
+name = "sheet-lower"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet pure range -> LoweredContent IR lowering (spec §8.2, T0 single frame). No SDK, no mutation — glue translates the IR."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-format = { path = "../sheet-format" }
+serde.workspace = true

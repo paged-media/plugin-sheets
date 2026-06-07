@@ -1,0 +1,94 @@
+# sheet.fn.lookup.* — lookup family (T0, spec §11). Schema: see math.yaml.
+
+- id: sheet.fn.lookup.vlookup
+  name: VLOOKUP
+  family: lookup
+  arity: { min: 3, max: 4 }
+  volatility: none
+  range_aware: true
+  rust: lookup::vlookup
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (VLOOKUP)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_vlookup"]
+    corpus: ["corpus/fn-corpus/lookup/vlookup.golden.tsv"]
+
+- id: sheet.fn.lookup.hlookup
+  name: HLOOKUP
+  family: lookup
+  arity: { min: 3, max: 4 }
+  volatility: none
+  range_aware: true
+  rust: lookup::hlookup
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (HLOOKUP)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_hlookup"]
+    corpus: ["corpus/fn-corpus/lookup/hlookup.golden.tsv"]
+
+- id: sheet.fn.lookup.index
+  name: INDEX
+  family: lookup
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: lookup::index
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (INDEX)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_index"]
+    corpus: ["corpus/fn-corpus/lookup/index.golden.tsv"]
+
+- id: sheet.fn.lookup.match
+  name: MATCH
+  family: lookup
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: lookup::match_fn
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MATCH)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_match"]
+    corpus: ["corpus/fn-corpus/lookup/match.golden.tsv"]
+
+- id: sheet.fn.lookup.choose
+  name: CHOOSE
+  family: lookup
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: false
+  rust: lookup::choose
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CHOOSE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_choose"]
+    corpus: ["corpus/fn-corpus/lookup/choose.golden.tsv"]
+
+- id: sheet.fn.lookup.row
+  name: ROW
+  family: lookup
+  arity: { min: 0, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: lookup::row
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ROW) — reference arg; current cell when absent"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_row"]
+    corpus: ["corpus/fn-corpus/lookup/row.golden.tsv"]
+
+- id: sheet.fn.lookup.column
+  name: COLUMN
+  family: lookup
+  arity: { min: 0, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  rust: lookup::column
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (COLUMN) — reference arg; current cell when absent"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_column"]
+    corpus: ["corpus/fn-corpus/lookup/column.golden.tsv"]

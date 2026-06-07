@@ -1,0 +1,105 @@
+# sheet.fn.info.* — info family (T0, spec §11). Schema: see math.yaml.
+
+- id: sheet.fn.info.isblank
+  name: ISBLANK
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::isblank
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISBLANK)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isblank"]
+    corpus: ["corpus/fn-corpus/info/isblank.golden.tsv"]
+
+- id: sheet.fn.info.isnumber
+  name: ISNUMBER
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::isnumber
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISNUMBER)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isnumber"]
+    corpus: ["corpus/fn-corpus/info/isnumber.golden.tsv"]
+
+- id: sheet.fn.info.istext
+  name: ISTEXT
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::istext
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISTEXT)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_istext"]
+    corpus: ["corpus/fn-corpus/info/istext.golden.tsv"]
+
+- id: sheet.fn.info.islogical
+  name: ISLOGICAL
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::islogical
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISLOGICAL)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_islogical"]
+    corpus: ["corpus/fn-corpus/info/islogical.golden.tsv"]
+
+- id: sheet.fn.info.iserror
+  name: ISERROR
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::iserror
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISERROR)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_iserror"]
+    corpus: ["corpus/fn-corpus/info/iserror.golden.tsv"]
+
+- id: sheet.fn.info.iserr
+  name: ISERR
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::iserr
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISERR) — all errors except #N/A"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_iserr"]
+    corpus: ["corpus/fn-corpus/info/iserr.golden.tsv"]
+
+- id: sheet.fn.info.isna
+  name: ISNA
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: info::isna
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ISNA)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isna"]
+    corpus: ["corpus/fn-corpus/info/isna.golden.tsv"]
+
+- id: sheet.fn.info.na
+  name: NA
+  family: info
+  arity: { min: 0, max: 0 }
+  volatility: none
+  range_aware: false
+  rust: info::na
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (NA) — returns #N/A"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_na"]
+    corpus: ["corpus/fn-corpus/info/na.golden.tsv"]

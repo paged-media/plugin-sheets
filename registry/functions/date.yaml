@@ -1,0 +1,144 @@
+# sheet.fn.date.* — date family (T0, spec §11). Schema: see math.yaml.
+
+- id: sheet.fn.date.now
+  name: NOW
+  family: date
+  arity: { min: 0, max: 0 }
+  volatility: volatile
+  range_aware: false
+  rust: date::now
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (NOW) — serial; display via number format"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_now"]
+    corpus: []
+
+- id: sheet.fn.date.today
+  name: TODAY
+  family: date
+  arity: { min: 0, max: 0 }
+  volatility: volatile
+  range_aware: false
+  rust: date::today
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TODAY)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_today"]
+    corpus: []
+
+- id: sheet.fn.date.date
+  name: DATE
+  family: date
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: date::date
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DATE) — y/m/d normalization per Excel"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_date"]
+    corpus: ["corpus/fn-corpus/date/date.golden.tsv"]
+
+- id: sheet.fn.date.year
+  name: YEAR
+  family: date
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: date::year
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (YEAR)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_year"]
+    corpus: ["corpus/fn-corpus/date/year.golden.tsv"]
+
+- id: sheet.fn.date.month
+  name: MONTH
+  family: date
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: date::month
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MONTH)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_month"]
+    corpus: ["corpus/fn-corpus/date/month.golden.tsv"]
+
+- id: sheet.fn.date.day
+  name: DAY
+  family: date
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: date::day
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DAY)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_day"]
+    corpus: ["corpus/fn-corpus/date/day.golden.tsv"]
+
+- id: sheet.fn.date.time
+  name: TIME
+  family: date
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: date::time
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (TIME)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_time"]
+    corpus: ["corpus/fn-corpus/date/time.golden.tsv"]
+
+- id: sheet.fn.date.hour
+  name: HOUR
+  family: date
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: date::hour
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (HOUR)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_hour"]
+    corpus: ["corpus/fn-corpus/date/hour.golden.tsv"]
+
+- id: sheet.fn.date.minute
+  name: MINUTE
+  family: date
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: date::minute
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (MINUTE)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_minute"]
+    corpus: ["corpus/fn-corpus/date/minute.golden.tsv"]
+
+- id: sheet.fn.date.second
+  name: SECOND
+  family: date
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: date::second
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SECOND)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_second"]
+    corpus: ["corpus/fn-corpus/date/second.golden.tsv"]
+
+- id: sheet.fn.date.weekday
+  name: WEEKDAY
+  family: date
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: date::weekday
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (WEEKDAY) — return-type modes 1/2/3 (T0)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_weekday"]
+    corpus: ["corpus/fn-corpus/date/weekday.golden.tsv"]
