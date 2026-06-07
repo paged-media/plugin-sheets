@@ -28,3 +28,5 @@ serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+# The XLSX round-trip test unzips parts to assert per-part byte identity.
+zip.workspace = true

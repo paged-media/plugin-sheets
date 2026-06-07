@@ -4,79 +4,113 @@
 - id: sheet.xlsx.opc.container
   title: OPC zip container — parts, [Content_Types].xml, relationships
   tier: parsed
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 Part 2 (OPC)"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_opc_container"]
+    corpus: ["corpus/xlsx-corpus/01-minimal.xlsx"]
 
 - id: sheet.xlsx.workbook
   title: workbook.xml — sheet list, defined names, date1904 flag
   tier: parsed
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.2"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_workbook"]
+    corpus: ["corpus/xlsx-corpus/06-multisheet-1904.xlsx"]
 
 - id: sheet.xlsx.worksheet.cells
   title: sheetN.xml — cell values (n/s/str/b/e types), formulas, dims, merges, col widths, row heights
   tier: parsed
-  status: planned
+  status: implemented
+  # T0 honest limitation: shared-formula members (t="shared", no <f> text)
+  # reuse the master's TEXT verbatim rather than translating relative refs to
+  # the member position; the text round-trips losslessly and the consumer
+  # (sheet-js) re-derives correct refs on parse.
+  note: "shared-formula members copy master text verbatim (T0); consumer re-derives refs"
   provenance: ["ECMA-376 §18.3"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_worksheet_cells"]
+    corpus: ["corpus/xlsx-corpus/02-formulas.xlsx"]
 
 - id: sheet.xlsx.shared-strings
   title: sharedStrings.xml <-> string interner (plain + preserved rich-text runs)
   tier: parsed
-  status: planned
+  status: implemented
+  # Rich-text <r> runs concatenate to a single string for the model; the
+  # original part is re-emitted verbatim (lazy-verbatim) so run formatting
+  # round-trips losslessly even though the model holds only the text.
+  note: "rich-text runs concatenate for the model; original bytes preserved verbatim"
   provenance: ["ECMA-376 §18.4"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_shared_strings"]
+    corpus: ["corpus/xlsx-corpus/02-formulas.xlsx"]
 
 - id: sheet.xlsx.styles
   title: styles.xml — numFmts, fonts, fills, borders, cellXfs into the interned style table
   tier: parsed
-  status: planned
+  status: implemented
+  # T0: numFmt codes (custom id>=164 + the built-in 0-49 table) resolve onto
+  # cell StyleIds; font/fill/border are kept as raw u32 indices (the
+  # sub-tables stay opaque via lazy-verbatim — full interpretation is later).
+  note: "numFmt resolved; font/fill/border kept as raw indices (T0)"
   provenance: ["ECMA-376 §18.8"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_styles"]
+    corpus: ["corpus/xlsx-corpus/03-styles.xlsx"]
 
 - id: sheet.xlsx.preserve.unknown-parts
   title: Unknown parts preserved byte-identical with relationships intact (pivot caches, vbaProject.bin, custom XML)
   tier: preserved
-  status: planned
+  status: implemented
   provenance: ["spec §10.2 preservation invariant"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_preserve_unknown_parts"]
+    corpus: ["corpus/xlsx-corpus/04-unknown-parts.xlsx"]
 
 - id: sheet.xlsx.preserve.unknown-subtrees
   title: Unknown elements/attributes inside understood parts preserved via raw-subtree retention, re-emitted in place
   tier: preserved
-  status: planned
+  status: implemented
+  # T0 granularity: unknown DIRECT children of <worksheet> are captured
+  # verbatim and re-emitted in schema position on a dirty re-encode. Unknown
+  # per-cell / per-row attributes and unknown elements inside <sheetData>
+  # survive only via lazy-verbatim (an un-dirty sheet) — a dirty re-encode
+  # drops them. Recorded honestly here and in preserve.rs.
+  note: "worksheet-child subtrees survive dirty re-encode; per-cell unknown attrs survive only lazy-verbatim (T0)"
   provenance: ["spec §10.2"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_preserve_unknown_subtrees"]
+    corpus: ["corpus/xlsx-corpus/05-unknown-subtrees.xlsx"]
 
 - id: sheet.xlsx.roundtrip.zero-edit
   title: Zero-edit round-trip — open->save byte-identical for every untouched part (lazy-verbatim), modulo the calcChain ruling
   tier: round-trips
-  status: planned
+  status: implemented
+  # Per-part DECOMPRESSED byte identity is the assertion. Whole-file/zip-
+  # metadata identity is NOT claimed. The two parts that reference calcChain
+  # ([Content_Types].xml + the workbook .rels) are adjusted only to remove
+  # that reference; every other retained part is byte-identical.
+  note: "per-part decompressed identity (not whole-file); calcChain refs adjusted in content-types + workbook rels"
   provenance: ["spec §10.2 — 'Paged never destroys a workbook'"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_roundtrip_zero_edit"]
+    corpus: ["corpus/xlsx-corpus/01-minimal.xlsx"]
 
 - id: sheet.xlsx.calcchain.drop
   title: calcChain.xml dropped on write (spec-permitted; consumers regenerate)
+  status: implemented
   ruling: "ECMA-376 permits absent calc chain; Excel rebuilds it. Dropping avoids maintaining a stale chain after edits."
-  status: planned
   provenance: ["ECMA-376 §18.6 (calculation chain, optional part)"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_calcchain_drop"]
+    corpus: ["corpus/xlsx-corpus/02-formulas.xlsx"]
 
 - id: sheet.xlsx.writer.valid-strict
   title: Writer maintains content types, rels, shared strings so files stay valid for strict readers
   tier: round-trips
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 Part 2"]
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_writer_valid_strict"]
+    corpus: ["corpus/xlsx-corpus/03-styles.xlsx"]
