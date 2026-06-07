@@ -1,0 +1,18 @@
+# sheet.fn.coerce.empty-semantics golden corpus (spec §7).
+# Format: id<TAB>input<TAB>expected   (TAB-separated; '#'-lines are comments).
+# Empty vs 0 vs "" across the coercion surfaces — the place blank-cell
+# behavior diverges from a literal zero / empty string. The `input` column is
+# an OPERATION applied to a typed value; `expected` is its result:
+#   op=num:<value>   -> to_number(value), expected n:<f64> or e:<#TOKEN!>
+#   op=bool:<value>  -> to_bool(value),   expected b:TRUE|b:FALSE or e:<#TOKEN!>
+#   op=text:<value>  -> to_text(value),   expected t:<text>
+#   op=blank:<value> -> is_blank? expected b:TRUE|b:FALSE (Empty vs Text(""))
+# (value is a typed CellValue literal — see to_number.golden.tsv header.)
+empty-as-number-is-zero	num:empty	n:0
+empty-string-as-number-errs	num:t:	e:#VALUE!
+empty-as-bool-is-false	bool:empty	b:FALSE
+empty-as-text-is-blank-string	text:empty	t:
+empty-string-as-text-is-empty	text:t:	t:
+empty-is-blank	blank:empty	b:TRUE
+empty-string-is-not-blank	blank:t:	b:FALSE
+zero-is-not-blank	blank:n:0	b:FALSE

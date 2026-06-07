@@ -1,0 +1,9 @@
+# sheet.fn.date.year — YEAR(serial), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Negative serial -> #NUM!.
+year.epoch	=YEAR(1)		1900
+year.modern	=YEAR(44197)		2021
+year.year-end	=YEAR(44561)		2021
+year.leap	=YEAR(45351)		2024
+year.from-cell	=YEAR(A1)	A1=36711	2000
+year.negative-num	=YEAR(-1)		#NUM!

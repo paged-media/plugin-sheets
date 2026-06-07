@@ -1,0 +1,15 @@
+# sheet.fn.text.len golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Phase-2 end-to-end format: id<TAB>formula<TAB>setup<TAB>expected
+#   formula   an = formula referencing setup cells.
+#   setup     ';'-separated CELL=value pairs; value is a typed literal —
+#             bare number (5 | 3.14), text:<s>, bool:TRUE|bool:FALSE, or empty.
+#             A '-' setup means no input cells.
+#   expected  the General-formatted result, or an error token (#VALUE!, …).
+# LEN counts characters (Unicode scalars), not bytes; numbers via General text.
+len-basic	=LEN(A1)	A1=text:hello	5
+len-empty-string	=LEN(A1)	A1=text:	0
+len-blank-cell	=LEN(A1)	A1=empty	0
+len-number-general	=LEN(A1)	A1=12.5	4
+len-bool	=LEN(A1)	A1=bool:TRUE	4
+len-multibyte	=LEN(A1)	A1=text:héllo	5
+len-error-propagates	=LEN(A1)	A1=#DIV/0!	#DIV/0!

@@ -1,0 +1,9 @@
+# CEILING — classic 2-arg: round AWAY from zero to a multiple of significance.
+# sign(number) != sign(significance) → #NUM!; zero significance → 0.
+# id<TAB>formula<TAB>setup<TAB>expected.
+ceiling-up	=CEILING(2.5,1)	-	3
+ceiling-step2	=CEILING(2.5,2)	-	4
+ceiling-neg-both	=CEILING(-2.5,-1)	-	-3
+ceiling-zero-sig	=CEILING(5,0)	-	0
+ceiling-sign-mismatch	=CEILING(-2,3)	-	#NUM!
+ceiling-already	=CEILING(6,2)	-	6

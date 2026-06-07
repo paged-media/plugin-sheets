@@ -1,0 +1,9 @@
+# sheet.fn.info.istext golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: strict variant check, NO coercion — a number is FALSE; a blank
+# cell is FALSE (Empty is not Text("")). (ECMA-376 §18.17.7).
+text-cell	=ISTEXT(A1)	A1=hello	TRUE
+empty-string-cell	=ISTEXT(A1)	A1="";	TRUE
+number-cell	=ISTEXT(A1)	A1=42	FALSE
+blank-cell	=ISTEXT(A1)		FALSE
+literal-text	=ISTEXT("x")		TRUE

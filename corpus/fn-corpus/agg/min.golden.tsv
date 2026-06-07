@@ -1,0 +1,11 @@
+# sheet.fn.agg.min golden corpus (spec §7, §11 T0).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id/formula/setup/expected as documented in average.golden.tsv.
+# MIN skips non-numeric cells in ranges; MIN of nothing is 0 (Excel ruling),
+# not an error; an error cell in the range propagates.
+range	=MIN(A1:A3)	A1=5;A2=-2;A3=9	-2
+scalars	=MIN(3,1,2)	-	1
+skip-nonnumeric	=MIN(A1:A3)	A1=x;A2=7;A3=FALSE	7
+empty-is-zero	=MIN(A1:A2)	A1=a;A2=	0
+scalar-bool-text	=MIN(TRUE,"5",2)	-	1
+error-propagates	=MIN(A1:A2)	A1=1;A2=#N/A	#N/A

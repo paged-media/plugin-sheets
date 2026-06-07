@@ -1,0 +1,8 @@
+# INT — floor toward NEGATIVE INFINITY (Excel ruling; differs from TRUNC).
+# id<TAB>formula<TAB>setup<TAB>expected.
+int-pos	=INT(8.9)	-	8
+int-neg-half	=INT(-1.5)	-	-2
+int-neg	=INT(-8.9)	-	-9
+int-integer	=INT(5)	-	5
+int-ref	=INT(A1)	A1=-0.1	-1
+int-error	=INT(A1)	A1=#VALUE!	#VALUE!

@@ -1,0 +1,12 @@
+# sheet.fn.agg.count golden corpus (spec §7, §11 T0).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id/formula/setup/expected as documented in average.golden.tsv.
+# COUNT counts numbers. The scalar/range asymmetry: a SCALAR bool or
+# numeric-text counts (=COUNT(TRUE,"5") is 2); a bool/numeric-text cell INSIDE
+# a range does NOT count. COUNT never errors (an error cell is just skipped).
+range-numbers	=COUNT(A1:A3)	A1=1;A2=2;A3=3	3
+range-excludes-bool-text	=COUNT(A1:A4)	A1=1;A2=TRUE;A3=x;A4=2	2
+scalar-bool-text-count	=COUNT(TRUE,"5",9)	-	3
+scalar-text-not-number	=COUNT("x",1,2)	-	2
+error-cell-skipped	=COUNT(A1:A3)	A1=1;A2=#DIV/0!;A3=2	2
+empty-range	=COUNT(A1:A2)	A1=;A2=	0

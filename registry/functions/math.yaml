@@ -23,7 +23,7 @@
   volatility: none
   range_aware: true
   rust: math::sum
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SUM)", "OpenFormula §6.16.61"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sum"]
@@ -36,7 +36,7 @@
   volatility: none
   range_aware: true
   rust: math::product
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (PRODUCT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_product"]
@@ -49,7 +49,7 @@
   volatility: none
   range_aware: false
   rust: math::abs
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ABS)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_abs"]
@@ -62,7 +62,7 @@
   volatility: none
   range_aware: false
   rust: math::sign
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SIGN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sign"]
@@ -75,7 +75,7 @@
   volatility: none
   range_aware: false
   rust: math::sqrt
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SQRT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sqrt"]
@@ -88,7 +88,7 @@
   volatility: none
   range_aware: false
   rust: math::exp
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (EXP)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_exp"]
@@ -101,7 +101,7 @@
   volatility: none
   range_aware: false
   rust: math::ln
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_ln"]
@@ -114,7 +114,7 @@
   volatility: none
   range_aware: false
   rust: math::log10
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LOG10)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_log10"]
@@ -127,7 +127,7 @@
   volatility: none
   range_aware: false
   rust: math::log
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LOG)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_log"]
@@ -140,7 +140,7 @@
   volatility: none
   range_aware: false
   rust: math::power
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (POWER)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_power"]
@@ -153,7 +153,7 @@
   volatility: none
   range_aware: false
   rust: math::mod_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MOD) — sign follows divisor (Excel ruling)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_mod"]
@@ -166,7 +166,7 @@
   volatility: none
   range_aware: false
   rust: math::round
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ROUND) — half away from zero (Excel ruling)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_round"]
@@ -179,7 +179,7 @@
   volatility: none
   range_aware: false
   rust: math::roundup
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ROUNDUP)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_roundup"]
@@ -192,7 +192,7 @@
   volatility: none
   range_aware: false
   rust: math::rounddown
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ROUNDDOWN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_rounddown"]
@@ -205,7 +205,7 @@
   volatility: none
   range_aware: false
   rust: math::trunc
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TRUNC)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_trunc"]
@@ -218,7 +218,7 @@
   volatility: none
   range_aware: false
   rust: math::int
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (INT) — floor toward negative infinity"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_int"]
@@ -231,7 +231,7 @@
   volatility: none
   range_aware: false
   rust: math::ceiling
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CEILING) — classic 2-arg form (T0)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_ceiling"]
@@ -244,7 +244,7 @@
   volatility: none
   range_aware: false
   rust: math::floor
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (FLOOR) — classic 2-arg form (T0)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_floor"]
@@ -257,7 +257,7 @@
   volatility: none
   range_aware: false
   rust: math::pi
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (PI)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_pi"]
@@ -270,7 +270,7 @@
   volatility: none
   range_aware: false
   rust: math::sin
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SIN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_sin"]
@@ -283,7 +283,7 @@
   volatility: none
   range_aware: false
   rust: math::cos
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COS)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_cos"]
@@ -296,7 +296,7 @@
   volatility: none
   range_aware: false
   rust: math::tan
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TAN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_tan"]
@@ -309,7 +309,7 @@
   volatility: none
   range_aware: false
   rust: math::asin
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ASIN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_asin"]
@@ -322,7 +322,7 @@
   volatility: none
   range_aware: false
   rust: math::acos
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ACOS)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_acos"]
@@ -335,7 +335,7 @@
   volatility: none
   range_aware: false
   rust: math::atan
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ATAN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_atan"]
@@ -348,7 +348,7 @@
   volatility: none
   range_aware: false
   rust: math::atan2
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ATAN2) — (x, y) argument order per Excel"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_atan2"]
@@ -361,7 +361,7 @@
   volatility: none
   range_aware: false
   rust: math::degrees
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DEGREES)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_degrees"]
@@ -374,7 +374,7 @@
   volatility: none
   range_aware: false
   rust: math::radians
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RADIANS)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_radians"]
@@ -387,7 +387,7 @@
   volatility: volatile
   range_aware: false
   rust: math::rand
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RAND) — deterministic seeded RNG in tests"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_rand"]
@@ -400,7 +400,7 @@
   volatility: volatile
   range_aware: false
   rust: math::randbetween
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RANDBETWEEN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_math.rs::sheet_fn_math_randbetween"]

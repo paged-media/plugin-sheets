@@ -1,0 +1,22 @@
+# sheet.fn.logical.if golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id        case id (free text; unique within the file).
+#   formula   a single =IF(...) call; ';' separates arguments. Args may be
+#             literals (number / TRUE / FALSE / #TOKEN! / "quoted text"),
+#             bare A1 cell refs (resolved from setup; absent => blank), or
+#             A1:B2 ranges.
+#   setup     ';'-separated ADDR=VALUE cell inputs (TRUE/FALSE => bool,
+#             numbers => number, #..! => error, empty => blank, else text).
+#   expected  the General-formatted result, or an error literal (#VALUE!, …).
+# Phase-2 runner replays this through sheet-calc; the fn_logical.rs corpus
+# tests pin it against the implementation now via the frozen dispatch.
+true-branch	=IF(TRUE;10;20)		10
+false-branch	=IF(FALSE;10;20)		20
+number-condition-nonzero	=IF(5;"yes";"no")		yes
+number-condition-zero	=IF(0;"yes";"no")		no
+omitted-false-branch	=IF(FALSE;99)		FALSE
+ref-condition-true	=IF(A1;"y";"n")	A1=TRUE	y
+ref-condition-from-number	=IF(A1;"y";"n")	A1=0	n
+error-condition-propagates	=IF(A1;1;2)	A1=#DIV/0!	#DIV/0!
+non-bool-text-condition	=IF("maybe";1;2)		#VALUE!
+text-true-literal	=IF("TRUE";1;2)		1

@@ -1,0 +1,8 @@
+# SQRT — square root; negative argument out of domain → #NUM!.
+# id<TAB>formula<TAB>setup<TAB>expected.
+sqrt-perfect	=SQRT(16)	-	4
+sqrt-zero	=SQRT(0)	-	0
+sqrt-two	=SQRT(2)	-	1.4142135623731
+sqrt-ref	=SQRT(A1)	A1=9	3
+sqrt-negative	=SQRT(-1)	-	#NUM!
+sqrt-error	=SQRT(A1)	A1=#VALUE!	#VALUE!

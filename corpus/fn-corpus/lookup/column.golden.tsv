@@ -1,0 +1,11 @@
+# sheet.fn.lookup.column golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see vlookup.golden.tsv header).
+# COLUMN([reference]) — column transpose of ROW: the 1-based column of the
+# reference's top-left, or of the cell holding the formula when omitted. The
+# setup '@Cell' token declares the formula's host cell for the no-arg cases.
+ref-cell	=COLUMN(D2)	@A1	4
+ref-range-topleft	=COLUMN(C7:E9)	@A1	3
+ref-col-a	=COLUMN(A5)	@A1	1
+no-arg-current	=COLUMN()	@D11	4
+no-arg-current-a1	=COLUMN()	@A1	1
+abs-ref	=COLUMN($Z$3)	@A1	26

@@ -1,0 +1,18 @@
+# sheet.fn.coerce.error-propagation golden corpus (spec §7).
+# Format: id<TAB>input<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   input     a SPACE-separated list of typed scalar/range args:
+#               scalars: empty | n:<f64> | t:<text> | b:TRUE|b:FALSE | e:<#TOKEN!>
+#               range:   r:<r0c0>,<r0c1>,...;<r1c0>,... (rows ';'-split, cells
+#                        ','-split, each a typed scalar) — first_error must
+#                        IGNORE values inside a range (COUNT semantics).
+#   expected  the first_error(args) result — either:
+#               e:<#TOKEN!>  -> Some(error)   (first scalar error, left to right)
+#               none         -> None
+# first_error scans SCALARS ONLY; ranges never propagate here.
+no-errors	n:1 t:x b:TRUE	none
+first-scalar-error	n:1 e:#DIV/0! e:#N/A	e:#DIV/0!
+second-arg-error	t:a e:#VALUE!	e:#VALUE!
+single-error	e:#REF!	e:#REF!
+range-error-ignored	r:n:1,e:#DIV/0!	none
+range-then-scalar-error	r:n:1,n:2 e:#NUM!	e:#NUM!
+empty-args	none	none

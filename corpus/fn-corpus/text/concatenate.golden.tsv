@@ -1,0 +1,10 @@
+# sheet.fn.text.concatenate golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# CONCATENATE is NOT range-aware (scalar coercion via to_text). An error arg
+# propagates.
+concatenate-basic	=CONCATENATE(A1,B1)	A1=text:foo;B1=text:bar	foobar
+concatenate-number	=CONCATENATE(A1,B1)	A1=text:n=;B1=42	n=42
+concatenate-three	=CONCATENATE(A1,B1,C1)	A1=text:a;B1=text:b;C1=text:c	abc
+concatenate-bool	=CONCATENATE(A1,B1)	A1=text:flag=;B1=bool:FALSE	flag=FALSE
+concatenate-empty-cell	=CONCATENATE(A1,B1)	A1=text:x;B1=empty	x
+concatenate-error-propagates	=CONCATENATE(A1,B1)	A1=text:a;B1=#VALUE!	#VALUE!

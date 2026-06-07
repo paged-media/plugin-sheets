@@ -1,0 +1,9 @@
+# sheet.fn.text.lower golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# LOWER — lowercase (no locale tailoring in T0, D-8).
+lower-basic	=LOWER(A1)	A1=text:Hello World	hello world
+lower-already-lower	=LOWER(A1)	A1=text:abc	abc
+lower-mixed	=LOWER(A1)	A1=text:AbC123	abc123
+lower-bool	=LOWER(A1)	A1=bool:TRUE	true
+lower-number-coerced	=LOWER(A1)	A1=99	99
+lower-error-propagates	=LOWER(A1)	A1=#SPILL!	#SPILL!

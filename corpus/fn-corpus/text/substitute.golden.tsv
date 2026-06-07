@@ -1,0 +1,12 @@
+# sheet.fn.text.substitute golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# SUBSTITUTE(text,old,new,[instance]) — case-sensitive, literal; instance
+# 1-based (all when absent); empty old -> unchanged; instance<1 -> #VALUE!.
+substitute-all	=SUBSTITUTE(A1,B1,C1)	A1=text:a-b-c;B1=text:-;C1=text:_	a_b_c
+substitute-grow	=SUBSTITUTE(A1,B1,C1)	A1=text:cat;B1=text:c;C1=text:ch	chat
+substitute-instance-2	=SUBSTITUTE(A1,B1,C1,2)	A1=text:a-b-c-d;B1=text:-;C1=text:_	a-b_c-d
+substitute-instance-past	=SUBSTITUTE(A1,B1,C1,5)	A1=text:a-b;B1=text:-;C1=text:_	a-b
+substitute-empty-old	=SUBSTITUTE(A1,B1,C1)	A1=text:abc;B1=text:;C1=text:X	abc
+substitute-case-sensitive	=SUBSTITUTE(A1,B1,C1)	A1=text:abc;B1=text:A;C1=text:X	abc
+substitute-instance-zero-value-error	=SUBSTITUTE(A1,B1,C1,0)	A1=text:a-b;B1=text:-;C1=text:_	#VALUE!
+substitute-error-propagates	=SUBSTITUTE(A1,B1,C1)	A1=#REF!;B1=text:-;C1=text:_	#REF!

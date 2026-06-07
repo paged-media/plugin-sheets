@@ -1,0 +1,7 @@
+# SIN — sine of an angle in radians. id<TAB>formula<TAB>setup<TAB>expected.
+sin-zero	=SIN(0)	-	0
+sin-half-pi	=SIN(PI()/2)	-	1
+sin-quarter-pi	=SIN(PI()/4)	-	0.707106781186547
+sin-one	=SIN(1)	-	0.841470984807897
+sin-ref	=SIN(A1)	A1=0	0
+sin-error	=SIN(A1)	A1=#DIV/0!	#DIV/0!

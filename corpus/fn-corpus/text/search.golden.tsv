@@ -1,0 +1,12 @@
+# sheet.fn.text.search golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# SEARCH — case-INSENSITIVE, with * ? wildcards (~ escapes), 1-based; not
+# found -> #VALUE!.
+search-case-insensitive	=SEARCH(A1,B1)	A1=text:L;B1=text:hello	3
+search-word	=SEARCH(A1,B1)	A1=text:WORLD;B1=text:hello world	7
+search-start-num	=SEARCH(A1,B1,4)	A1=text:l;B1=text:hello	4
+search-question-wildcard	=SEARCH(A1,B1)	A1=text:h?llo;B1=text:xhello	2
+search-star-wildcard	=SEARCH(A1,B1)	A1=text:e*o;B1=text:hello	2
+search-tilde-escape	=SEARCH(A1,B1)	A1=text:~*;B1=text:a*b	2
+search-not-found	=SEARCH(A1,B1)	A1=text:z;B1=text:hello	#VALUE!
+search-error-propagates	=SEARCH(A1,B1)	A1=#DIV/0!;B1=text:x	#DIV/0!

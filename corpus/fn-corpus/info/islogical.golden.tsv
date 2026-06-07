@@ -1,0 +1,9 @@
+# sheet.fn.info.islogical golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: strict variant check, NO coercion — 1/0 are numbers and
+# "TRUE"/"FALSE" are text; only a stored boolean is logical.
+true-literal	=ISLOGICAL(TRUE())		TRUE
+false-literal	=ISLOGICAL(FALSE())		TRUE
+number-one	=ISLOGICAL(A1)	A1=1	FALSE
+text-true	=ISLOGICAL(A1)	A1="TRUE";	FALSE
+blank-cell	=ISLOGICAL(A1)		FALSE

@@ -1,0 +1,10 @@
+# sheet.fn.date.minute — MINUTE(serial), General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Minute 0..=59 of the serial's time-of-day. Negative
+# serial -> #NUM!.
+minute.zero	=MINUTE(0.5)		0
+minute.thirty	=MINUTE(0.0625)		30
+minute.one	=MINUTE(0.001)		1
+minute.with-date	=MINUTE(45000.5)		0
+minute.from-cell	=MINUTE(A1)	A1=0.0625	30
+minute.negative-num	=MINUTE(-1)		#NUM!

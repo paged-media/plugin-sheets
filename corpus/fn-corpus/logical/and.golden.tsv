@@ -1,0 +1,17 @@
+# sheet.fn.logical.and golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see if.golden.tsv header).
+# AND is range-aware: range cells that are text/blank are SKIPPED, numbers and
+# bools count (number != 0), an error cell propagates, and a population with no
+# logical values at all is #VALUE!. Scalar text that is not TRUE/FALSE is
+# #VALUE!.
+all-true	=AND(TRUE;TRUE)		TRUE
+one-false	=AND(TRUE;FALSE)		FALSE
+single-true	=AND(TRUE)		TRUE
+numbers-coerce-true	=AND(1;3;7)		TRUE
+number-zero-is-false	=AND(1;0)		FALSE
+range-all-true	=AND(A1:A3)	A1=TRUE;A2=1;A3=2	TRUE
+range-with-false	=AND(A1:A3)	A1=TRUE;A2=0;A3=TRUE	FALSE
+range-text-skipped	=AND(A1:A3)	A1=TRUE;A2=hello;A3=1	TRUE
+range-all-text-is-value-error	=AND(A1:A2)	A1=foo;A2=bar	#VALUE!
+range-error-propagates	=AND(A1:A2)	A1=TRUE;A2=#N/A	#N/A
+scalar-non-bool-text	=AND(TRUE;"nope")		#VALUE!

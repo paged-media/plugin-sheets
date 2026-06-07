@@ -1,0 +1,7 @@
+# ACOS — arccosine; |x|>1 out of domain → #NUM!. id<TAB>formula<TAB>setup<TAB>expected.
+acos-one	=ACOS(1)	-	0
+acos-zero	=ACOS(0)	-	1.5707963267949
+acos-half	=ACOS(0.5)	-	1.0471975511966
+acos-neg-one	=ACOS(-1)	-	3.14159265358979
+acos-domain	=ACOS(2)	-	#NUM!
+acos-domain-neg	=ACOS(-2)	-	#NUM!

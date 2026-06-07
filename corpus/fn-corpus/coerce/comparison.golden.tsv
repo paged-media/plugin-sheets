@@ -1,0 +1,27 @@
+# sheet.fn.coerce.comparison golden corpus (spec §7).
+# Format: id<TAB>input<TAB>expected   (TAB-separated; '#'-lines are comments).
+# The cross-type total order RULING: Number < Text < Bool. Within a type:
+# numbers numerically; text case-insensitive (byte tie-break); bool false<true.
+# Empty coerces to the peer's type (0 / "" / false).
+#   input     two SPACE-separated typed CellValue literals: <a> <b>
+#               (empty | n:<f64> | t:<text> | b:TRUE|b:FALSE | e:<#TOKEN!>)
+#   expected  the Ordering of compare(a, b): lt | eq | gt
+num-lt	n:1 n:2	lt
+num-eq	n:2 n:2	eq
+num-gt	n:5 n:3	gt
+text-lt	t:apple t:banana	lt
+text-case-fold-eq-bytetie	t:A t:a	lt
+text-case-insensitive-gt	t:abc t:ABC	gt
+bool-false-lt-true	b:FALSE b:TRUE	lt
+bool-eq	b:TRUE b:TRUE	eq
+cross-number-lt-text	n:999 t:a	lt
+cross-text-lt-bool	t:z b:FALSE	lt
+cross-number-lt-bool	n:0 b:FALSE	lt
+cross-bool-gt-number	b:TRUE n:0	gt
+empty-eq-empty	empty empty	eq
+empty-coerces-zero-eq	empty n:0	eq
+empty-coerces-zero-lt	empty n:1	lt
+empty-coerces-emptystring-eq	empty t:	eq
+empty-coerces-emptystring-lt	empty t:a	lt
+empty-coerces-false-eq	empty b:FALSE	eq
+empty-coerces-false-lt	empty b:TRUE	lt

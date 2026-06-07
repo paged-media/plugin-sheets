@@ -1,0 +1,8 @@
+# LOG10 — base-10 log; x<=0 → #NUM!.
+# id<TAB>formula<TAB>setup<TAB>expected.
+log10-thousand	=LOG10(1000)	-	3
+log10-one	=LOG10(1)	-	0
+log10-ten	=LOG10(10)	-	1
+log10-two	=LOG10(2)	-	0.301029995663981
+log10-zero	=LOG10(0)	-	#NUM!
+log10-negative	=LOG10(-1)	-	#NUM!

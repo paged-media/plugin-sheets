@@ -1,0 +1,13 @@
+# sheet.fn.info.isblank golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+#   formula   a worksheet formula (leading '=').
+#   setup     ';'-separated cell assignments (A1=...); a bare cell is blank.
+#   expected  the General-formatted result, or an error literal (#N/A, ...).
+# Ruling: ISBLANK is TRUE only for a genuinely blank cell. A zero-length
+# string Text("") is a value, NOT blank (ECMA-376 §18.17.7). Feeds the
+# Phase-2 end-to-end runner.
+blank-cell	=ISBLANK(A1)		TRUE
+number-cell	=ISBLANK(A1)	A1=5	FALSE
+zero-cell	=ISBLANK(A1)	A1=0	FALSE
+empty-string-cell	=ISBLANK(A1)	A1="";	FALSE
+text-cell	=ISBLANK(A1)	A1=hello	FALSE

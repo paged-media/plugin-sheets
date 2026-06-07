@@ -1,0 +1,10 @@
+# sheet.fn.text.left golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# LEFT(text,[num_chars]) — 1-based, char-counted; default 1; negative -> #VALUE!.
+left-basic	=LEFT(A1,2)	A1=text:hello	he
+left-default-one	=LEFT(A1)	A1=text:hello	h
+left-clamp-past-end	=LEFT(A1,10)	A1=text:hi	hi
+left-zero	=LEFT(A1,0)	A1=text:hello
+left-negative-value-error	=LEFT(A1,-1)	A1=text:hello	#VALUE!
+left-number-coerced	=LEFT(A1,2)	A1=123	12
+left-error-propagates	=LEFT(A1,2)	A1=#N/A	#N/A

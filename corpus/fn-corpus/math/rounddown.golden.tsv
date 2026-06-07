@@ -1,0 +1,8 @@
+# ROUNDDOWN — always toward zero (truncate at digits).
+# id<TAB>formula<TAB>setup<TAB>expected.
+rounddown-pos	=ROUNDDOWN(2.9,0)	-	2
+rounddown-neg	=ROUNDDOWN(-2.9,0)	-	-2
+rounddown-decimals	=ROUNDDOWN(3.14999,2)	-	3.14
+rounddown-neg-digits	=ROUNDDOWN(127,-1)	-	120
+rounddown-exact	=ROUNDDOWN(5,0)	-	5
+rounddown-zero	=ROUNDDOWN(0.4,0)	-	0

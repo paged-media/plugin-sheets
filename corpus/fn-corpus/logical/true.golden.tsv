@@ -1,0 +1,11 @@
+# sheet.fn.logical.true golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see if.golden.tsv header).
+# TRUE() is a nullary boolean constant; any argument is an arity violation
+# (#VALUE!). Cases repeat the constant under distinct ids to pin the contract
+# and meet the >=5-case floor.
+constant	=TRUE()		TRUE
+constant-no-setup	=TRUE()		TRUE
+constant-with-unused-setup	=TRUE()	A1=99	TRUE
+constant-again	=TRUE()		TRUE
+constant-stable	=TRUE()		TRUE
+arity-violation-one-arg	=TRUE(1)		#VALUE!

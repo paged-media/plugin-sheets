@@ -7,7 +7,7 @@
   volatility: none
   range_aware: true
   rust: lookup::vlookup
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (VLOOKUP)"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_vlookup"]
@@ -20,7 +20,7 @@
   volatility: none
   range_aware: true
   rust: lookup::hlookup
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (HLOOKUP)"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_hlookup"]
@@ -33,7 +33,7 @@
   volatility: none
   range_aware: true
   rust: lookup::index
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (INDEX)"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_index"]
@@ -46,7 +46,7 @@
   volatility: none
   range_aware: true
   rust: lookup::match_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MATCH)"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_match"]
@@ -59,7 +59,7 @@
   volatility: none
   range_aware: false
   rust: lookup::choose
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CHOOSE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_choose"]
@@ -73,7 +73,7 @@
   range_aware: true
   ref_args: true
   rust: lookup::row
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ROW) — reference arg; current cell when absent"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_row"]
@@ -87,7 +87,7 @@
   range_aware: true
   ref_args: true
   rust: lookup::column
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COLUMN) — reference arg; current cell when absent"]
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_column"]

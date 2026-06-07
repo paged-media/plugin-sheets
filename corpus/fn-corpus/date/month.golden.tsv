@@ -1,0 +1,10 @@
+# sheet.fn.date.month — MONTH(serial), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Returns 1..=12. Negative serial -> #NUM!.
+month.epoch	=MONTH(1)		1
+month.modern	=MONTH(44197)		1
+month.year-end	=MONTH(44561)		12
+month.july	=MONTH(36711)		7
+month.leap-phantom	=MONTH(60)		2
+month.from-cell	=MONTH(A1)	A1=44211	1
+month.negative-num	=MONTH(-5)		#NUM!

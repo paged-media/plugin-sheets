@@ -1,0 +1,12 @@
+# sheet.fn.lookup.match golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see vlookup.golden.tsv header).
+# MATCH(key, range, [match_type]) — returns the 1-based position. match_type
+# default 1 (largest <= key, sorted asc), 0 (exact + wildcards), -1 (smallest
+# >= key, sorted desc). Not found / wrong-side key -> #N/A.
+exact-text	=MATCH("c",A1:D1,0)	A1=a;B1=b;C1=c;D1=d	3
+exact-wildcard-one-char	=MATCH("?",A1:D1,0)	A1=a;B1=b;C1=c;D1=d	1
+exact-not-found-na	=MATCH("z",A1:D1,0)	A1=a;B1=b;C1=c;D1=d	#N/A
+approx-asc-floor	=MATCH(6,A1:D1,1)	A1=1;B1=3;C1=5;D1=7	3
+approx-default-exact	=MATCH(7,A1:D1)	A1=1;B1=3;C1=5;D1=7	4
+approx-below-first-na	=MATCH(0,A1:D1,1)	A1=1;B1=3;C1=5;D1=7	#N/A
+approx-desc-ceiling	=MATCH(4,A1:D1,-1)	A1=7;B1=5;C1=3;D1=1	2

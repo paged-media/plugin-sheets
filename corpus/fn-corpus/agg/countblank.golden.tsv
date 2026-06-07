@@ -1,0 +1,10 @@
+# sheet.fn.agg.countblank golden corpus (spec §7, §11 T0).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id/formula/setup/expected as documented in average.golden.tsv.
+# COUNTBLANK takes exactly ONE range argument and counts its truly-blank cells.
+# Text("") is NOT blank; only an empty cell counts. Arity != 1 is #VALUE!.
+some-blanks	=COUNTBLANK(A1:A5)	A1=1;A2=;A3=x;A4=;A5=	3
+no-blanks	=COUNTBLANK(A1:A2)	A1=1;A2=2	0
+all-blank	=COUNTBLANK(A1:A3)	A1=;A2=;A3=	3
+zero-not-blank	=COUNTBLANK(A1:A2)	A1=0;A2=	1
+empty-string-not-blank	=COUNTBLANK(A1:A2)	A1=text;A2=	1

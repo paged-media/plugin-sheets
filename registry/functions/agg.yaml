@@ -7,7 +7,7 @@
   volatility: none
   range_aware: true
   rust: agg::average
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (AVERAGE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_average"]
@@ -20,7 +20,7 @@
   volatility: none
   range_aware: true
   rust: agg::min
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MIN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_min"]
@@ -33,7 +33,7 @@
   volatility: none
   range_aware: true
   rust: agg::max
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MAX)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_max"]
@@ -46,7 +46,7 @@
   volatility: none
   range_aware: true
   rust: agg::count
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COUNT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_count"]
@@ -59,7 +59,7 @@
   volatility: none
   range_aware: true
   rust: agg::counta
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COUNTA)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_counta"]
@@ -72,7 +72,7 @@
   volatility: none
   range_aware: true
   rust: agg::countblank
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COUNTBLANK)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_countblank"]
@@ -85,7 +85,7 @@
   volatility: none
   range_aware: true
   rust: agg::sumif
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SUMIF) — criteria grammar shared with COUNTIF"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_sumif"]
@@ -98,7 +98,7 @@
   volatility: none
   range_aware: true
   rust: agg::countif
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COUNTIF)"]
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_countif"]

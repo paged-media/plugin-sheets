@@ -1,0 +1,7 @@
+# RADIANS — degrees → radians. id<TAB>formula<TAB>setup<TAB>expected.
+radians-180	=RADIANS(180)	-	3.14159265358979
+radians-90	=RADIANS(90)	-	1.5707963267949
+radians-zero	=RADIANS(0)	-	0
+radians-45	=RADIANS(45)	-	0.785398163397448
+radians-360	=RADIANS(360)	-	6.28318530717959
+radians-error	=RADIANS(A1)	A1=#NUM!	#NUM!

@@ -1,0 +1,7 @@
+# ATAN — arctangent in (-π/2, π/2). id<TAB>formula<TAB>setup<TAB>expected.
+atan-one	=ATAN(1)	-	0.785398163397448
+atan-zero	=ATAN(0)	-	0
+atan-half	=ATAN(0.5)	-	0.463647609000806
+atan-neg-one	=ATAN(-1)	-	-0.785398163397448
+atan-ref	=ATAN(A1)	A1=0	0
+atan-error	=ATAN(A1)	A1=#VALUE!	#VALUE!

@@ -1,0 +1,10 @@
+# sheet.fn.date.second — SECOND(serial), General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Second 0..=59 of the serial's time-of-day, rounded to the
+# nearest second. Negative serial -> #NUM!.
+second.zero	=SECOND(0.5)		0
+second.ten	=SECOND(0.0001157407407)		10
+second.twentysix	=SECOND(0.001)		26
+second.with-date	=SECOND(45000.5)		0
+second.from-cell	=SECOND(A1)	A1=0.001	26
+second.negative-num	=SECOND(-0.001)		#NUM!

@@ -1,0 +1,21 @@
+# sheet.fn.coerce.to-bool golden corpus (spec §7).
+# Format: id<TAB>input<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   input     a typed CellValue literal (see to_number.golden.tsv header):
+#               empty | n:<f64> | t:<text> | b:TRUE|b:FALSE | e:<#TOKEN!>
+#   expected  the to_bool(input) result — either:
+#               b:TRUE | b:FALSE -> Ok(bool)
+#               e:<#TOKEN!>      -> Err(error)
+bool-true-identity	b:TRUE	b:TRUE
+bool-false-identity	b:FALSE	b:FALSE
+number-zero-false	n:0	b:FALSE
+number-nonzero-true	n:1	b:TRUE
+number-negative-true	n:-2	b:TRUE
+empty-false	empty	b:FALSE
+text-true-lower	t:true	b:TRUE
+text-false-upper	t:FALSE	b:FALSE
+text-true-mixed	t:True	b:TRUE
+text-true-trimmed	t:  True  	b:TRUE
+text-numeric-rejected	t:1	e:#VALUE!
+text-yes-rejected	t:yes	e:#VALUE!
+text-empty-rejected	t:	e:#VALUE!
+error-propagates	e:#N/A	e:#N/A

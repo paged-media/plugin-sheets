@@ -1,0 +1,6 @@
+# PI — the constant π (no arguments). id<TAB>formula<TAB>setup<TAB>expected.
+pi-value	=PI()	-	3.14159265358979
+pi-times2	=PI()*2	-	6.28318530717959
+pi-half	=PI()/2	-	1.5707963267949
+pi-in-sin	=SIN(PI()/2)	-	1
+pi-times-radius2	=PI()*POWER(2,2)	-	12.5663706143592

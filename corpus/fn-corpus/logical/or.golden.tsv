@@ -1,0 +1,16 @@
+# sheet.fn.logical.or golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see if.golden.tsv header).
+# OR mirrors AND's range-awareness: text/blank cells in a range are SKIPPED,
+# numbers/bools count, an error cell propagates, and an empty logical
+# population is #VALUE!.
+all-false	=OR(FALSE;FALSE)		FALSE
+one-true	=OR(FALSE;TRUE)		TRUE
+single-false	=OR(FALSE)		FALSE
+numbers-coerce	=OR(0;0;2)		TRUE
+all-zero	=OR(0;0)		FALSE
+range-one-true	=OR(A1:A3)	A1=FALSE;A2=0;A3=7	TRUE
+range-all-false	=OR(A1:A3)	A1=FALSE;A2=0;A3=FALSE	FALSE
+range-text-skipped	=OR(A1:A3)	A1=FALSE;A2=skip;A3=1	TRUE
+range-error-propagates	=OR(A1:A2)	A1=FALSE;A2=#DIV/0!	#DIV/0!
+range-no-logical-value	=OR(A1:A2)	A1=x;A2=	#VALUE!
+scalar-non-bool-text	=OR(FALSE;"nope")		#VALUE!

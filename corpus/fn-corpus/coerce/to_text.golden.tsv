@@ -1,0 +1,25 @@
+# sheet.fn.coerce.to-text golden corpus (spec §7).
+# Format: id<TAB>input<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   input     a typed CellValue literal (see to_number.golden.tsv header):
+#               empty | n:<f64> | t:<text> | b:TRUE|b:FALSE | e:<#TOKEN!>
+#   expected  the to_text(input) string, ALWAYS encoded as t:<text>
+#             (to_text is total — it never errors). The number cases pin the
+#             Excel General representation (D-6: 15 significant digits,
+#             shortest round-trip, scientific outside [1e-4, 1e15)).
+empty-is-blank	empty	t:
+bool-true	b:TRUE	t:TRUE
+bool-false	b:FALSE	t:FALSE
+text-identity	t:hello	t:hello
+error-token	e:#VALUE!	t:#VALUE!
+zero	n:0	t:0
+neg-zero-collapses	n:-0	t:0
+integer	n:42	t:42
+negative-integer	n:-3	t:-3
+one-half	n:1.5	t:1.5
+tenth	n:0.1	t:0.1
+hundred-thousand	n:100000	t:100000
+one-third-15sig	n:0.3333333333333333	t:0.333333333333333
+big-scientific	n:1e20	t:1E+20
+big-scientific-mantissa	n:1.5e20	t:1.5E+20
+small-scientific	n:1e-5	t:1E-05
+small-scientific-mantissa	n:1.25e-7	t:1.25E-07

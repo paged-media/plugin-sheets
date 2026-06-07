@@ -1,0 +1,11 @@
+# sheet.fn.text.find golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# FIND — case-SENSITIVE, literal (no wildcards), 1-based; not found -> #VALUE!.
+find-basic	=FIND(A1,B1)	A1=text:l;B1=text:hello	3
+find-start-num	=FIND(A1,B1,4)	A1=text:l;B1=text:hello	4
+find-empty-needle	=FIND(A1,B1)	A1=text:;B1=text:hello	1
+find-case-sensitive-miss	=FIND(A1,B1)	A1=text:H;B1=text:hello	#VALUE!
+find-literal-asterisk	=FIND(A1,B1)	A1=text:*;B1=text:a*b	2
+find-not-found	=FIND(A1,B1)	A1=text:z;B1=text:hello	#VALUE!
+find-start-past-end	=FIND(A1,B1,9)	A1=text:h;B1=text:hi	#VALUE!
+find-error-propagates	=FIND(A1,B1)	A1=#N/A;B1=text:x	#N/A

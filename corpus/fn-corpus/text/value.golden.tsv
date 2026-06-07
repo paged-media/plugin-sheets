@@ -1,0 +1,11 @@
+# sheet.fn.text.value golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# VALUE(text) — via coerce::to_number, PLUS a trailing-% suffix ("50%"->0.5);
+# un-parseable text -> #VALUE!.
+value-integer	=VALUE(A1)	A1=text:123	123
+value-decimal	=VALUE(A1)	A1=text:  3.14  	3.14
+value-scientific	=VALUE(A1)	A1=text:1e3	1000
+value-percent	=VALUE(A1)	A1=text:50%	0.5
+value-percent-decimal	=VALUE(A1)	A1=text:12.5%	0.125
+value-unparseable-error	=VALUE(A1)	A1=text:abc	#VALUE!
+value-error-propagates	=VALUE(A1)	A1=#DIV/0!	#DIV/0!

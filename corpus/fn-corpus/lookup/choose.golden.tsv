@@ -1,0 +1,12 @@
+# sheet.fn.lookup.choose golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see vlookup.golden.tsv header).
+# CHOOSE(index, value1, value2, ...) — 1-based index into the value args. index
+# truncates toward zero; index<1 or past the count -> #VALUE!. An error in
+# index propagates; an error reaching the chosen value passes through.
+pick-second	=CHOOSE(2,"a","b","c")		b
+pick-first-number	=CHOOSE(1,10,20)		10
+index-text-coerced	=CHOOSE("3","x","y","z")		z
+index-truncates	=CHOOSE(2.9,"x","y")		y
+index-zero-value	=CHOOSE(0,"x","y")		#VALUE!
+index-oob-value	=CHOOSE(3,"x","y")		#VALUE!
+chosen-error-passthrough	=CHOOSE(1,A1,2)	A1=#N/A	#N/A

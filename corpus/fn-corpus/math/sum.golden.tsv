@@ -1,0 +1,13 @@
+# SUM — math/trig family (spec §11). Formula-level golden cases for the
+# Phase-2 end-to-end runner. Columns: id<TAB>formula<TAB>setup<TAB>expected.
+# setup is `Ref=value;Ref=value` (empty `-` for no setup); expected is the
+# General-formatted result or an Excel error literal. Range cells skip
+# non-numeric values; an error cell inside a range propagates; a scalar text
+# arg coerces (the range-vs-scalar asymmetry).
+sum-range	=SUM(A1:A3)	A1=1;A2=2;A3=3	6
+sum-negatives	=SUM(A1:A2)	A1=-5;A2=5	0
+sum-skip-text	=SUM(A1:A4)	A1=1;A2=hello;A3=4;A4=10	15
+sum-scalar-coerce	=SUM(1,"5",TRUE)	-	7
+sum-scalar-bad-text	=SUM(1,"x")	-	#VALUE!
+sum-range-error	=SUM(A1:A2)	A1=1;A2=#DIV/0!	#DIV/0!
+sum-empty-range	=SUM(A1:A3)	-	0

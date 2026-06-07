@@ -1,0 +1,12 @@
+# sheet.fn.agg.sumif golden corpus (spec §7, §11 T0).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id/formula/setup/expected as documented in average.golden.tsv.
+# SUMIF(range, criteria, [sum_range]) sums sum_range cells whose offset-aligned
+# range cell matches criteria. sum_range defaults to range. Only numeric summed
+# cells contribute; an error in a contributing summed cell propagates.
+default-sum-range	=SUMIF(A1:A4,">2")	A1=1;A2=5;A3=3;A4=8	16
+default-ge	=SUMIF(A1:A3,">=4")	A1=4;A2=9;A3=2	13
+sum-range-aligned	=SUMIF(A1:A3,"apple",B1:B3)	A1=apple;A2=pear;A3=apple;B1=10;B2=20;B3=30	40
+text-equality	=SUMIF(A1:A3,"x",B1:B3)	A1=x;A2=y;A3=x;B1=1;B2=2;B3=4	5
+error-in-summed-cell	=SUMIF(A1:A3,"a",B1:B3)	A1=a;A2=a;A3=b;B1=10;B2=#DIV/0!;B3=99	#DIV/0!
+nonnumeric-match-zero	=SUMIF(A1:A2,"a",B1:B2)	A1=a;A2=a;B1=text;B2=7	7

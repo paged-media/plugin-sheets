@@ -1,0 +1,7 @@
+# EXP — e^x. id<TAB>formula<TAB>setup<TAB>expected.
+exp-zero	=EXP(0)	-	1
+exp-one	=EXP(1)	-	2.71828182845905
+exp-two	=EXP(2)	-	7.38905609893065
+exp-half	=EXP(0.5)	-	1.64872127070013
+exp-ref	=EXP(A1)	A1=0	1
+exp-error	=EXP(A1)	A1=#DIV/0!	#DIV/0!

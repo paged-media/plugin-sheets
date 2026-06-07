@@ -1,0 +1,14 @@
+# sheet.fn.logical.iferror golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see if.golden.tsv header).
+# IFERROR(value, value_if_error) returns value unless it IS an error, in which
+# case it returns value_if_error. Only the primary's error-ness is tested; the
+# fallback is returned verbatim (even if it is itself an error). Catches all
+# eight OOXML error codes.
+clean-passes-through	=IFERROR(42;"fallback")		42
+error-uses-fallback	=IFERROR(A1;"fallback")	A1=#DIV/0!	fallback
+text-passes-through	=IFERROR("ok";"fb")		ok
+na-is-caught	=IFERROR(A1;0)	A1=#N/A	0
+name-is-caught	=IFERROR(A1;0)	A1=#NAME?	0
+fallback-may-be-error	=IFERROR(A1;A2)	A1=#REF!;A2=#NUM!	#NUM!
+blank-primary-passes-through	=IFERROR(A1;7)	A1=	
+ref-clean-passes	=IFERROR(A1;7)	A1=5	5

@@ -1,0 +1,8 @@
+# ROUND — half AWAY from zero (Excel ruling, not banker's).
+# id<TAB>formula<TAB>setup<TAB>expected.
+round-half-up	=ROUND(2.5,0)	-	3
+round-half-down-neg	=ROUND(-2.5,0)	-	-3
+round-decimals	=ROUND(2.345,2)	-	2.35
+round-neg-digits	=ROUND(123,-1)	-	120
+round-already	=ROUND(7,0)	-	7
+round-error	=ROUND(A1,0)	A1=#N/A	#N/A

@@ -1,0 +1,10 @@
+# sheet.fn.text.mid golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# MID(text,start,num_chars) — 1-based start; start<1 or num_chars<0 -> #VALUE!.
+mid-basic	=MID(A1,2,3)	A1=text:hello	ell
+mid-start-past-end	=MID(A1,5,2)	A1=text:hi
+mid-count-clamps	=MID(A1,3,99)	A1=text:hello	llo
+mid-start-below-one-value-error	=MID(A1,0,2)	A1=text:hello	#VALUE!
+mid-negative-count-value-error	=MID(A1,1,-1)	A1=text:hello	#VALUE!
+mid-from-start	=MID(A1,1,2)	A1=text:hello	he
+mid-error-propagates	=MID(A1,1,1)	A1=#NUM!	#NUM!

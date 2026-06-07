@@ -1,0 +1,7 @@
+# SIGN — -1 / 0 / +1. id<TAB>formula<TAB>setup<TAB>expected.
+sign-pos	=SIGN(12)	-	1
+sign-neg	=SIGN(-12)	-	-1
+sign-zero	=SIGN(0)	-	0
+sign-ref	=SIGN(A1)	A1=-0.0001	-1
+sign-small-pos	=SIGN(0.0001)	-	1
+sign-error	=SIGN(A1)	A1=#N/A	#N/A

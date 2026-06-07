@@ -1,0 +1,12 @@
+# sheet.fn.lookup.index golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see vlookup.golden.tsv header).
+# INDEX(range, row, [col]) — 1-based. Single-row/single-col range: the lone
+# selector addresses the only axis. Out of bounds #REF!. T0 degrade: row/col 0
+# (Excel's whole-row/column array form) returns #VALUE! (no spill in T0).
+two-d	=INDEX(A1:C2,2,3)	A1=11;B1=12;C1=13;A2=21;B2=22;C2=23	23
+two-d-first	=INDEX(A1:C2,1,1)	A1=11;B1=12;C1=13;A2=21;B2=22;C2=23	11
+single-col-row-selector	=INDEX(A1:A3,2)	A1=7;A2=8;A3=9	8
+single-row-col-selector	=INDEX(A1:C1,3)	A1=4;B1=5;C1=6	6
+row-oob-ref	=INDEX(A1:B2,3,1)	A1=1;B1=2;A2=3;B2=4	#REF!
+row-zero-value	=INDEX(A1:B2,0,1)	A1=1;B1=2;A2=3;B2=4	#VALUE!
+col-zero-value	=INDEX(A1:B2,1,0)	A1=1;B1=2;A2=3;B2=4	#VALUE!

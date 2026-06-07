@@ -7,7 +7,7 @@
   volatility: none
   range_aware: false
   rust: logical::if_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (IF)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_if"]
@@ -20,7 +20,7 @@
   volatility: none
   range_aware: true
   rust: logical::and_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (AND)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_and"]
@@ -33,7 +33,7 @@
   volatility: none
   range_aware: true
   rust: logical::or_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (OR)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_or"]
@@ -46,7 +46,7 @@
   volatility: none
   range_aware: false
   rust: logical::not_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (NOT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_not"]
@@ -59,7 +59,7 @@
   volatility: none
   range_aware: false
   rust: logical::true_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TRUE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_true"]
@@ -72,7 +72,7 @@
   volatility: none
   range_aware: false
   rust: logical::false_fn
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (FALSE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_false"]
@@ -85,7 +85,7 @@
   volatility: none
   range_aware: false
   rust: logical::iferror
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (IFERROR)"]
   tests:
     rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_iferror"]

@@ -1,0 +1,8 @@
+# LOG — log to base (default 10); x<=0 or base<=0 → #NUM!; base==1 → #DIV/0!.
+# id<TAB>formula<TAB>setup<TAB>expected.
+log-default	=LOG(100)	-	2
+log-base2	=LOG(8,2)	-	3
+log-base2-100	=LOG(100,2)	-	6.64385618977473
+log-x-nonpositive	=LOG(-1)	-	#NUM!
+log-base-one	=LOG(8,1)	-	#DIV/0!
+log-base-nonpositive	=LOG(8,-2)	-	#NUM!

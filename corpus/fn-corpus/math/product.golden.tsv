@@ -1,0 +1,9 @@
+# PRODUCT — math/trig family (spec §11). id<TAB>formula<TAB>setup<TAB>expected.
+# Range cells skip non-numeric values; an error cell propagates; scalar args
+# coerce. An all-empty PRODUCT is 0 (no numeric factor seen).
+product-range	=PRODUCT(A1:A3)	A1=2;A2=3;A3=4	24
+product-skip-text	=PRODUCT(A1:A3)	A1=2;A2=x;A3=5	10
+product-scalars	=PRODUCT(3,TRUE)	-	3
+product-with-zero	=PRODUCT(A1:A2)	A1=7;A2=0	0
+product-range-error	=PRODUCT(A1:A2)	A1=2;A2=#NUM!	#NUM!
+product-empty	=PRODUCT(A1:A3)	-	0

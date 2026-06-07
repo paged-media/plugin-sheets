@@ -1,0 +1,12 @@
+# sheet.fn.logical.not golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see if.golden.tsv header).
+# NOT coerces its single argument via to_bool (number != 0; the TRUE/FALSE
+# text literals); an error propagates, non-boolean text is #VALUE!.
+not-true	=NOT(TRUE)		FALSE
+not-false	=NOT(FALSE)		TRUE
+not-zero	=NOT(0)		TRUE
+not-nonzero	=NOT(5)		FALSE
+not-text-true	=NOT("TRUE")		FALSE
+not-ref	=NOT(A1)	A1=FALSE	TRUE
+not-error-propagates	=NOT(A1)	A1=#REF!	#REF!
+not-non-bool-text	=NOT("x")		#VALUE!

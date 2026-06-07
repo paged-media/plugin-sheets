@@ -1,0 +1,9 @@
+# sheet.fn.info.iserr golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: TRUE for any error EXCEPT #N/A (the not-found sentinel passes
+# through). ISERR does not propagate the argument error (ECMA-376 §18.17.7).
+div0	=ISERR(1/0)		TRUE
+value-from-bad-coerce	=ISERR(0+A1)	A1=abc	TRUE
+na-excluded	=ISERR(NA())		FALSE
+number-not-error	=ISERR(A1)	A1=5	FALSE
+text-not-error	=ISERR(A1)	A1=hello	FALSE

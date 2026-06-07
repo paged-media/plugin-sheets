@@ -1,0 +1,8 @@
+# TRUNC — truncate toward zero (default 0 digits); never floors negatives.
+# id<TAB>formula<TAB>setup<TAB>expected.
+trunc-pos	=TRUNC(8.9)	-	8
+trunc-neg	=TRUNC(-8.9)	-	-8
+trunc-decimals	=TRUNC(3.14159,2)	-	3.14
+trunc-neg-digits	=TRUNC(127,-1)	-	120
+trunc-ref	=TRUNC(A1)	A1=5.99	5
+trunc-error	=TRUNC(A1)	A1=#REF!	#REF!

@@ -1,0 +1,9 @@
+# sheet.fn.info.isna golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: TRUE only for #N/A; every other error (and every non-error) is
+# FALSE. ISNA does not propagate the argument error (ECMA-376 §18.17.7).
+na-true	=ISNA(NA())		TRUE
+div0-false	=ISNA(1/0)		FALSE
+value-false	=ISNA(0+A1)	A1=abc	FALSE
+number-false	=ISNA(A1)	A1=5	FALSE
+blank-false	=ISNA(A1)		FALSE

@@ -1,0 +1,9 @@
+# sheet.fn.info.iserror golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: TRUE for ANY of the eight error codes, #N/A included. The argument
+# error is the SUBJECT, never returned (ISERROR does not propagate).
+div0	=ISERROR(1/0)		TRUE
+na	=ISERROR(NA())		TRUE
+value-from-bad-coerce	=ISERROR(0+A1)	A1=abc	TRUE
+number-not-error	=ISERROR(A1)	A1=5	FALSE
+text-not-error	=ISERROR(A1)	A1=hello	FALSE

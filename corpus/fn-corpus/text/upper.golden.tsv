@@ -1,0 +1,9 @@
+# sheet.fn.text.upper golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# UPPER — uppercase (no locale tailoring in T0, D-8).
+upper-basic	=UPPER(A1)	A1=text:Hello World	HELLO WORLD
+upper-alnum	=UPPER(A1)	A1=text:abc123	ABC123
+upper-already-upper	=UPPER(A1)	A1=text:ABC	ABC
+upper-number-coerced	=UPPER(A1)	A1=12	12
+upper-bool	=UPPER(A1)	A1=bool:TRUE	TRUE
+upper-error-propagates	=UPPER(A1)	A1=#NULL!	#NULL!

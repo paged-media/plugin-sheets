@@ -1,0 +1,7 @@
+# DEGREES — radians → degrees. id<TAB>formula<TAB>setup<TAB>expected.
+degrees-pi	=DEGREES(PI())	-	180
+degrees-half-pi	=DEGREES(PI()/2)	-	90
+degrees-zero	=DEGREES(0)	-	0
+degrees-one	=DEGREES(1)	-	57.2957795130823
+degrees-two-pi	=DEGREES(PI()*2)	-	360
+degrees-error	=DEGREES(A1)	A1=#REF!	#REF!

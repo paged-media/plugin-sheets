@@ -1,0 +1,9 @@
+# sheet.fn.text.rept golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# REPT(text, times) — times truncated; negative -> #VALUE!; zero -> "".
+rept-basic	=REPT(A1,3)	A1=text:ab	ababab
+rept-zero	=REPT(A1,0)	A1=text:x
+rept-dashes	=REPT(A1,5)	A1=text:-	-----
+rept-single	=REPT(A1,1)	A1=text:hi	hi
+rept-negative-value-error	=REPT(A1,-1)	A1=text:x	#VALUE!
+rept-error-propagates	=REPT(A1,2)	A1=#N/A	#N/A

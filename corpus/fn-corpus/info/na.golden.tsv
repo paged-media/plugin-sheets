@@ -1,0 +1,9 @@
+# sheet.fn.info.na golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: NA() returns the #N/A error value (ECMA-376 §18.17.7). It is the
+# one info function that PRODUCES rather than inspects an error.
+na-literal	=NA()		#N/A
+na-feeds-isna	=ISNA(NA())		TRUE
+na-is-iserror	=ISERROR(NA())		TRUE
+na-not-iserr	=ISERR(NA())		FALSE
+na-propagates-in-arith	=NA()+1		#N/A

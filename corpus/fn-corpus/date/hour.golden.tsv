@@ -1,0 +1,10 @@
+# sheet.fn.date.hour — HOUR(serial), General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Hour 0..=23 of the serial's time-of-day; the whole-day
+# part is ignored. Negative serial -> #NUM!.
+hour.noon	=HOUR(0.5)		12
+hour.six-am	=HOUR(0.25)		6
+hour.six-pm	=HOUR(0.75)		18
+hour.with-date	=HOUR(45000.5)		12
+hour.from-cell	=HOUR(A1)	A1=0.0625	1
+hour.negative-num	=HOUR(-0.5)		#NUM!

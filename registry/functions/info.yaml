@@ -7,7 +7,7 @@
   volatility: none
   range_aware: false
   rust: info::isblank
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISBLANK)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isblank"]
@@ -20,7 +20,7 @@
   volatility: none
   range_aware: false
   rust: info::isnumber
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISNUMBER)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isnumber"]
@@ -33,7 +33,7 @@
   volatility: none
   range_aware: false
   rust: info::istext
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISTEXT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_istext"]
@@ -46,7 +46,7 @@
   volatility: none
   range_aware: false
   rust: info::islogical
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISLOGICAL)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_islogical"]
@@ -59,7 +59,7 @@
   volatility: none
   range_aware: false
   rust: info::iserror
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISERROR)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_iserror"]
@@ -72,7 +72,7 @@
   volatility: none
   range_aware: false
   rust: info::iserr
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISERR) — all errors except #N/A"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_iserr"]
@@ -85,7 +85,7 @@
   volatility: none
   range_aware: false
   rust: info::isna
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ISNA)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_isna"]
@@ -98,7 +98,7 @@
   volatility: none
   range_aware: false
   rust: info::na
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (NA) — returns #N/A"]
   tests:
     rust: ["sheet-conformance/tests/fn_info.rs::sheet_fn_info_na"]

@@ -1,0 +1,8 @@
+# ROUNDUP — always away from zero (ceil of magnitude).
+# id<TAB>formula<TAB>setup<TAB>expected.
+roundup-pos	=ROUNDUP(2.1,0)	-	3
+roundup-neg	=ROUNDUP(-2.1,0)	-	-3
+roundup-decimals	=ROUNDUP(3.14159,2)	-	3.15
+roundup-neg-digits	=ROUNDUP(123,-1)	-	130
+roundup-exact	=ROUNDUP(5,0)	-	5
+roundup-zero	=ROUNDUP(0,0)	-	0

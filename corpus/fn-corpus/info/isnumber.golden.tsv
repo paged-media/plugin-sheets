@@ -1,0 +1,10 @@
+# sheet.fn.info.isnumber golden corpus (spec §7, §11 T0).
+# Format: id	formula	setup	expected   (TAB-separated; '#'-lines are comments).
+# Ruling: strict variant check, NO coercion — numeric text "1" is FALSE.
+# Info functions do not propagate an error argument (ISNUMBER(error) is FALSE).
+number-cell	=ISNUMBER(A1)	A1=42	TRUE
+decimal-cell	=ISNUMBER(A1)	A1=3.5	TRUE
+numeric-text-cell	=ISNUMBER(A1)	A1="1";	FALSE
+text-cell	=ISNUMBER(A1)	A1=abc	FALSE
+blank-cell	=ISNUMBER(A1)		FALSE
+error-arg	=ISNUMBER(1/0)		FALSE

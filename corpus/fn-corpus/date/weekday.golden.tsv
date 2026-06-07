@@ -1,0 +1,14 @@
+# sheet.fn.date.weekday — WEEKDAY(serial[, return_type]), 1900 system.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Computed from the serial INDEX, so Excel's serial 1 is a
+# Sunday (phantom-day off-by-one). Return types: 1=Sun..7 (default),
+# 2=Mon..7, 3=Mon=0..6. Bad return_type -> #NUM!; negative serial -> #NUM!.
+weekday.epoch-sun	=WEEKDAY(1)		1
+weekday.friday-default	=WEEKDAY(44197)		6
+weekday.friday-type1	=WEEKDAY(44197,1)		6
+weekday.friday-type2	=WEEKDAY(44197,2)		5
+weekday.friday-type3	=WEEKDAY(44197,3)		4
+weekday.sunday	=WEEKDAY(44199)		1
+weekday.from-cell	=WEEKDAY(A1)	A1=44561	6
+weekday.bad-type-num	=WEEKDAY(44197,9)		#NUM!
+weekday.negative-num	=WEEKDAY(-1)		#NUM!

@@ -1,0 +1,7 @@
+# ABS — absolute value. id<TAB>formula<TAB>setup<TAB>expected.
+abs-neg	=ABS(-7.5)	-	7.5
+abs-pos	=ABS(3)	-	3
+abs-zero	=ABS(0)	-	0
+abs-ref	=ABS(A1)	A1=-12	12
+abs-text-coerce	=ABS("-2")	-	2
+abs-error	=ABS(A1)	A1=#REF!	#REF!

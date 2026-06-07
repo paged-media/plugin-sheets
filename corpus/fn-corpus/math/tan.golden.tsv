@@ -1,0 +1,7 @@
+# TAN — tangent of an angle in radians. id<TAB>formula<TAB>setup<TAB>expected.
+tan-zero	=TAN(0)	-	0
+tan-quarter-pi	=TAN(PI()/4)	-	1
+tan-one	=TAN(1)	-	1.5574077246549
+tan-ref	=TAN(A1)	A1=0	0
+tan-neg-quarter-pi	=TAN(-PI()/4)	-	-1
+tan-error	=TAN(A1)	A1=#REF!	#REF!

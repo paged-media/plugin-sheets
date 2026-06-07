@@ -1,0 +1,13 @@
+# sheet.fn.date.date — DATE(year,month,day), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# Excel year shorthand (0..=1899 -> +1900) and rolling month/day normalization
+# (ECMA-376 §18.17.7). Expected = the General-formatted serial.
+date.epoch	=DATE(1900,1,1)		1
+date.modern	=DATE(2021,1,1)		44197
+date.year-end	=DATE(2021,12,31)		44561
+date.month-roll	=DATE(2020,13,1)		44197
+date.day-roll-fwd	=DATE(2020,1,32)		43862
+date.day-roll-back	=DATE(2020,1,0)		43830
+date.year-shorthand	=DATE(20,1,1)		7306
+date.from-cells	=DATE(A1,A2,A3)	A1=2021;A2=1;A3=1	44197
+date.underflow-num	=DATE(1900,1,-1000000)		#NUM!

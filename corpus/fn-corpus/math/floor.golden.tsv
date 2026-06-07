@@ -1,0 +1,9 @@
+# FLOOR — classic 2-arg: round TOWARD zero to a multiple of significance.
+# sign(number) != sign(significance) → #NUM!; zero significance → #DIV/0!.
+# id<TAB>formula<TAB>setup<TAB>expected.
+floor-down	=FLOOR(2.5,1)	-	2
+floor-step2	=FLOOR(2.5,2)	-	2
+floor-neg-both	=FLOOR(-2.5,-1)	-	-2
+floor-zero-sig	=FLOOR(5,0)	-	#DIV/0!
+floor-sign-mismatch	=FLOOR(2,-1)	-	#NUM!
+floor-already	=FLOOR(6,2)	-	6

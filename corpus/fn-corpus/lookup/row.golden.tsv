@@ -1,0 +1,13 @@
+# sheet.fn.lookup.row golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see vlookup.golden.tsv header).
+# ROW([reference]) — reference-arg: with an argument returns the 1-based row of
+# the reference's top-left; with no argument the row of the cell holding the
+# formula. The setup '@Cell' token declares where the formula lives (so the
+# no-arg cases are deterministic for the end-to-end runner). T0 returns one
+# number (the multi-row array form is a T1 spill concern).
+ref-cell	=ROW(B5)	@D11	5
+ref-range-topleft	=ROW(C7:E9)	@D11	7
+ref-row-1	=ROW(A1)	@D11	1
+no-arg-current	=ROW()	@D11	11
+no-arg-current-a1	=ROW()	@A1	1
+abs-ref	=ROW($Z$3)	@D11	3

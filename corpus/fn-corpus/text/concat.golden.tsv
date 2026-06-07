@@ -1,0 +1,11 @@
+# sheet.fn.text.concat golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected  (see len.golden.tsv header).
+# CONCAT is RANGE-AWARE: a range arg contributes every cell row-major. An
+# error anywhere (scalar arg or range cell) propagates.
+concat-scalars	=CONCAT(A1,B1,C1)	A1=text:a;B1=text:b;C1=text:c	abc
+concat-mixed-types	=CONCAT(A1,B1,C1)	A1=text:x;B1=1;C1=bool:TRUE	x1TRUE
+concat-range	=CONCAT(A1:B2)	A1=text:a;B1=text:b;A2=3;B2=text:d	ab3d
+concat-range-plus-scalar	=CONCAT(A1:B1,C1)	A1=text:a;B1=text:b;C1=text:!	ab!
+concat-empty-cells-skip	=CONCAT(A1:C1)	A1=text:x;B1=empty;C1=text:y	xy
+concat-error-in-range	=CONCAT(A1:B1)	A1=text:a;B1=#DIV/0!	#DIV/0!
+concat-error-scalar	=CONCAT(A1,B1)	A1=text:a;B1=#N/A	#N/A

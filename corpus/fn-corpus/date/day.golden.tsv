@@ -1,0 +1,11 @@
+# sheet.fn.date.day — DAY(serial), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Returns 1..=31. The phantom serial 60 = 1900-02-29 -> 29
+# (ruling sheet.format.date.leap1900). Negative serial -> #NUM!.
+day.epoch	=DAY(1)		1
+day.modern	=DAY(44197)		1
+day.mid-month	=DAY(44211)		15
+day.year-end	=DAY(44561)		31
+day.leap-phantom	=DAY(60)		29
+day.from-cell	=DAY(A1)	A1=36711	4
+day.negative-num	=DAY(-1)		#NUM!

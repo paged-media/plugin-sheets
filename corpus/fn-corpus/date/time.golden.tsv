@@ -1,0 +1,11 @@
+# sheet.fn.date.time — TIME(hour,minute,second), General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. A fractional-day serial reduced modulo 24h; negative net
+# total -> #NUM!. Expected = the General-formatted fraction.
+time.noon	=TIME(12,0,0)		0.5
+time.six-am	=TIME(6,0,0)		0.25
+time.six-pm	=TIME(18,0,0)		0.75
+time.ninety-min	=TIME(0,90,0)		0.0625
+time.wrap-25h	=TIME(25,0,0)		0.041666666666667
+time.from-cells	=TIME(A1,A2,A3)	A1=6;A2=0;A3=0	0.25
+time.negative-num	=TIME(-1,0,0)		#NUM!

@@ -7,7 +7,7 @@
   volatility: none
   range_aware: false
   rust: text::len
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LEN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_len"]
@@ -20,7 +20,7 @@
   volatility: none
   range_aware: false
   rust: text::left
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LEFT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_left"]
@@ -33,7 +33,7 @@
   volatility: none
   range_aware: false
   rust: text::right
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RIGHT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_right"]
@@ -46,7 +46,7 @@
   volatility: none
   range_aware: false
   rust: text::mid
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MID)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_mid"]
@@ -59,7 +59,7 @@
   volatility: none
   range_aware: true
   rust: text::concat
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CONCAT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_concat"]
@@ -72,7 +72,7 @@
   volatility: none
   range_aware: false
   rust: text::concatenate
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CONCATENATE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_concatenate"]
@@ -85,7 +85,7 @@
   volatility: none
   range_aware: false
   rust: text::upper
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (UPPER)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_upper"]
@@ -98,7 +98,7 @@
   volatility: none
   range_aware: false
   rust: text::lower
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LOWER)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_lower"]
@@ -111,7 +111,7 @@
   volatility: none
   range_aware: false
   rust: text::trim
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TRIM)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_trim"]
@@ -124,7 +124,7 @@
   volatility: none
   range_aware: false
   rust: text::text
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TEXT) — format codes via sheet-format"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_text"]
@@ -137,7 +137,7 @@
   volatility: none
   range_aware: false
   rust: text::find
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (FIND) — case-sensitive, no wildcards"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_find"]
@@ -150,7 +150,7 @@
   volatility: none
   range_aware: false
   rust: text::search
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SEARCH) — case-insensitive"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_search"]
@@ -163,7 +163,7 @@
   volatility: none
   range_aware: false
   rust: text::substitute
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SUBSTITUTE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_substitute"]
@@ -176,7 +176,7 @@
   volatility: none
   range_aware: false
   rust: text::rept
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (REPT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_rept"]
@@ -189,7 +189,7 @@
   volatility: none
   range_aware: false
   rust: text::value
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (VALUE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_value"]

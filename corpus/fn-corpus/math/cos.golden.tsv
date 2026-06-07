@@ -1,0 +1,7 @@
+# COS — cosine of an angle in radians. id<TAB>formula<TAB>setup<TAB>expected.
+cos-zero	=COS(0)	-	1
+cos-pi	=COS(PI())	-	-1
+cos-third-pi	=COS(PI()/3)	-	0.5
+cos-one	=COS(1)	-	0.54030230586814
+cos-ref	=COS(A1)	A1=0	1
+cos-error	=COS(A1)	A1=#N/A	#N/A

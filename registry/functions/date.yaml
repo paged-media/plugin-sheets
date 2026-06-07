@@ -7,7 +7,7 @@
   volatility: volatile
   range_aware: false
   rust: date::now
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (NOW) — serial; display via number format"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_now"]
@@ -20,7 +20,7 @@
   volatility: volatile
   range_aware: false
   rust: date::today
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TODAY)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_today"]
@@ -33,7 +33,7 @@
   volatility: none
   range_aware: false
   rust: date::date
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DATE) — y/m/d normalization per Excel"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_date"]
@@ -46,7 +46,7 @@
   volatility: none
   range_aware: false
   rust: date::year
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (YEAR)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_year"]
@@ -59,7 +59,7 @@
   volatility: none
   range_aware: false
   rust: date::month
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MONTH)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_month"]
@@ -72,7 +72,7 @@
   volatility: none
   range_aware: false
   rust: date::day
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DAY)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_day"]
@@ -85,7 +85,7 @@
   volatility: none
   range_aware: false
   rust: date::time
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TIME)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_time"]
@@ -98,7 +98,7 @@
   volatility: none
   range_aware: false
   rust: date::hour
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (HOUR)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_hour"]
@@ -111,7 +111,7 @@
   volatility: none
   range_aware: false
   rust: date::minute
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MINUTE)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_minute"]
@@ -124,7 +124,7 @@
   volatility: none
   range_aware: false
   rust: date::second
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SECOND)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_second"]
@@ -137,7 +137,7 @@
   volatility: none
   range_aware: false
   rust: date::weekday
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (WEEKDAY) — return-type modes 1/2/3 (T0)"]
   tests:
     rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_weekday"]

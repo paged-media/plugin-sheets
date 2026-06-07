@@ -1,0 +1,10 @@
+# sheet.fn.agg.counta golden corpus (spec §7, §11 T0).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id/formula/setup/expected as documented in average.golden.tsv.
+# COUNTA counts every non-empty cell (numbers, text, bools, AND error cells);
+# only a truly blank cell is skipped. A scalar argument is always present.
+range-mixed	=COUNTA(A1:A5)	A1=1;A2=x;A3=FALSE;A4=#N/A;A5=	4
+range-all-empty	=COUNTA(A1:A3)	A1=;A2=;A3=	0
+text-empty-string-counts	=COUNTA(A1:A2)	A1=;A2=text	1
+scalars-always-count	=COUNTA(0,"x",9)	-	3
+range-numbers	=COUNTA(A1:A3)	A1=1;A2=2;A3=3	3

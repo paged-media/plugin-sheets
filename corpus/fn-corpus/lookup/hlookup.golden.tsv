@@ -1,0 +1,11 @@
+# sheet.fn.lookup.hlookup golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see vlookup.golden.tsv header).
+# HLOOKUP(key, table, row_index, [range_lookup]) — horizontal transpose of
+# VLOOKUP: searches the first ROW, returns the cell in row_index (1-based) of
+# the matching column. Same range_lookup / #N/A / #REF! / #VALUE! rulings.
+exact-hit	=HLOOKUP(3,A1:C2,2,FALSE)	A1=1;B1=2;C1=3;A2=one;B2=two;C2=three	three
+approx-floor	=HLOOKUP(22,A1:C2,2)	A1=10;B1=20;C1=30;A2=a;B2=b;C2=c	b
+approx-below-first-na	=HLOOKUP(1,A1:C2,2)	A1=10;B1=20;C1=30;A2=a;B2=b;C2=c	#N/A
+row-index-oob-ref	=HLOOKUP(20,A1:C2,3)	A1=10;B1=20;C1=30;A2=a;B2=b;C2=c	#REF!
+index-text-coerced	=HLOOKUP(2,A1:B2,"2",FALSE)	A1=1;B1=2;A2=x;B2=y	y
+key-col-self	=HLOOKUP(2,A1:B2,1,FALSE)	A1=1;B1=2;A2=x;B2=y	2

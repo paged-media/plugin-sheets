@@ -1,0 +1,19 @@
+# sheet.fn.lookup.vlookup golden corpus (spec §7, §11 T0; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id        unique case id (free text).
+#   formula   the cell formula under test (e.g. '=VLOOKUP(2,A1:B3,2,FALSE)').
+#   setup     ';'-separated 'Cell=Literal' assignments seeding the sheet
+#             (numbers as digits, text verbatim, TRUE/FALSE booleans).
+#   expected  the General-formatted result, or an error literal (#N/A, #REF!, …).
+# VLOOKUP(key, table, col_index, [range_lookup]) — range_lookup default TRUE
+# (approximate, assumes col 1 sorted ascending, largest <= key; #N/A below the
+# first value). FALSE = exact, wildcard-aware for text keys; col_index<1 #VALUE!,
+# past the width #REF!, not found #N/A. Feeds the Phase-2 end-to-end runner.
+exact-hit	=VLOOKUP(2,A1:B3,2,FALSE)	A1=1;B1=one;A2=2;B2=two;A3=3;B3=three	two
+exact-key-col	=VLOOKUP(3,A1:B3,1,FALSE)	A1=1;B1=one;A2=2;B2=two;A3=3;B3=three	3
+approx-floor	=VLOOKUP(25,A1:B3,2)	A1=10;B1=a;A2=20;B2=b;A3=30;B3=c	b
+approx-below-first-na	=VLOOKUP(5,A1:B3,2)	A1=10;B1=a;A2=20;B2=b;A3=30;B3=c	#N/A
+exact-not-found-na	=VLOOKUP(grape,A1:B3,2,FALSE)	A1=apple;B1=1;A2=banana;B2=2;A3=cherry;B3=3	#N/A
+exact-wildcard	=VLOOKUP("ban*",A1:B3,2,FALSE)	A1=apple;B1=1;A2=banana;B2=2;A3=cherry;B3=3	2
+col-index-oob-ref	=VLOOKUP(1,A1:B2,3,FALSE)	A1=1;B1=one;A2=2;B2=two	#REF!
+col-index-lt1-value	=VLOOKUP(1,A1:B2,0,FALSE)	A1=1;B1=one;A2=2;B2=two	#VALUE!
