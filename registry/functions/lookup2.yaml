@@ -5,17 +5,19 @@
 # Implemented (T1, pure — no model access): XLOOKUP, XMATCH, ADDRESS, ROWS,
 # COLUMNS.
 #
-# DEFERRED (status: planned) — OFFSET / INDIRECT / FORMULATEXT. These need to
-# read arbitrary cells (or a cell's formula source) that are NOT among the
-# kernel's `Arg` values — the offset target lies OUTSIDE the materialized base
-# RangeView, INDIRECT parses an address at runtime, FORMULATEXT needs the
-# formula string (never a CellValue). The pure-kernel signature and `EvalCtx`
-# are FROZEN (CLAUDE.md §"Interface freeze"); unblocking these requires giving
-# EvalCtx a `cell_reader`/`formula_reader` closure, which forces a lifetime on
-# EvalCtx and ripples through every family kernel + sheet-calc — a versioned
-# orchestrator amendment, not a drive-by edit. They stay planned (→ #NAME?,
-# uncallable by construction) with the limitation documented in the kernel
-# module header and the implementation report. Nothing is faked.
+# EVALUATOR SPECIAL FORMS (M2 Phase A, `special_form: true`) — OFFSET /
+# INDIRECT / FORMULATEXT. These inherently READ THE MODEL (a reference/formula
+# by address) and cannot be pure `fn(&[Arg], &EvalCtx) -> CellValue` kernels:
+# the OFFSET target lies OUTSIDE the materialized base RangeView, INDIRECT
+# parses an address at runtime, FORMULATEXT needs the formula source string
+# (never a CellValue). Rather than ripple a model reader through the FROZEN
+# `EvalCtx` (rejected — it would touch every kernel), they are handled as
+# EVALUATOR SPECIAL FORMS in `sheet-calc/eval.rs`, where the engine already
+# holds the model (this mirrors how ROW/COLUMN ref_args + ranges are already
+# special-cased). The `special_form: true` flag makes eval intercept BEFORE
+# materializing args + calling dispatch; the pure dispatch door returns #NAME?
+# for these rows (it must never be reached). No model reader on EvalCtx; the
+# pure-kernel signature stays frozen. Nothing is faked.
 
 - id: sheet.fn.lookup.xlookup
   name: XLOOKUP
@@ -50,11 +52,11 @@
   volatility: volatile
   range_aware: true
   ref_args: true
-  rust: lookup2::offset
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (OFFSET) — reference, rows, cols, [height], [width]. DEFERRED: the offset target is a cell OUTSIDE the materialized base RangeView; the FROZEN pure kernel cannot read it. Needs an EvalCtx cell_reader amendment (see module header / report)."]
+  special_form: true
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (OFFSET) — reference, rows, cols, [height], [width]. EVALUATOR SPECIAL FORM (M2 Phase A): the base reference arg is resolved AS a reference in sheet-calc/eval.rs (eval_as_ref), the offset top-left + optional height/width compute a RangeRef, #REF! when the target leaves the sheet bounds. VOLATILE."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_offset"]
+    rust: ["sheet-conformance/tests/special_forms.rs::sheet_fn_lookup_offset"]
     corpus: []
 
 - id: sheet.fn.lookup.indirect
@@ -64,11 +66,11 @@
   volatility: volatile
   range_aware: true
   ref_args: true
-  rust: lookup2::indirect
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (INDIRECT) — ref_text, [a1]. DEFERRED: parses an A1 address at runtime and reads that cell — never an Arg value. Needs an EvalCtx cell_reader amendment (see module header / report)."]
+  special_form: true
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (INDIRECT) — ref_text, [a1]. EVALUATOR SPECIAL FORM (M2 Phase A): arg0 evaluates to text, parsed as an A1 ref/range in sheet-calc/eval.rs (sheet_core::parse_a1), the value is read from the model; #REF! on unparseable; a1=FALSE (R1C1) -> #REF! (documented T2 limitation). VOLATILE."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_indirect"]
+    rust: ["sheet-conformance/tests/special_forms.rs::sheet_fn_lookup_indirect"]
     corpus: []
 
 - id: sheet.fn.lookup.address
@@ -119,9 +121,9 @@
   volatility: none
   range_aware: true
   ref_args: true
-  rust: lookup2::formulatext
-  status: planned
-  provenance: ["Microsoft FORMULATEXT (public docs) — the formula text of a reference. DEFERRED: needs the referenced cell's FORMULA SOURCE, which is not a CellValue and never crosses the Arg boundary. Needs an EvalCtx formula_reader amendment (see module header / report)."]
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft FORMULATEXT (public docs) — the formula text of a reference. EVALUATOR SPECIAL FORM (M2 Phase A): the arg is resolved to a CellRef in sheet-calc/eval.rs, the cell's formula is PRINTED (sheet_parser::print with the cell's home sheet, WITH a leading '='); #N/A if the cell has no formula."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_formulatext"]
-    corpus: ["corpus/fn-corpus/lookup2/formulatext.golden.tsv"]
+    rust: ["sheet-conformance/tests/special_forms.rs::sheet_fn_lookup_formulatext"]
+    corpus: []

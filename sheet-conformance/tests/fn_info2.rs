@@ -30,9 +30,10 @@
 //! - `SHEET`/`SHEETS` are reference functions resolved from the argument's
 //!   range origin or the current cell; their T1 limitations are documented in
 //!   the kernel and the registry rows.
-//! - `ISFORMULA` stays PLANNED (it needs reference introspection the pure
-//!   kernel lacks) — flagged in the track report, not tested here as
-//!   implemented.
+//! - `ISFORMULA` is now an EVALUATOR SPECIAL FORM (M2 Phase A,
+//!   `special_form: true`): it reads `cell.formula.is_some()` from the model in
+//!   `sheet-calc/eval.rs`, so its real behavior is tested through the evaluator
+//!   in `tests/special_forms.rs`, not as a pure kernel here.
 
 use sheet_core::{CellError, CellRef, CellValue, DateSystem};
 use sheet_fn::{dispatch, Arg, EvalCtx, RangeView};

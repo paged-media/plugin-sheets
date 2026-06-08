@@ -97,14 +97,13 @@
     rust: ["sheet-conformance/tests/fn_info2.rs::sheet_fn_info_isodd"]
     corpus: ["corpus/fn-corpus/info2/isodd.golden.tsv"]
 
-# ISFORMULA — left PLANNED (T1 limitation). It must know whether the
-# *referenced cell* stores a formula, but a pure fn(&[Arg], &EvalCtx) kernel
-# receives only the evaluated value (a `2` is Number(2.0) whether typed or
-# computed); neither Arg nor EvalCtx carries a formula-ness flag. Faking it
-# from the value is impossible. Stays planned until the calling convention
-# grows a reference-introspection seam (additive EvalCtx hook or Arg origin
-# flag). Flagged in the track report. Kernel `info2::isformula` is NOT
-# written (planned rows are uncallable by construction).
+# ISFORMULA — EVALUATOR SPECIAL FORM (M2 Phase A, `special_form: true`). It
+# must know whether the *referenced cell* stores a formula, which a pure
+# fn(&[Arg], &EvalCtx) kernel cannot see (a `2` is Number(2.0) whether typed or
+# computed). Rather than add a formula-ness flag to the FROZEN calling
+# convention, it is handled in `sheet-calc/eval.rs`: the arg is resolved to a
+# CellRef and `cell.formula.is_some()` is read directly from the model. The
+# pure dispatch door returns #NAME? for this row (eval intercepts first).
 - id: sheet.fn.info.isformula
   name: ISFORMULA
   family: info
@@ -112,9 +111,9 @@
   volatility: none
   range_aware: true
   ref_args: true
-  rust: info2::isformula
-  status: planned
-  provenance: ["Microsoft ISFORMULA (public docs) — true if the reference is a formula cell. T1: needs reference introspection the pure kernel lacks (see info2.rs module docs)"]
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft ISFORMULA (public docs) — true if the reference is a formula cell. EVALUATOR SPECIAL FORM (M2 Phase A): resolved to a CellRef in sheet-calc/eval.rs; returns Bool(cell.formula.is_some())."]
   tests:
-    rust: ["sheet-conformance/tests/fn_info2.rs::sheet_fn_info_isformula"]
-    corpus: ["corpus/fn-corpus/info2/isformula.golden.tsv"]
+    rust: ["sheet-conformance/tests/special_forms.rs::sheet_fn_info_isformula"]
+    corpus: []

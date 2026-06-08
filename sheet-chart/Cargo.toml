@@ -1,0 +1,20 @@
+[package]
+name = "sheet-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "paged.sheet chart model + pure geometry IR generator (spec §8.4, T2/M2). model -> vector primitives in chart-content pt space; the charts track lowers these through paged.draw (a CORE SDK surface, never another plugin)."
+
+[lints]
+workspace = true
+
+[dependencies]
+sheet-core = { path = "../sheet-core" }
+sheet-format = { path = "../sheet-format" }
+serde = { workspace = true }
+compact_str = { workspace = true }
+
+[dev-dependencies]
+serde_json.workspace = true

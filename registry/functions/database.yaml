@@ -1,0 +1,173 @@
+# sheet.fn.database.* (T2/M2) — the Excel database (D-) function family. Schema:
+# see math.yaml. Each D-function takes (database, field, criteria): a database
+# range whose first row is column headers, a `field` selecting the column to
+# aggregate (a header label text, a 1-based column number, or a cell ref to a
+# header), and a criteria range (its own header row + condition rows). The
+# matching rows of the selected column are aggregated.
+#
+# STATUS: planned — the M2 database track wires the kernels (rust:
+# database::* under sheet-fn/src/families/database.rs) + tests
+# (sheet-conformance/tests/fn_database.rs::sheet_fn_database_*) and flips these
+# rows to implemented. Family token: `database`. Provenance: ECMA-376 §18.17.7
+# (database functions) + public Microsoft function docs.
+#
+# These are pure: the database + criteria are RANGE arguments materialized by the
+# evaluator (range_aware), so no special-form / model reader is needed (unlike
+# OFFSET/INDIRECT). Coercion + the criteria-matching machinery is shared across
+# all twelve.
+
+- id: sheet.fn.database.dsum
+  name: DSUM
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dsum
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DSUM) — sum of the field over rows matching criteria"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dsum"]
+    corpus: ["corpus/fn-corpus/database/dsum.golden.tsv"]
+
+- id: sheet.fn.database.dcount
+  name: DCOUNT
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dcount
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DCOUNT) — count of NUMERIC field cells over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dcount"]
+    corpus: ["corpus/fn-corpus/database/dcount.golden.tsv"]
+
+- id: sheet.fn.database.dcounta
+  name: DCOUNTA
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dcounta
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DCOUNTA) — count of NON-BLANK field cells over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dcounta"]
+    corpus: ["corpus/fn-corpus/database/dcounta.golden.tsv"]
+
+- id: sheet.fn.database.dget
+  name: DGET
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dget
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DGET) — the single field value of the one matching row; no match -> #VALUE!, multiple -> #NUM!"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dget"]
+    corpus: ["corpus/fn-corpus/database/dget.golden.tsv"]
+
+- id: sheet.fn.database.dmax
+  name: DMAX
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dmax
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DMAX) — max of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dmax"]
+    corpus: ["corpus/fn-corpus/database/dmax.golden.tsv"]
+
+- id: sheet.fn.database.dmin
+  name: DMIN
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dmin
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DMIN) — min of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dmin"]
+    corpus: ["corpus/fn-corpus/database/dmin.golden.tsv"]
+
+- id: sheet.fn.database.daverage
+  name: DAVERAGE
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::daverage
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DAVERAGE) — arithmetic mean of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_daverage"]
+    corpus: ["corpus/fn-corpus/database/daverage.golden.tsv"]
+
+- id: sheet.fn.database.dproduct
+  name: DPRODUCT
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dproduct
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DPRODUCT) — product of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dproduct"]
+    corpus: ["corpus/fn-corpus/database/dproduct.golden.tsv"]
+
+- id: sheet.fn.database.dstdev
+  name: DSTDEV
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dstdev
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DSTDEV) — SAMPLE standard deviation of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dstdev"]
+    corpus: ["corpus/fn-corpus/database/dstdev.golden.tsv"]
+
+- id: sheet.fn.database.dstdevp
+  name: DSTDEVP
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dstdevp
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DSTDEVP) — POPULATION standard deviation of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dstdevp"]
+    corpus: ["corpus/fn-corpus/database/dstdevp.golden.tsv"]
+
+- id: sheet.fn.database.dvar
+  name: DVAR
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dvar
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DVAR) — SAMPLE variance of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dvar"]
+    corpus: ["corpus/fn-corpus/database/dvar.golden.tsv"]
+
+- id: sheet.fn.database.dvarp
+  name: DVARP
+  family: database
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: database::dvarp
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (DVARP) — POPULATION variance of the field over matching rows"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dvarp"]
+    corpus: ["corpus/fn-corpus/database/dvarp.golden.tsv"]

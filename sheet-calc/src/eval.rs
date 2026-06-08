@@ -47,7 +47,7 @@
 
 use sheet_core::ast::{BinOp, Expr, FuncId, StructuredRef, UnOp};
 use sheet_core::names::NameTarget;
-use sheet_core::{CellError, CellRef, CellValue, RangeRef, SheetModel, Table};
+use sheet_core::{CellError, CellRef, CellValue, RangeRef, SheetId, SheetModel, Table};
 use sheet_fn::{coerce, Arg, EvalCtx, FnResult};
 
 use crate::argview::{self, RangeBuf};
@@ -550,6 +550,20 @@ fn plan_args(
                 bufs.push(argview::materialize_ref_1x1(model, *r));
                 plans.push(ArgPlan::BufAt(bufs.len() - 1));
             }
+            // A reference-returning special form (OFFSET/INDIRECT) as an
+            // argument materializes its RESOLVED range, so a range-aware outer
+            // function (`SUM(OFFSET(A1,0,0,3,1))`) sees the whole area, not just
+            // the top-left (M2 Phase A). An unresolvable target degrades to the
+            // scalar `#REF!`/`#VALUE!` the special-form scalar path emits.
+            Expr::Func(ffid, _) if sheet_core::funcs::meta(*ffid).special_form => {
+                match eval_as_ref(model, arg, ctx, spills) {
+                    Some(r) => {
+                        bufs.push(argview::materialize_range(model, r));
+                        plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                    }
+                    None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
+                }
+            }
             _ => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
         }
     }
@@ -570,6 +584,14 @@ fn build_args<'a>(bufs: &'a [RangeBuf], plans: &[ArgPlan]) -> Vec<Arg<'a>> {
 
 /// Evaluate a function call: materialize each argument, then dispatch through
 /// the frozen `sheet_fn` table. Arity is enforced inside `dispatch`.
+///
+/// EVALUATOR SPECIAL FORMS (M2 Phase A) are intercepted FIRST: a function whose
+/// registry row carries `special_form: true` reads the MODEL (a reference or a
+/// cell's formula by address) and so cannot be a pure `fn(&[Arg], &EvalCtx)`
+/// kernel. We handle it here — where the evaluator already holds the model —
+/// BEFORE materializing args and calling `dispatch` (mirroring how `ref_args`
+/// and ranges are already special-cased above). The pure dispatch door for
+/// such a row returns `#NAME?`; it must never be reached.
 fn eval_func(
     model: &SheetModel,
     fid: FuncId,
@@ -577,6 +599,9 @@ fn eval_func(
     ctx: &EvalCtx,
     spills: &SpillState,
 ) -> CellValue {
+    if sheet_core::funcs::meta(fid).special_form {
+        return eval_special_form(model, fid, args, ctx, spills);
+    }
     let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
     let built = build_args(&bufs, &plans);
     sheet_fn::dispatch(fid, &built, ctx)
@@ -592,6 +617,11 @@ fn eval_func_rich(
     ctx: &EvalCtx,
     spills: &SpillState,
 ) -> FnResult {
+    // Special forms (M2 Phase A) intercept here too — they always ground to a
+    // scalar (a single value, never a 2-D block in T1/T2).
+    if sheet_core::funcs::meta(fid).special_form {
+        return FnResult::Scalar(eval_special_form(model, fid, args, ctx, spills));
+    }
     let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
     let built = build_args(&bufs, &plans);
     sheet_fn::dispatch_rich(fid, &built, ctx)
@@ -661,6 +691,359 @@ fn name_range_target(model: &SheetModel, nid: sheet_core::ast::NameId) -> Option
             NameTarget::Formula(_) => None,
         },
         None => None,
+    }
+}
+
+// ============================================================================
+// Evaluator special forms (spec §13 M2 Phase A)
+// ============================================================================
+//
+// OFFSET / INDIRECT / FORMULATEXT / ISFORMULA inherently READ THE MODEL (a
+// reference, an address parsed at runtime, or a cell's formula source) and so
+// cannot be pure `fn(&[Arg], &EvalCtx) -> CellValue` kernels. Rather than ripple
+// a model reader through the FROZEN `EvalCtx` (rejected: it touches every
+// kernel), they are handled HERE in the evaluator, which already holds the
+// model. Registry rows carry `special_form: true`; `eval_func`/`eval_func_rich`
+// intercept BEFORE materializing args + calling dispatch (the pure dispatch door
+// returns `#NAME?` for these rows — it must never be reached).
+//
+// VOLATILITY: OFFSET and INDIRECT are `volatility: volatile` in the registry;
+// `extract_refs` flags those names, so the dirty tracker recalcs cells using
+// them every pass — the special-form path does not change that contract.
+
+/// Dispatch a special-form function call against the model (M2 Phase A). Arity
+/// is range-checked here (the pure dispatch door no longer guards these rows).
+/// An arity violation is `#VALUE!`, matching the pure door's convention.
+fn eval_special_form(
+    model: &SheetModel,
+    fid: FuncId,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
+    let meta = sheet_core::funcs::meta(fid);
+    if args.len() < meta.min_args as usize || meta.max_args.is_some_and(|m| args.len() > m as usize)
+    {
+        return CellValue::Error(CellError::Value);
+    }
+    match meta.name {
+        "OFFSET" => eval_offset(model, args, ctx, spills),
+        "INDIRECT" => eval_indirect(model, args, ctx, spills),
+        "FORMULATEXT" => eval_formulatext(model, args, ctx),
+        "ISFORMULA" => eval_isformula(model, args, ctx),
+        // A registered special form with no handler is an internal invariant
+        // break (a new `special_form: true` row landed without wiring eval).
+        _ => CellValue::Error(CellError::Name),
+    }
+}
+
+/// Resolve an argument expression AS A REFERENCE (not a value): the building
+/// block special forms need. Handles a bare cell ref, a range, a defined name
+/// that targets a range, a structured (table) reference, a spill reference, and
+/// a NESTED special form (`OFFSET`/`INDIRECT`) — so `OFFSET(INDIRECT("A1"),…)`
+/// and `OFFSET(OFFSET(…),…)` resolve. Returns `None` for any expression that is
+/// not reference-shaped (the caller maps that to the function's own error).
+fn eval_as_ref(
+    model: &SheetModel,
+    expr: &Expr,
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> Option<RangeRef> {
+    match expr {
+        Expr::Ref(r) => Some(RangeRef { start: *r, end: *r }),
+        Expr::Range(r) => Some(r.normalized()),
+        Expr::Name(nid) => name_range_target(model, *nid),
+        Expr::StructuredRef(s) => resolve_structured_ref(model, s, ctx).ok(),
+        Expr::SpillRef(inner) => spill_ref_range(spills, inner).map(spill_rect_to_range),
+        // A nested reference-returning special form (OFFSET / INDIRECT).
+        Expr::Func(fid, fargs) => {
+            let meta = sheet_core::funcs::meta(*fid);
+            if !meta.special_form {
+                return None;
+            }
+            match meta.name {
+                "OFFSET" => offset_target(model, fargs, ctx, spills).ok(),
+                "INDIRECT" => indirect_target(model, fargs, ctx, spills).ok(),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `OFFSET(reference, rows, cols, [height], [width])` (ECMA-376 §18.17.7,
+/// VOLATILE). Resolves the base reference, shifts its top-left by `(rows, cols)`,
+/// and optionally resizes to `height × width` (defaulting to the base shape).
+/// Returns the resulting range's VALUE: the top-left cell for a single cell;
+/// a multi-cell area in a scalar slot is `#VALUE!` (the range-in-scalar ruling —
+/// a range-aware OUTER function instead receives the materialized range when
+/// OFFSET is ITS argument, via `eval_as_ref`). `#REF!` when the target leaves
+/// the sheet bounds.
+fn eval_offset(model: &SheetModel, args: &[Expr], ctx: &EvalCtx, spills: &SpillState) -> CellValue {
+    match offset_target(model, args, ctx, spills) {
+        Ok(r) => range_value_scalar(model, r),
+        Err(e) => CellValue::Error(e),
+    }
+}
+
+/// Compute the `RangeRef` an `OFFSET(...)` call denotes (the shared core, also
+/// used when OFFSET is nested under another reference function). Errors:
+/// `#REF!` (unresolvable base, out-of-bounds target, non-positive height/width),
+/// `#VALUE!` (a non-numeric rows/cols/height/width argument).
+fn offset_target(
+    model: &SheetModel,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> Result<RangeRef, CellError> {
+    let base = eval_as_ref(model, &args[0], ctx, spills).ok_or(CellError::Ref)?;
+    let base = base.normalized();
+    let d_rows = arg_to_i64(model, &args[1], ctx, spills)?;
+    let d_cols = arg_to_i64(model, &args[2], ctx, spills)?;
+    // Optional height/width default to the base range's dimensions.
+    let height = match args.get(3) {
+        Some(e) => arg_to_i64(model, e, ctx, spills)?,
+        None => base.rows() as i64,
+    };
+    let width = match args.get(4) {
+        Some(e) => arg_to_i64(model, e, ctx, spills)?,
+        None => base.cols() as i64,
+    };
+    if height <= 0 || width <= 0 {
+        return Err(CellError::Ref);
+    }
+
+    let new_top = base.start.row as i64 + d_rows;
+    let new_left = base.start.col as i64 + d_cols;
+    let new_bottom = new_top + height - 1;
+    let new_right = new_left + width - 1;
+
+    // Out of the grid (either corner) → #REF!.
+    if new_top < 0
+        || new_left < 0
+        || new_bottom > sheet_core::MAX_ROW as i64
+        || new_right > sheet_core::MAX_COL as i64
+    {
+        return Err(CellError::Ref);
+    }
+
+    let sheet = base.start.sheet;
+    Ok(RangeRef {
+        start: CellRef {
+            sheet,
+            row: new_top as u32,
+            col: new_left as u32,
+            row_abs: false,
+            col_abs: false,
+        },
+        end: CellRef {
+            sheet,
+            row: new_bottom as u32,
+            col: new_right as u32,
+            row_abs: false,
+            col_abs: false,
+        },
+    })
+}
+
+/// `INDIRECT(ref_text, [a1])` (ECMA-376 §18.17.7, VOLATILE). Evaluates `arg0`
+/// to text, parses it as an A1 cell or range reference against the model, and
+/// returns its value. `#REF!` on an unparseable address. The `a1` argument
+/// defaults to TRUE (A1 style); `a1 = FALSE` (R1C1) is a documented T2
+/// limitation → `#REF!`.
+fn eval_indirect(
+    model: &SheetModel,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
+    match indirect_target(model, args, ctx, spills) {
+        Ok(r) => range_value_scalar(model, r),
+        Err(e) => CellValue::Error(e),
+    }
+}
+
+/// Compute the `RangeRef` an `INDIRECT(...)` call denotes (shared with nesting).
+/// `#REF!` for an unparseable address or an R1C1 (`a1 = FALSE`) request (T2
+/// limitation); `#VALUE!` only via the text coercion of a hard error argument.
+fn indirect_target(
+    model: &SheetModel,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> Result<RangeRef, CellError> {
+    // Evaluate arg0 to a scalar; an error argument propagates.
+    let v = eval(model, &args[0], ctx, spills);
+    if let CellValue::Error(e) = v {
+        return Err(e);
+    }
+    // The `a1` flag: default TRUE; FALSE (R1C1) is a documented T2 limitation.
+    if let Some(a1_expr) = args.get(1) {
+        let a1v = eval(model, a1_expr, ctx, spills);
+        if let CellValue::Error(e) = a1v {
+            return Err(e);
+        }
+        if let Ok(n) = coerce::to_number(&a1v) {
+            if n == 0.0 {
+                // R1C1 addressing — not parsed in T2.
+                return Err(CellError::Ref);
+            }
+        }
+    }
+    let text = coerce::to_text(&v);
+    parse_a1_reference(model, text.as_str(), ctx.current.sheet).ok_or(CellError::Ref)
+}
+
+/// Parse an A1 reference string (`"A1"`, `"A1:B3"`, `"Sheet2!A1"`, a
+/// `"Sheet!A1:B3"` range) into a `RangeRef` against the model. The sheet prefix
+/// is optional (defaults to `home`). Returns `None` for any unparseable form
+/// (INDIRECT maps that to `#REF!`). R1C1 is not handled here (the caller rejects
+/// `a1 = FALSE` first).
+fn parse_a1_reference(model: &SheetModel, text: &str, home: SheetId) -> Option<RangeRef> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // Split an optional `Sheet!` prefix (quoted or bare). Only the LAST `!`
+    // separates the sheet from the address (sheet names may not contain `!`).
+    let (sheet, addr) = match text.rsplit_once('!') {
+        Some((name, rest)) => {
+            let name = unquote_sheet(name);
+            let sid = model.sheet_id(&name)?;
+            (sid, rest)
+        }
+        None => (home, text),
+    };
+    // A range `A1:B3` or a single cell `A1`.
+    if let Some((a, b)) = addr.split_once(':') {
+        let (r0, c0, ra0, ca0) = sheet_core::parse_a1(a.trim())?;
+        let (r1, c1, ra1, ca1) = sheet_core::parse_a1(b.trim())?;
+        Some(RangeRef {
+            start: CellRef {
+                sheet,
+                row: r0,
+                col: c0,
+                row_abs: ra0,
+                col_abs: ca0,
+            },
+            end: CellRef {
+                sheet,
+                row: r1,
+                col: c1,
+                row_abs: ra1,
+                col_abs: ca1,
+            },
+        })
+    } else {
+        let (row, col, row_abs, col_abs) = sheet_core::parse_a1(addr.trim())?;
+        let c = CellRef {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        };
+        Some(RangeRef { start: c, end: c })
+    }
+}
+
+/// Strip the surrounding `'…'` of a quoted sheet name and unescape `''` → `'`.
+fn unquote_sheet(name: &str) -> String {
+    let name = name.trim();
+    if name.len() >= 2 && name.starts_with('\'') && name.ends_with('\'') {
+        name[1..name.len() - 1].replace("''", "'")
+    } else {
+        name.to_string()
+    }
+}
+
+/// `FORMULATEXT(reference)` (Microsoft public docs). Resolves the argument to a
+/// CellRef (the top-left of a multi-cell reference, Excel semantics), and returns
+/// the cell's formula PRINTED with a leading `=`. `#N/A` if the cell holds no
+/// formula (a literal or blank), and `#N/A` if the argument is not a reference.
+fn eval_formulatext(model: &SheetModel, args: &[Expr], ctx: &EvalCtx) -> CellValue {
+    let spills = SpillState::new();
+    let Some(r) = eval_as_ref(model, &args[0], ctx, &spills) else {
+        // FORMULATEXT of a non-reference is #N/A (Excel: #VALUE! for a literal;
+        // ruling: #N/A — "the formula text is unavailable", documented).
+        return CellValue::Error(CellError::Na);
+    };
+    let cell = r.normalized().start;
+    let Some(ws) = model.sheet(cell.sheet) else {
+        return CellValue::Error(CellError::Na);
+    };
+    let Some(c) = ws.cell(cell.row, cell.col) else {
+        return CellValue::Error(CellError::Na);
+    };
+    let Some(fid) = c.formula else {
+        return CellValue::Error(CellError::Na);
+    };
+    let Some(f) = model.formula(fid) else {
+        return CellValue::Error(CellError::Na);
+    };
+    let names = ModelSheetNames { model };
+    let mut text = String::with_capacity(1);
+    text.push('=');
+    text.push_str(&sheet_parser::print(f, cell.sheet, &names));
+    CellValue::Text(text.into())
+}
+
+/// `ISFORMULA(reference)` (Microsoft public docs). Resolves the argument to a
+/// CellRef and returns `TRUE` iff that cell stores a formula. A non-reference
+/// argument is `#VALUE!` (Excel semantics for ISFORMULA of a non-reference).
+fn eval_isformula(model: &SheetModel, args: &[Expr], ctx: &EvalCtx) -> CellValue {
+    let spills = SpillState::new();
+    let Some(r) = eval_as_ref(model, &args[0], ctx, &spills) else {
+        return CellValue::Error(CellError::Value);
+    };
+    let cell = r.normalized().start;
+    let is_formula = model
+        .sheet(cell.sheet)
+        .and_then(|ws| ws.cell(cell.row, cell.col))
+        .map(|c| c.formula.is_some())
+        .unwrap_or(false);
+    CellValue::Bool(is_formula)
+}
+
+/// The scalar value of a resolved `RangeRef`: the top-left cell's value for a
+/// single cell; a multi-cell area in a scalar slot is `#VALUE!` (the same
+/// range-in-scalar ruling as `Expr::Range`). A range-aware OUTER function that
+/// takes OFFSET/INDIRECT as an argument receives the whole range instead (via
+/// `eval_as_ref` in `plan_args` — see the special-form arg handling).
+fn range_value_scalar(model: &SheetModel, r: RangeRef) -> CellValue {
+    let n = r.normalized();
+    if n.rows() == 1 && n.cols() == 1 {
+        argview::cell_value(model, n.start)
+    } else {
+        CellValue::Error(CellError::Value)
+    }
+}
+
+/// Coerce a special-form numeric argument (rows/cols/height/width) to a
+/// truncated `i64`. An error argument propagates; a non-numeric is `#VALUE!`.
+/// (OFFSET truncates toward zero, Excel semantics.)
+fn arg_to_i64(
+    model: &SheetModel,
+    expr: &Expr,
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> Result<i64, CellError> {
+    let v = eval(model, expr, ctx, spills);
+    if let CellValue::Error(e) = v {
+        return Err(e);
+    }
+    let n = coerce::to_number(&v)?;
+    Ok(n.trunc() as i64)
+}
+
+/// A [`sheet_parser::SheetNames`] view over the model, for FORMULATEXT's printer.
+struct ModelSheetNames<'a> {
+    model: &'a SheetModel,
+}
+
+impl sheet_parser::SheetNames for ModelSheetNames<'_> {
+    fn sheet_name(&self, id: SheetId) -> Option<&str> {
+        self.model.sheet(id).map(|ws| ws.name.as_str())
     }
 }
 

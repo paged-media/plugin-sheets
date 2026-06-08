@@ -50,6 +50,13 @@ struct FnRow {
     /// row's kernel is `fn(&[Arg], &EvalCtx) -> CellValue`.
     #[serde(default)]
     returns_array: bool,
+    /// True for EVALUATOR SPECIAL FORMS (M2 Phase A): OFFSET/INDIRECT/
+    /// FORMULATEXT/ISFORMULA read the MODEL and are handled in
+    /// `sheet-calc/eval.rs` BEFORE dispatch. The pure dispatch door here never
+    /// calls a kernel for such a row — it returns `#NAME?` (documented: eval
+    /// intercepts first; reaching the pure door is an internal invariant break).
+    #[serde(default)]
+    special_form: bool,
     #[serde(default)]
     status: String,
     // Unknown fields (family, volatility, provenance, tests, …) ignored.
@@ -87,7 +94,9 @@ fn main() {
             panic!("sheet-fn build.rs: duplicate function id {:?}", r.id);
         }
         let implemented = r.status.eq_ignore_ascii_case("implemented");
-        if implemented && r.rust.trim().is_empty() {
+        // A special-form row has NO pure kernel (it is handled in eval.rs), so
+        // it is exempt from the `rust` symbol requirement.
+        if implemented && !r.special_form && r.rust.trim().is_empty() {
             panic!(
                 "sheet-fn build.rs: function {} is implemented but has no `rust` symbol",
                 r.id
@@ -138,7 +147,20 @@ fn main() {
 
     for (i, r) in rows.iter().enumerate() {
         let implemented = r.status.eq_ignore_ascii_case("implemented");
-        if implemented && r.returns_array {
+        if implemented && r.special_form {
+            // A special-form row (OFFSET/INDIRECT/FORMULATEXT/ISFORMULA) is
+            // handled in `sheet-calc/eval.rs` BEFORE dispatch — it reads the
+            // model and has no pure kernel. Reaching the pure door is an
+            // internal invariant break (eval must intercept first); return
+            // #NAME? so the door stays total. (M2 Phase A special-form track.)
+            writeln!(
+                out,
+                "        {i} => CellValue::Error(CellError::Name), // {name} (special_form — handled in eval.rs)",
+                i = i,
+                name = r.name,
+            )
+            .unwrap();
+        } else if implemented && r.returns_array {
             // A dynamic-array row is uncallable through the SCALAR door: it
             // has no `-> CellValue` kernel. The scalar door stays total and
             // returns #VALUE! — the evaluator must route array rows through
@@ -216,7 +238,16 @@ fn main() {
 
     for (i, r) in rows.iter().enumerate() {
         let implemented = r.status.eq_ignore_ascii_case("implemented");
-        if implemented {
+        if implemented && r.special_form {
+            // Special form — handled in eval.rs before dispatch_rich too.
+            writeln!(
+                out,
+                "        {i} => FnResult::Scalar(CellValue::Error(CellError::Name)), // {name} (special_form — handled in eval.rs)",
+                i = i,
+                name = r.name,
+            )
+            .unwrap();
+        } else if implemented {
             let path = format!("crate::families::{}", r.rust.trim());
             let max_guard = match r.arity.max {
                 Some(m) => format!(" || args.len() > {m}"),

@@ -599,6 +599,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheet-chart"
+version = "0.0.0"
+dependencies = [
+ "compact_str",
+ "serde",
+ "serde_json",
+ "sheet-core",
+ "sheet-format",
+]
+
+[[package]]
 name = "sheet-conformance"
 version = "0.0.0"
 dependencies = [

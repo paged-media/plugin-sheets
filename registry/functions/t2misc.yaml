@@ -1,0 +1,94 @@
+# sheet.fn.* (T2/M2) — remaining publishing-relevant functions, family per fn.
+# A deliberately SMALL, honest seed (spec §11 T2 "remaining publishing-relevant
+# functions"); web/RTD functions are EXCLUDED by design (spec §1.1) so ENCODEURL
+# and friends are NOT here. Schema: see math.yaml.
+#
+# STATUS: planned — the M2 publishing-functions track wires the kernels + tests
+# and flips these rows to implemented. Rust kernels land in their family's
+# source file (math2.rs / engineering, etc.); tests follow the family's existing
+# conformance file + the `sheet_fn_<family>_*` prefix convention.
+#
+# AGGREGATE / SUBTOTAL are aggregation functions over ranges (range_aware) whose
+# function_num selector chooses the inner aggregate AND (for AGGREGATE) the
+# error/hidden-row handling. ROMAN/ARABIC are scalar text<->number conversions.
+# CONVERT does basic unit conversion. HYPERLINK is display-only in T2 — it
+# returns its friendly text; the link target is not navigable on the page
+# surface (documented ruling).
+
+- id: sheet.fn.math.aggregate
+  name: AGGREGATE
+  family: math
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  rust: math2::aggregate
+  status: planned
+  provenance: ["Microsoft AGGREGATE (public docs) — function_num, options (error/hidden-row handling), then ref(s) or (k) for the quantile-style inner functions; 19 inner aggregates"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_aggregate"]
+    corpus: ["corpus/fn-corpus/math2/aggregate.golden.tsv"]
+
+- id: sheet.fn.math.subtotal
+  name: SUBTOTAL
+  family: math
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: true
+  rust: math2::subtotal
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (SUBTOTAL) — function_num (1-11 incl-manual, 101-111 ignore-hidden) then ref(s); nested SUBTOTALs are excluded from the aggregate"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_subtotal"]
+    corpus: ["corpus/fn-corpus/math2/subtotal.golden.tsv"]
+
+- id: sheet.fn.math.roman
+  name: ROMAN
+  family: math
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: math2::roman
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (ROMAN) — arabic -> roman-numeral text; optional [form] 0-4 (classic..simplified); 1-3999 domain"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_roman"]
+    corpus: ["corpus/fn-corpus/math2/roman.golden.tsv"]
+
+- id: sheet.fn.math.arabic
+  name: ARABIC
+  family: math
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: math2::arabic
+  status: planned
+  provenance: ["Microsoft ARABIC (public docs) — roman-numeral text -> arabic number (inverse of ROMAN); empty -> 0"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_arabic"]
+    corpus: ["corpus/fn-corpus/math2/arabic.golden.tsv"]
+
+- id: sheet.fn.engineering.convert
+  name: CONVERT
+  family: engineering
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: engineering::convert
+  status: planned
+  provenance: ["ECMA-376 §18.17.7 (CONVERT) — number, from_unit, to_unit; basic unit set (weight, distance, time, temperature) in T2; mismatched dimensions -> #N/A"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_engineering.rs::sheet_fn_engineering_convert"]
+    corpus: ["corpus/fn-corpus/engineering/convert.golden.tsv"]
+
+- id: sheet.fn.lookup.hyperlink
+  name: HYPERLINK
+  family: lookup
+  arity: { min: 1, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: lookup2::hyperlink
+  status: planned
+  provenance: ["Microsoft HYPERLINK (public docs) — link_location, [friendly_name]. T2 RULING: returns the friendly text (or the link text when friendly is absent); the link is DISPLAY-ONLY on the page surface (not navigable). Documented, not faked."]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_hyperlink"]
+    corpus: ["corpus/fn-corpus/lookup2/hyperlink.golden.tsv"]

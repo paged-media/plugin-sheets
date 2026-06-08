@@ -94,7 +94,18 @@ mod tests {
                 meta.name, id.0, i
             );
             let out = dispatch(id, &[], &ctx());
-            if !meta.implemented {
+            if meta.special_form {
+                // A special form (OFFSET/INDIRECT/FORMULATEXT/ISFORMULA) is
+                // handled in sheet-calc/eval.rs BEFORE dispatch; the pure door
+                // has no kernel for it and returns #NAME? (no arity guard —
+                // eval guards arity). It must NEVER be reached in practice.
+                assert_eq!(
+                    out,
+                    CellValue::Error(CellError::Name),
+                    "{} is a special form and the pure door must return #NAME?",
+                    meta.name
+                );
+            } else if !meta.implemented {
                 assert_eq!(
                     out,
                     CellValue::Error(CellError::Name),

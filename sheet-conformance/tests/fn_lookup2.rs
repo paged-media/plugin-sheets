@@ -22,11 +22,12 @@
 //! (`sheet_fn_lookup_<name>`) so the coverage gate (§12.2) finds them.
 //!
 //! Implemented (fully tested here): `XLOOKUP`, `XMATCH`, `ADDRESS`, `ROWS`,
-//! `COLUMNS`. Deferred (status `planned` — they need a model cell/formula
-//! reader the FROZEN `EvalCtx` cannot carry): `OFFSET`, `INDIRECT`,
-//! `FORMULATEXT`; their `sheet_fn_lookup_<name>_deferred` tests pin the honest
-//! contract — a planned row dispatches to `#NAME?` (uncallable by
-//! construction), never a silent wrong value.
+//! `COLUMNS`. `OFFSET`, `INDIRECT`, `FORMULATEXT` are now EVALUATOR SPECIAL
+//! FORMS (M2 Phase A, `special_form: true`): they read the model and are handled
+//! in `sheet-calc/eval.rs`, so their REAL behavior is tested through the
+//! evaluator in `tests/special_forms.rs`. Here we only pin the PURE-DOOR
+//! contract — routed through `sheet_fn::dispatch` (which eval intercepts first),
+//! a special-form row returns `#NAME?` (it has no pure kernel).
 
 use sheet_core::{CellError, CellRef, CellValue, DateSystem};
 use sheet_fn::{dispatch, Arg, EvalCtx, RangeView};
@@ -618,19 +619,20 @@ fn sheet_fn_lookup_columns_basic() {
     assert_eq!(call("COLUMNS", &[], &c), err(CellError::Value));
 }
 
-// ================= DEFERRED ROWS (status: planned) =================
+// ============ SPECIAL FORMS — the PURE-DOOR contract (M2 Phase A) ============
 //
-// OFFSET / INDIRECT / FORMULATEXT need a model cell/formula reader the FROZEN
-// `EvalCtx` cannot carry (see fn_lookup2 module header + the lookup2.yaml
-// rationale). They stay `status: planned`, so dispatch returns `#NAME?` — the
-// honest "registered but uncallable" contract. These tests pin that contract
-// (and double as the `tests.rust` prefix target should a future amendment flip
-// the rows to `implemented`).
+// OFFSET / INDIRECT / FORMULATEXT are now EVALUATOR SPECIAL FORMS
+// (`special_form: true`, status `implemented`): they READ THE MODEL and are
+// handled in `sheet-calc/eval.rs` BEFORE dispatch. Their REAL behavior is tested
+// through the evaluator in `tests/special_forms.rs` (the registry `tests.rust`
+// pointers target that file). Here we pin only the PURE-DOOR contract: a
+// special-form row routed through the pure `sheet_fn::dispatch` (which the
+// evaluator intercepts first, so this path is never taken in practice) returns
+// `#NAME?` — it has no kernel.
 
 #[test]
-fn sheet_fn_lookup_offset_deferred_name_error() {
+fn special_form_offset_pure_door_is_name_error() {
     let c = ctx();
-    // Planned row -> #NAME? regardless of (well-formed) arguments.
     let cells = [num(0.0)];
     let v = RangeView::from_slice(cr(0, 0), 1, 1, &cells);
     assert_eq!(
@@ -640,13 +642,13 @@ fn sheet_fn_lookup_offset_deferred_name_error() {
 }
 
 #[test]
-fn sheet_fn_lookup_indirect_deferred_name_error() {
+fn special_form_indirect_pure_door_is_name_error() {
     let c = ctx();
     assert_eq!(call("INDIRECT", &[s(txt("A1"))], &c), err(CellError::Name));
 }
 
 #[test]
-fn sheet_fn_lookup_formulatext_deferred_name_error() {
+fn special_form_formulatext_pure_door_is_name_error() {
     let c = ctx();
     let cells = [num(0.0)];
     let v = RangeView::from_slice(cr(0, 0), 1, 1, &cells);

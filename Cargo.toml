@@ -2,8 +2,8 @@
 # spec (§4 of thoughts/docs/paged/plugin-sheets/base-idea.md), not under
 # crates/. references/ is NEVER a member (read-only clean-room mounts —
 # NOT mounted in T0). sheet-grid joins at M1 (T1, spec §8.1 — the
-# sheets-mode vector grid scene). Reserved member (T2, spec §4):
-# sheet-chart — added when its tier lands.
+# sheets-mode vector grid scene). sheet-chart joins at M2 Phase A (T2, spec
+# §8.4 — the chart model + pure geometry IR generator).
 [workspace]
 resolver = "2"
 members = [
@@ -15,6 +15,7 @@ members = [
     "sheet-xlsx",
     "sheet-lower",
     "sheet-grid",
+    "sheet-chart",
     "sheet-js",
     "sheet-conformance",
 ]

@@ -1,0 +1,76 @@
+# sheet.chart.* (T2/M2, spec §8.4) — charts: model, xlsx chart-part fidelity,
+# the pure geometry generator (one generator, two projections), paged.draw
+# lowering, the grid view, and live recalc. The IR is FROZEN in the sheet-chart
+# crate (M2 Phase A); these rows are the BUILD-CONSUMED status ledger the Phase B
+# charts track flips to implemented as each lands.
+#
+# STATUS: planned (geometry.bar-column is partial — the Phase-A column generator
+# is real; see sheet-chart/src/geometry.rs). Taxonomy mirrors sheet.xlsx.* for
+# the chart-part rows: parsed -> preserved -> calculated -> rendered ->
+# round-trips, with `preserved` the floor for unsupported chart types (spec
+# §8.4).
+
+- id: sheet.chart.model
+  title: Chart model (kind, series/category range bindings, axes, legend) — the frozen sheet-chart IR
+  status: planned
+  provenance: ["spec §8.4", "sheet-chart/src/model.rs (frozen IR, M2 Phase A)"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_model"]
+
+- id: sheet.chart.xlsx-part
+  title: XLSX chart part (/charts/chartN.xml) parse + preserve into the chart model (preservation invariant, spec §10.2)
+  status: planned
+  provenance: ["ECMA-376 §21.2 (DrawingML charts)", "spec §8.4, §10.2"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_xlsx_part"]
+
+- id: sheet.chart.geometry.bar-column
+  title: "Geometry: bar/column — axis frame + per-bar Rects with linear value scaling + tick/category labels"
+  ruling: "M2 Phase A: the Column generator is REAL end-to-end (sheet-chart/src/geometry.rs::generate_column); Bar shares it in Phase A, splitting orientation in Phase B."
+  status: planned
+  provenance: ["spec §8.4", "sheet-chart/src/geometry.rs (Phase A column generator)"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_bar_column"]
+
+- id: sheet.chart.geometry.line-area
+  title: "Geometry: line/area — polyline series + area fill polygons over the cartesian frame"
+  status: planned
+  provenance: ["spec §8.4"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_line_area"]
+
+- id: sheet.chart.geometry.pie-donut
+  title: "Geometry: pie/donut — Wedge primitives (donut = pie with a center hole)"
+  status: planned
+  provenance: ["spec §8.4"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_pie_donut"]
+
+- id: sheet.chart.geometry.scatter
+  title: "Geometry: scatter — point markers in (x,y) value space (no category axis)"
+  status: planned
+  provenance: ["spec §8.4"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_scatter"]
+
+- id: sheet.chart.lower.paged-draw
+  title: Lower chart geometry to paged.draw native path ops (insertPath/insertOval/insertLine)
+  ruling: "paged.draw is reached as a CORE SDK surface (the TS translator emits insertPath/insertOval/insertLine wire ops), NEVER via another plugin (spec §2.1) — the same two-surface rule as the sheet itself. Charts are document-native vector art, regenerated on recalc, never rasterized."
+  status: planned
+  provenance: ["spec §8.4, §2.1 (paged.draw is core, not a plugin)"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_lower_paged_draw"]
+
+- id: sheet.chart.grid-view
+  title: Chart geometry rendered in the sheets-mode grid view (the same generator, the §8.1 surface)
+  status: planned
+  provenance: ["spec §8.4, §8.1"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_grid_view"]
+
+- id: sheet.chart.recalc-live
+  title: Charts are live to recalculation (series ranges re-resolve and the geometry regenerates)
+  status: planned
+  provenance: ["spec §8.4 (charts live to recalculation)"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_recalc_live"]

@@ -50,6 +50,14 @@ struct FnRow {
     /// calls them directly; the scalar `dispatch` door returns `#VALUE!`.
     #[serde(default)]
     returns_array: bool,
+    /// True for EVALUATOR SPECIAL FORMS (M2 Phase A): functions that read the
+    /// MODEL (a reference/formula by address) and so cannot be pure
+    /// `fn(&[Arg], &EvalCtx) -> CellValue` kernels (OFFSET/INDIRECT/
+    /// FORMULATEXT/ISFORMULA). `sheet-calc/eval.rs` intercepts these BEFORE
+    /// materializing args + calling dispatch; the pure dispatch door for such a
+    /// row returns `#NAME?` (it must never be reached — eval intercepts first).
+    #[serde(default)]
+    special_form: bool,
     #[serde(default)]
     status: String,
     // Other fields (rust, provenance, tests) are intentionally ignored
@@ -145,6 +153,7 @@ fn main() {
          \x20   pub range_aware: bool,\n\
          \x20   pub ref_args: bool,\n\
          \x20   pub returns_array: bool,\n\
+         \x20   pub special_form: bool,\n\
          \x20   pub implemented: bool,\n\
          }\n\n",
     );
@@ -160,8 +169,8 @@ fn main() {
         };
         writeln!(
             out,
-            "    FuncMeta {{ id: {:?}, name: {:?}, family: {:?}, min_args: {}, max_args: {}, volatile: {}, range_aware: {}, ref_args: {}, returns_array: {}, implemented: {} }},",
-            r.id, r.name, r.family, r.arity.min, max, volatile, r.range_aware, r.ref_args, r.returns_array, implemented
+            "    FuncMeta {{ id: {:?}, name: {:?}, family: {:?}, min_args: {}, max_args: {}, volatile: {}, range_aware: {}, ref_args: {}, returns_array: {}, special_form: {}, implemented: {} }},",
+            r.id, r.name, r.family, r.arity.min, max, volatile, r.range_aware, r.ref_args, r.returns_array, r.special_form, implemented
         )
         .unwrap();
     }
