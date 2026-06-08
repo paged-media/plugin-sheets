@@ -96,8 +96,11 @@ const BP_UNARY: u8 = 15;
 const BP_UNION: (u8, u8) = (17, 18);
 // Reference intersection ` ` (space).
 const BP_ISECT: (u8, u8) = (19, 20);
-// Reference range `:` (tightest).
+// Reference range `:` (tightest binary).
 const BP_RANGE: (u8, u8) = (21, 22);
+// Postfix spill `#` (the dynamic-array spill-range operator, `A1#`) —
+// binds tightest of all: it is part of the reference token-wise.
+const BP_SPILL: u8 = 23;
 
 impl Parser<'_> {
     fn peek(&self) -> Option<&Token> {
@@ -121,6 +124,15 @@ impl Parser<'_> {
         let mut lhs = self.parse_prefix()?;
 
         loop {
+            // Postfix spill `#` (`A1#` — the spill-range of the anchor).
+            if let Some(tok) = self.peek() {
+                if matches!(tok.kind, TokKind::Hash) && BP_SPILL >= min_bp {
+                    self.bump();
+                    lhs = Expr::SpillRef(Box::new(lhs));
+                    continue;
+                }
+            }
+
             // Postfix `%`.
             if let Some(tok) = self.peek() {
                 if matches!(tok.kind, TokKind::Percent) && BP_PERCENT >= min_bp {

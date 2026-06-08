@@ -190,12 +190,13 @@ pub fn fact(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 }
 
 /// `FACTDOUBLE(number)` (ECMA-376 §18.17.7) — double factorial of
-/// `trunc(number)` (the product `n·(n-2)·(n-4)·…`). `#NUM!` for a negative
-/// argument; `FACTDOUBLE(0) == 1` and the empty-product base cases hold.
+/// `trunc(number)` (the product `n·(n-2)·(n-4)·…`). Defined for `n >= -1`:
+/// `FACTDOUBLE(-1) == 1` and `FACTDOUBLE(0) == 1` are the empty-product base
+/// cases; `n < -1` (i.e. `<= -2`) is `#NUM!`.
 pub fn factdouble(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     unary(args, |x| {
         let k = x.trunc();
-        if k < 0.0 {
+        if k < -1.0 {
             return CellValue::Error(CellError::Num);
         }
         let mut acc = F64(1.0);

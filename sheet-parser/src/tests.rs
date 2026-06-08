@@ -125,6 +125,22 @@ fn lex_cell_vs_function() {
 }
 
 #[test]
+fn postfix_spill_ref() {
+    // `A1#` is the spill-range operator, NOT an error literal — `#` is only
+    // an error-literal lead when followed by a letter (#REF! etc).
+    let f = p("A1#");
+    assert!(
+        matches!(f.root, Expr::SpillRef(ref inner) if matches!(**inner, Expr::Ref(_))),
+        "A1# must parse to SpillRef(Ref): {:?}",
+        f.root
+    );
+    assert_eq!(roundtrip("A1#"), "A1#");
+    // Usable as a function argument and inside expressions.
+    assert_eq!(roundtrip("SUM(A1#)"), "SUM(A1#)");
+    assert_eq!(roundtrip("A1#+1"), "A1#+1");
+}
+
+#[test]
 fn lex_error_literals() {
     for tok in [
         "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A", "#NULL!", "#SPILL!",

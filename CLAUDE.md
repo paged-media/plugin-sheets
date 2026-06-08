@@ -96,10 +96,12 @@ half (see "Two-registry split" below).
   closing over `BundleHost`; styling = the token layer (`--pg-*`,
   `--status-*`, `--font-mono`, `--space-*`, `--radius-*`).
 - **Reserved seams stay honest.** editContext/objectType registration
-  THROW (no sheets-mode double-click in T0 — S-01); the grid surface
-  (S-02), threading (S-05), importer registration (S-06), workers
-  (S-07), OPFS (S-08) are NOT implemented — the manifest + UI say so
-  explicitly. Never fake them.
+  now SHIP (the door no longer throws — S-01 partially resolved), but
+  sheets-mode double-click is still NOT wired in T0: it needs the §8.5
+  frame-content coordinate-inversion residual and is gated on the grid
+  surface (S-02). The grid surface (S-02), threading (S-05), importer
+  registration (S-06), workers (S-07), OPFS (S-08) are NOT implemented —
+  the manifest + UI say so explicitly. Never fake them.
 - **CLEAN-ROOM (§3).** `references/` (LibreOffice/IronCalc, IF ever
   mounted) is read-only, analyst-only, gitignored, excluded from all
   artifacts; implementers never read it. **T0: references/ is NOT

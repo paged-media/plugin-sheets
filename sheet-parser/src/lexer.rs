@@ -65,6 +65,8 @@ pub enum TokKind {
     /// self-contained, so the lexer consumes `Table1[Col]`, `[[#Headers],[Col]]`,
     /// `[@Col]`, etc. into one token built by [`crate::structured`].
     Structured(sheet_core::ast::StructuredRef),
+    /// The postfix spill operator `#` (`A1#` → the anchor's spill range).
+    Hash,
     LParen,
     RParen,
     LBrace,
@@ -139,7 +141,18 @@ impl Lexer<'_> {
         let b = self.bytes[self.pos];
         match b {
             b'"' => self.lex_string(),
-            b'#' => self.lex_error_literal(),
+            // `#` begins an error literal (`#DIV/0!`, `#N/A`, …) — all of
+            // which are `#` + an ASCII letter — OR is the postfix spill
+            // operator (`A1#`) when not so followed. The parser turns a
+            // trailing `Hash` into `Expr::SpillRef`.
+            b'#' if self
+                .bytes
+                .get(self.pos + 1)
+                .is_some_and(u8::is_ascii_alphabetic) =>
+            {
+                self.lex_error_literal()
+            }
+            b'#' => self.one(TokKind::Hash),
             b'\'' => self.lex_quoted_sheet(),
             b'0'..=b'9' => Ok(self.lex_number()),
             b'.' if self.bytes.get(self.pos + 1).is_some_and(u8::is_ascii_digit) => {

@@ -277,7 +277,12 @@ pub fn datedif(args: &[Arg], ctx: &crate::ctx::EvalCtx) -> CellValue {
                 // Days in the month before the end month (where the borrow
                 // comes from).
                 let (py, pm) = if em == 1 { (ey - 1, 12) } else { (ey, em - 1) };
-                (days_in_month(py, pm) + ed - sd) as i64
+                // Cast to i64 BEFORE subtracting: all three are u32, and
+                // `days_in_month(prev) + ed` can be < sd (start day past the
+                // preceding month's length, e.g. Jan-31 -> early March), which
+                // would underflow in u32. The negative result is Excel's own
+                // documented "MD" bug-for-bug behaviour (-2 here), not a panic.
+                days_in_month(py, pm) as i64 + ed as i64 - sd as i64
             }
         }
         "YM" => {

@@ -184,6 +184,22 @@ fn sheet_fn_date_datedif_units() {
 }
 
 #[test]
+fn sheet_fn_date_datedif_md_borrow() {
+    // "MD" borrow branch: start day past the preceding month's length.
+    // 2021-01-31 (44227) .. 2021-03-01 (44256): Excel's documented "MD"
+    // bug yields -2 here (days_in_month(Feb)=28, +1 -31). The kernel must
+    // compute this in i64 — a u32 subtraction underflows to ~4.29e9.
+    let s = 44227.0; // 2021-01-31
+    let e = 44256.0; // 2021-03-01
+    assert_eq!(num("DATEDIF", &[n(s), n(e), t("MD")], &ctx()), -2.0);
+    // And the non-borrow MD case still works (sanity).
+    assert_eq!(
+        num("DATEDIF", &[n(44213.0), n(44227.0), t("MD")], &ctx()),
+        14.0
+    );
+}
+
+#[test]
 fn sheet_fn_date_datedif_rulings_and_errors() {
     // RULING: end < start -> #NUM! (unique to DATEDIF).
     assert_eq!(

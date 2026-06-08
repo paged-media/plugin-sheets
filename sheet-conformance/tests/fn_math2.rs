@@ -183,8 +183,12 @@ fn sheet_fn_math_factdouble_basecases() {
     // 7!! = 7*5*3*1 = 105; 8!! = 8*6*4*2 = 384.
     assert_eq!(call("FACTDOUBLE", &[num(7.0)]), n(105.0));
     assert_eq!(call("FACTDOUBLE", &[num(8.0)]), n(384.0));
-    // Non-integer truncates; negative -> #NUM!.
+    // Non-integer truncates; the domain is n >= -1.
     assert_eq!(call("FACTDOUBLE", &[num(7.5)]), n(105.0));
+    // FACTDOUBLE(-1) == 1 (empty-product base case, ECMA-376 §18.17.7);
+    // only n <= -2 is #NUM!.
+    assert_eq!(call("FACTDOUBLE", &[num(-1.0)]), n(1.0));
+    assert_eq!(call("FACTDOUBLE", &[num(-1.5)]), n(1.0)); // truncates to -1
     assert_eq!(call("FACTDOUBLE", &[num(-2.0)]), e(CellError::Num));
     assert_eq!(call("FACTDOUBLE", &[]), e(CellError::Value));
 }
