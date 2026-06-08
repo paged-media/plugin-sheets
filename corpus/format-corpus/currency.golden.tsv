@@ -4,18 +4,23 @@
 # we emit exactly the SYMBOL portion (everything between the $ and the first
 # -locale suffix) as a literal at its position, and drop the locale id. A pure
 # locale tag [$-409] has an empty symbol (contributes no literal). A bare
-# [$USD] (no -locale) emits the whole "USD". Locale-driven separators/decimal
-# marks are NOT applied in T0 (en grouping/decimal only).
+# [$USD] (no -locale) emits the whole "USD". The locale id is NO LONGER dropped:
+# as of the M3 LOCALIZATION track (spec §9, D-8; registry locale.yaml row
+# sheet.format.locale.locale-from-workbook), the `-<LCID>` suffix selects the
+# RENDERED separators for the D-8 v1 set (en/de). LCID 407 (de-DE) and 807
+# (de-CH) localize to "," decimal + "." group; every other LCID (409 en-US, 809
+# en-GB, 411 ja, 414 nb, …) stays en grouping (en is the unmodelled-LCID
+# fallback). So [$€-407]#,##0 of 1234 is now €1.234 (de), matching Excel de.
 # Columns: id<TAB>format_code<TAB>value<TAB>expected
 cur-dollar-409	[$$-409]#,##0	1234	$1,234
-cur-euro-407	[$€-407]#,##0	1234	€1,234
+cur-euro-407	[$€-407]#,##0	1234	€1.234
 cur-pound-809	[$£-809]#,##0.00	12.5	£12.50
 cur-locale-only	[$-409]#,##0	1234	1,234
 cur-symbol-only	[$USD]0	5	USD5
 cur-dollar-decimals	[$$-409]#,##0.00	1234.5	$1,234.50
 cur-yen	[$¥-411]#,##0	5000	¥5,000
 cur-suffix	#,##0" "[$kr-414]	1234	1,234 kr
-cur-euro-suffix	#,##0.00" "[$€-407]	9.5	9.50 €
+cur-euro-suffix	#,##0.00" "[$€-407]	9.5	9,50 €
 cur-dollar-neg	[$$-409]#,##0	-1234	-$1,234
 cur-franc	[$CHF-807]#,##0	100	CHF100
 cur-zero	[$$-409]#,##0	0	$0

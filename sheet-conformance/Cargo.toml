@@ -10,6 +10,14 @@ description = "paged.sheet TEST-ONLY conformance: golden corpora, property tests
 [lints]
 workspace = true
 
+[features]
+# exact-decimal — forwards sheet-fn's D-6 exact-decimal SPIKE feature (M3) so
+# the decimal half of tests/decimal_spike.rs compiles + runs. OFF by default:
+# the f64 half of the spike test always runs; the decimal divergence
+# assertions are cfg-gated on this feature. Run with:
+#   cargo test -p sheet-conformance --features exact-decimal --test decimal_spike
+exact-decimal = ["sheet-fn/exact-decimal"]
+
 [[bin]]
 name = "coverage-gate"
 path = "src/bin/coverage_gate.rs"

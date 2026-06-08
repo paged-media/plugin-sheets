@@ -18,6 +18,7 @@
 //! whether the section is numeric, date/time, or text.
 
 use compact_str::CompactString;
+use sheet_core::Locale;
 
 /// One compiled format code: up to four sections (spec §9). Built by
 /// [`crate::parse::compile`] and consumed by [`crate::format_value`].
@@ -32,6 +33,14 @@ pub struct CompiledFormat {
     pub zero: Option<Section>,
     /// Section for text values, if a fourth section was supplied.
     pub text: Option<Section>,
+    /// A locale declared INSIDE the format code via a `[$<symbol>-<LCID>]`
+    /// token (spec §9; ECMA-376 §18.8.30; ruling
+    /// `sheet.format.locale.locale-from-workbook`). `[$-407]` carries the de-DE
+    /// LCID `0x0407`; `[$€-407]` carries de-DE *and* the `€` symbol. When set,
+    /// it OVERRIDES the [`crate::FormatCtx`] locale for this code's rendering
+    /// (the cell-level numFmt wins over the document locale). `None` for every
+    /// code with no `[$…-LCID]` token, keeping en-US output byte-identical.
+    pub locale: Option<Locale>,
 }
 
 /// A single format section: its token stream plus its classified kind.

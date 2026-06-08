@@ -39,7 +39,9 @@
 //! - [`criteria`] — `SUMIF`/`COUNTIF` criterion parsing + wildcard matching.
 //! - [`num`] — the [`Numeric`] seam (D-6: `f64` now, exact-decimal later).
 //!   The exact-decimal SPIKE backend lives behind the `exact-decimal` cargo
-//!   feature (`num_decimal`, a stub today; OFF by default — f64 stays v1).
+//!   feature (`num_decimal`; OFF by default — f64 stays v1). It implements the
+//!   `Numeric` trait over `rust_decimal::Decimal` to prove the seam carries an
+//!   exact base-10 backend; see `DECIMAL-SPIKE.md` for the adopt/defer ruling.
 //! - [`families`] — the per-family kernels (owned by the family tracks; seeded
 //!   empty here so the workspace builds while every row is `planned`).
 //! - [`dispatch`] — the generated dispatch match.
@@ -51,8 +53,9 @@ pub mod ctx;
 pub mod dispatch;
 pub mod families;
 pub mod num;
-/// The D-6 exact-decimal SPIKE backend (a stub today; spec §3, M3). Gated
-/// behind the `exact-decimal` cargo feature, OFF by default — f64 stays v1.
+/// The D-6 exact-decimal SPIKE backend (spec §3, M3): a `Numeric` impl over
+/// `rust_decimal::Decimal`. Gated behind the `exact-decimal` cargo feature, OFF
+/// by default — f64 stays v1.
 #[cfg(feature = "exact-decimal")]
 pub mod num_decimal;
 pub mod result;

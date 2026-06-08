@@ -1,0 +1,43 @@
+# sheet.format.locale.* — de-DE rendering goldens (spec §9; ECMA-376 §18.8.31;
+# decision D-8 "minimum en/de"). Driven through FormatCtx::new(Date1900,
+# Locale::DeDe) by sheet-conformance/tests/locale.rs. The format CODE is
+# locale-NEUTRAL (same `#,##0.00` / `mmmm` / `AM/PM` tokens as the en goldens);
+# only the RENDERED separators, month/day names, and AM/PM strings differ. The
+# matching en-US goldens (number/datetime.golden.tsv) MUST stay byte-identical —
+# this file is the de mirror, never an en regression.
+#
+# 1900 date system; serial 44197 = 2021-01-01 (a Friday/Freitag), serial 44228 =
+# 2021-02-01 (a Februar). Columns: id<TAB>format_code<TAB>value<TAB>expected.
+#
+# ---- separators (sheet.format.locale.separators): "," decimal, "." group ----
+de-fixed2	0.00	1.5	1,50
+de-fixed2-int	0.00	1	1,00
+de-optional	#.##	1.5	1,5
+de-optional-int	#.##	1	1
+de-group	#,##0	1234	1.234
+de-group-millions	#,##0	1234567	1.234.567
+de-group-decimals	#,##0.00	1234.5	1.234,50
+de-scale-k-dec	0.0,	12500	12,5
+de-pad-zeros-dec	00.0	7.5	07,5
+de-neg	0.00	-1.5	-1,50
+de-zero-fixed	0.00	0	0,00
+de-percent	0.00%	0.1234	12,34%
+de-scientific	0.00E+00	12345	1,23E+04
+# ---- month/day names (sheet.format.locale.month-day-names) ----
+de-fullmonth-jan	mmmm	44197	Januar
+de-fullmonth-feb	mmmm	44228	Februar
+de-abbrmonth-jan	mmm	44197	Jan
+de-abbrmonth-feb	mmm	44228	Feb
+de-weekday-full	dddd	44197	Freitag
+de-weekday-abbr	ddd	44197	Fr
+de-longdate	dddd", "d". "mmmm yyyy	44197	Freitag, 1. Januar 2021
+de-shortish	d". "mmm yyyy	44197	1. Jan 2021
+# ---- ampm (sheet.format.locale.ampm): de honors the AM/PM token literally ----
+# RULING: German Excel does NOT localize the explicit AM/PM token to vorm./
+# nachm. — when the format CODE contains AM/PM, the rendered marker is the en
+# "AM"/"PM" string in de-DE too (the de table mirrors en for am/pm). The 24h
+# convention is honored by AUTHORS dropping the AM/PM token (`HH:mm`), not by
+# the engine substituting German strings into an AM/PM code.
+de-ampm-noon	h:mm AM/PM	0.5	12:00 PM
+de-ampm-morning	h:mm AM/PM	0.25	6:00 AM
+de-24h	HH:mm	0.75	18:00

@@ -24,40 +24,65 @@
 
 - id: sheet.calc.decimal.decimal-impl
   title: "Decimal Numeric impl behind the `exact-decimal` cargo feature (SPIKE)"
-  status: planned
+  status: implemented
   note: >
-    SPIKE. Phase A: the `exact-decimal` feature flag + a `num_decimal` stub
-    module (cfg-gated) exist; the workspace builds both with and without the
-    feature. Phase B: a real `Decimal` Numeric impl over a permissive carrier
-    (rust_decimal MIT, or a hand-rolled fixed-decimal — the spike decides),
-    added as an OPTIONAL dependency keyed on the same feature. Exploratory;
-    f64 stays the v1 default.
+    SPIKE — DONE (M3). sheet-fn/src/num_decimal.rs implements `impl Numeric for
+    Decimal`, a transparent newtype over `rust_decimal::Decimal` (carrier:
+    rust_decimal 1.x — MIT, pure-Rust, 28-29 significant digits, wasm-compatible,
+    NO native/C deps; verified `cargo tree -p sheet-fn --features exact-decimal`
+    pulls only arrayvec + num-traits, both MIT OR Apache-2.0). Added as an
+    OPTIONAL dep keyed on the `exact-decimal` feature
+    (`exact-decimal = ["dep:rust_decimal"]`, default-features = false +
+    ["std","maths"]). The impl is a drop-in for `F64`: same trait, same call
+    sites (the conformance `replay::<N: Numeric>` runs identical code through
+    both). `from_f64` uses rust_decimal's remove-excess-bits rounding so the
+    typed `0.1` lifts to exactly `0.1`. `pow` follows `MathematicalOps::powd`:
+    INTEGER exponents exact (repeated multiply); FRACTIONAL exponents fall back
+    to the `e^(y·ln x)` approximation (documented ~1e-7 caveat). Exploratory:
+    f64 stays the v1 default; the default (no-feature) build is byte-identical
+    and rust_decimal is absent from the default dependency tree.
   provenance: ["spec §3 (Excel-compat as ruling)", "spec §5.1 D-6", "spec §13 M3 (exact-decimal spike)"]
   tests:
-    rust: ["sheet-conformance/tests/decimal.rs::sheet_calc_decimal_impl"]
+    rust: ["sheet-conformance/tests/decimal_spike.rs::sheet_calc_decimal_impl"]
 
 - id: sheet.calc.decimal.divergence-corpus
   title: "Divergence corpus — cases where f64 and decimal differ (e.g. 0.1+0.2) (SPIKE)"
-  status: planned
+  status: implemented
   note: >
-    SPIKE. A golden corpus of arithmetic where IEEE-754 f64 and an exact
-    decimal diverge — the canonical 0.1 + 0.2 = 0.30000000000000004 (f64) vs
-    0.3 (decimal), accumulation drift, etc. Quantifies what the spike would buy
-    and where Excel itself (f64-based) would disagree with a decimal engine.
+    SPIKE — DONE (M3). corpus/decimal-corpus/divergence.golden.tsv replays each
+    case through BOTH Numeric backends. f64 diverges on tenths/pennies (0.1+0.2
+    = 0.30000000000000004 vs 0.3; 0.01 added ×100 = 1.0000000000000007 vs 1;
+    a left-fold of ten 0.1s = 0.9999999999999999 vs 1) but is exact for
+    binary-representable fractions (0.5+0.25+0.125) and integers — the corpus is
+    honest about BOTH outcomes. The f64 half runs in the default build (goldens
+    pinned as the true IEEE values Excel itself carries); the decimal half is
+    cfg-gated on `exact-decimal` and proves the corpus `decimal`/`diverges`
+    columns. HONESTY: 1/3 is non-terminating in base-10 too (decimal 1/3*3
+    carries 28 nines, not exact 1) — asserted separately in the test, not the
+    corpus. Divergence is also accumulation-ORDER dependent (left-fold from 0.0).
   provenance: ["spec §5.1 D-6", "IEEE-754 vs decimal arithmetic (public)"]
   tests:
-    rust: ["sheet-conformance/tests/decimal.rs::sheet_calc_decimal_divergence"]
+    rust: ["sheet-conformance/tests/decimal_spike.rs::sheet_calc_decimal_divergence"]
     corpus: ["corpus/decimal-corpus/divergence.golden.tsv"]
 
 - id: sheet.calc.decimal.spike-report
   title: "Written adopt/defer recommendation for the exact-decimal mode (SPIKE)"
-  status: planned
+  status: implemented
   note: >
-    SPIKE deliverable. A written recommendation (adopt as a v2 feature flag vs
-    defer) grounded in the divergence corpus, the perf/size cost of the decimal
-    backend, and the Excel-compat tension (Excel is f64, so an exact-decimal
-    mode would diverge from the oracle by design). The decision is recorded as
-    a registry ruling; f64 remains v1 either way.
+    SPIKE deliverable — DONE (M3). DECIMAL-SPIKE.md (repo root) is the written
+    recommendation: **DEFER exact-decimal to v2 as an explicit opt-in flag — do
+    NOT make it the default; f64 stays the v1 default.** Grounded in the
+    divergence corpus, measured costs (wasm +~48 KiB / ~40 KiB after wasm-opt
+    -Oz, well inside the 8 MiB budget; add/sub ≈ f64 parity, mul/div ~6-7×
+    slower), and the decisive Excel-compat tension (Excel is f64-based, D-6, so
+    an exact-decimal mode diverges from the conformance oracle BY DESIGN, and
+    the 15-significant-digit display rule already hides the v1 pain). D-6's
+    actual requirement — "the CellValue design must not foreclose it" — is met
+    and now PROVEN by the seam; shipping the mode is not required to satisfy it.
+    The implementation sits behind the feature flag, ready for a v2 opt-in
+    `CalcSettings.precision` if demand materializes. Recorded as this ruling;
+    f64 remains v1 either way.
   provenance: ["spec §3 (Excel-compat is a ruling)", "spec §5.1 D-6", "spec §13 M3"]
   tests:
-    rust: ["sheet-conformance/tests/decimal.rs::sheet_calc_decimal_spike_report"]
+    rust: ["sheet-conformance/tests/decimal_spike.rs::sheet_calc_decimal_spike_report"]
+    corpus: ["DECIMAL-SPIKE.md"]

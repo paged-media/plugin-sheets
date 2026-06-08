@@ -13,26 +13,38 @@
 - id: sheet.xlsx.external-link.part-parse
   title: "Parse externalReferences / externalLinkN.xml cached values + sheet/name maps"
   tier: parsed
-  status: planned
+  status: implemented
   note: >
-    Phase B: parse the workbook's externalReferences relationships and each
-    xl/externalLinks/externalLinkN.xml part — the cached sheet names, defined
-    names, and the cached cell value grid (sheetDataSet). Cached-only: no
-    target workbook is opened.
+    Parse the workbook's <externalReferences> order (the [n] external-book
+    index) and each xl/externalLinks/externalLinkN.xml part — the cached sheet
+    names and the cached cell value grid (sheetDataSet → sheetData/row/cell/v),
+    into XlsxDocument::external_links (sheet-xlsx/src/parts/external_link.rs,
+    additive + read-only). Cached-only: the source workbook is NEVER opened.
+    DEFERRED (honestly planned, not implemented): cached external <definedNames>
+    are NOT modeled — an external NAME reference is out of the cached-cell-read
+    slice; the part still round-trips verbatim (see external-link.preserve).
   provenance: ["ECMA-376 §18.14 (externalLink)", "spec §13 M3 (external-link reads)", "spec §1.1 (no network)"]
   tests:
     rust: ["sheet-conformance/tests/extlink.rs::sheet_xlsx_external_link_part_parse"]
-    corpus: ["corpus/xlsx-corpus/external-link.xlsx"]
+    corpus: ["corpus/xlsx-corpus/10-extlink.xlsx"]
 
 - id: sheet.xlsx.external-link.cached-value-read
   title: "A cell referencing an external workbook returns the cached last value"
   tier: calculated
-  status: planned
+  status: implemented
   note: >
-    Phase B: resolve an external reference (e.g. [1]Sheet1!A1) to the cached
-    value from the externalLinkN part — never a live read. An external ref with
-    no cached value yields the documented fallback (#REF!/#N/A per the cached
-    state), recorded as a ruling.
+    Resolve an external reference (e.g. [1]Sheet1!A1) to the CACHED value via
+    the pure sheet_calc::external::resolve_cached (over the ExternalCache trait;
+    sheet-calc has no sheet-xlsx dep) — never a live read. RULING: an external
+    ref with no cached value (missing book, missing sheet, or un-cached cell)
+    yields #REF! (resolve_cached's documented fallback) — the source workbook is
+    never opened to fill it. Note: the frozen AST has no external-ref variant
+    and sheet-parser does not parse the [n] prefix, so the LOCAL cell holding
+    an external-ref formula DISPLAYS its cached result from the worksheet's own
+    inline <v> (no AST support needed); the resolver is the parser-independent
+    surface for a consumer (sheet-js) that resolves a ref directly. Full
+    external-ref EVALUATION via an AST variant is a future versioned amendment,
+    out of this minimal slice.
   provenance: ["ECMA-376 §18.14.5 (externalSheetData)", "spec §1.1 (cached only, no network)", "spec §13 M3"]
   tests:
     rust: ["sheet-conformance/tests/extlink.rs::sheet_xlsx_external_link_cached_value_read"]
@@ -40,26 +52,33 @@
 - id: sheet.xlsx.external-link.preserve
   title: "External-link parts round-trip preserved (byte-identical when untouched)"
   tier: preserved
-  status: planned
+  status: implemented
   note: >
-    Phase B: the externalReferences relationships + externalLinkN parts honor
-    the preservation invariant (§10.2) — untouched they re-emit original bytes
-    (lazy-verbatim), so 'Paged never destroys a workbook' holds for external
-    links exactly as for any other understood-but-unmodified part.
+    The externalLinkN part + its EXTERNAL .rels (TargetMode="External") stay
+    OPAQUE in the OPC container (never promoted), so they honor the preservation
+    invariant (§10.2) — untouched they re-emit original bytes (lazy-verbatim),
+    and 'Paged never destroys a workbook' holds for external links exactly as
+    for any understood-but-unmodified part (same discipline as the chart/table
+    parts). Verified per-part byte-identical on a zero-edit round-trip.
   provenance: ["spec §10.2 (preservation invariant)", "ECMA-376 §18.14", "spec §13 M3"]
   tests:
     rust: ["sheet-conformance/tests/extlink.rs::sheet_xlsx_external_link_preserve"]
-    corpus: ["corpus/xlsx-corpus/external-link.xlsx"]
+    corpus: ["corpus/xlsx-corpus/10-extlink.xlsx"]
 
 - id: sheet.xlsx.external-link.no-network
   title: "External links are NEVER followed — cached values only (§1.1)"
   tier: parsed
-  status: planned
+  status: implemented
   note: >
-    The constitutional ruling made executable: a test asserting NO network /
-    file-system access occurs on parse or calc of an external-link workbook —
-    only the cached part values are read. Publishing-first scope (§1, §1.1),
-    permanent — not a deferral.
+    The constitutional ruling made executable. NO network / file-system access
+    occurs on parse or resolve of an external-link workbook — BY CONSTRUCTION:
+    XlsxDocument::open + the external-link parser read only the in-memory bytes;
+    the source workbook URI (TargetMode="External") is recorded but never
+    resolved; resolve_cached reads only the in-memory cache. The observable
+    consequence is asserted: a cache MISS (un-cached cell, out-of-range book, or
+    un-cached sheet) is always #REF! — a live read would have to OPEN the source
+    to answer otherwise. Publishing-first scope (§1, §1.1), permanent — not a
+    deferral.
   provenance: ["spec §1.1 (no network — cached only)", "spec §1 (publishing-first scope, permanent)"]
   tests:
     rust: ["sheet-conformance/tests/extlink.rs::sheet_xlsx_external_link_no_network"]

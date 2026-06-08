@@ -1,0 +1,47 @@
+# sheet.calc.decimal.divergence golden corpus — the D-6 exact-decimal SPIKE
+# (spec §3, §5.1, M3). Cases where IEEE-754 f64 (the v1 default, `F64` Numeric)
+# and an exact base-10 decimal (`Decimal` Numeric, rust_decimal, behind the
+# `exact-decimal` feature) produce a DIFFERENT result at the f64 boundary.
+#
+# Format: id<TAB>op<TAB>operands<TAB>f64<TAB>decimal<TAB>diverges
+#   id        case id (unique within the file).
+#   op        the operation the test replays through BOTH Numeric impls:
+#               add   — left-fold add over the operand list.
+#               binop — a single binary op; operands = "a OP b" (OP in + - * /).
+#               accum — add operands[1] to a running total operands[0] times
+#                       (e.g. 100;0.01 = add 0.01 a hundred times).
+#   operands  ';'-separated f64 literals (the values the USER typed); for binop
+#             the form is "a OP b" (space-separated).
+#   f64       the EXACT result of the op under `F64` (f64.to_string()), the
+#             value Excel itself would carry (Excel is f64-based, D-6).
+#   decimal   the EXACT result of the op under `Decimal`, lowered with to_f64()
+#             (f64.to_string()) — the clean base-10 value.
+#   diverges  "yes" if f64 != decimal at the f64 boundary, "no" if they agree.
+#
+# The "no" rows are the honest contrast: f64 is NOT always wrong — sums of
+# exactly-representable binary fractions (halves/quarters/eighths) and of
+# integers foot exactly, as does this particular invoice. The spike's value is
+# the "yes" rows: pennies and tenths that drift in binary but are exact in
+# base-10. NOTE: the divergence depends on accumulation ORDER — these goldens
+# are a strict LEFT-FOLD from 0.0 (the order the test replays), so ten 0.1s
+# fold to 0.9999999999999999, NOT the 1.0 a pairwise/Kahan sum might reach.
+# FURTHER NOTE (documented in decimal_spike.rs + DECIMAL-SPIKE.md): 1/3 is
+# non-terminating in base-10 TOO, so decimal is not a cure-all — that case is
+# asserted separately in the test, not here.
+
+# --- the canonical tenths-drift case (every decimal pitch deck's slide 1) ---
+classic-0.1+0.2	add	0.1;0.2	0.30000000000000004	0.3	yes
+three-tenths	add	0.1;0.2;0.3	0.6000000000000001	0.6	yes
+one-one-plus-two-two	binop	1.1 + 2.2	3.3000000000000003	3.3	yes
+
+# --- money: cent columns that must foot exactly ---
+money-cents	add	0.1;0.2;0.05	0.35000000000000003	0.35	yes
+penny-accumulation	accum	100;0.01	1.0000000000000007	1	yes
+invoice-lines	add	19.99;5.99;2.49	28.47	28.47	no
+
+# --- the tenths-drift over a longer accumulation (left-fold from 0.0) ---
+ten-tenths	add	0.1;0.1;0.1;0.1;0.1;0.1;0.1;0.1;0.1;0.1	0.9999999999999999	1	yes
+
+# --- the honest contrast: f64 is exact for binary-representable fractions ---
+exact-halves	add	0.5;0.25;0.125	0.875	0.875	no
+integer-sum	add	1;2;3;4	10	10	no

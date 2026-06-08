@@ -20,6 +20,9 @@
 //! tree-walk evaluator ([`eval`]), range-argument materialization
 //! ([`argview`]), and volatile-pass support ([`volatile`]).
 //!
+//! External-workbook references resolve to CACHED values only ([`external`],
+//! spec §13 M3; the no-network ruling §1.1) — links are NEVER followed.
+//!
 //! ## The public surface (FROZEN — `sheet-js` builds against exactly this)
 //!
 //! [`Engine`] owns the model + graph + dirty set + config. The cell-entry
@@ -62,6 +65,7 @@
 pub mod argview;
 pub mod dirty;
 pub mod eval;
+pub mod external;
 pub mod graph;
 pub mod iterate;
 pub mod spill;

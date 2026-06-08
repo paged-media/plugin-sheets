@@ -28,6 +28,14 @@ sheet-lower = { path = "../sheet-lower" }
 # is leaf-IR reuse like the sheet-lower dep above — NOT a render-surface
 # dependency, no inter-plugin contact, no cycle (xlsx -> chart -> core+format).
 sheet-chart = { path = "../sheet-chart" }
+# DOCUMENTED DEVIATION from the spec §4 dependency table (xlsx -> core only).
+# The M3 localization track (spec §9, D-8) derives the workbook display locale
+# from a custom numFmt's `[$…-LCID]` token; `sheet_format::compile` is the SINGLE
+# source of that grammar (no re-implementation in the xlsx layer). `sheet-format`
+# is a PURE leaf crate (deps = core), already pulled in transitively via
+# sheet-lower/sheet-chart — declaring it directly makes the dependency explicit.
+# No SDK, no inter-plugin contact, no cycle (xlsx -> format -> core).
+sheet-format = { path = "../sheet-format" }
 zip.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true

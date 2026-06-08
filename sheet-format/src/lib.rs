@@ -52,7 +52,8 @@ use sheet_core::{CellValue, DateSystem, Locale};
 
 pub use cache::FormatCache;
 pub use general::format_general;
-pub use locale::{locale_data, LocaleData};
+pub use locale::{locale_data, locale_from_lcid, LocaleData};
+pub use number::{parse_number_locale, parse_number_seps};
 pub use parse::{compile, FormatError};
 pub use sections::{CompiledFormat, FormatColor};
 
@@ -154,7 +155,12 @@ fn format_number_value(
         return (String::new(), color);
     }
 
-    let loc = locale::locale_data(ctx.locale);
+    // A `[$…-LCID]` locale token on the CODE overrides the document locale for
+    // this code (ruling `sheet.format.locale.locale-from-workbook`): a cell-
+    // level numFmt with `[$-407]` renders de regardless of the ctx locale.
+    // `None` (every code with no locale token) keeps the ctx locale, so en-US
+    // output stays byte-identical.
+    let loc = locale::locale_data(fmt.locale.unwrap_or(ctx.locale));
     let s = match section.kind {
         sections::SectionKind::DateTime => {
             match datetime::render_datetime(n, section, ctx.date_system, loc) {

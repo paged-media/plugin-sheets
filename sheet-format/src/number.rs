@@ -19,9 +19,62 @@
 //! count). Literals (quoted, escaped, and the always-literal punctuation)
 //! interleave verbatim.
 
-use crate::locale::LocaleData;
+use crate::locale::{locale_data, LocaleData};
 use crate::sections::{FractionSpec, Section, Token};
+use sheet_core::Locale;
 use std::fmt::Write as _;
+
+/// Parse a locale-formatted number STRING back to an `f64` (spec §9; ruling
+/// `sheet.format.locale.number-parse-locale`). The inverse of [`render_number`]'s
+/// separator handling: the locale's GROUP separator is stripped and its DECIMAL
+/// separator is re-pointed to the canonical ASCII `.`, then the cleaned string
+/// is parsed as a plain f64. Surrounding ASCII whitespace is ignored.
+///
+/// ## Scope ruling (the line we do NOT cross)
+///
+/// This localizes only the VALUE STRING, never the formula dialect. The engine's
+/// formula parser/lexer stays en-US (function args separated by `,`, the literal
+/// decimal `.`); only an EXPLICIT-locale VALUE parse (this fn, or `NUMBERVALUE`
+/// with its explicit `decimal`/`group` args) reads de-formatted numbers. The
+/// implicit `coerce::to_number` path stays en — a bare `"1.234,50"` typed into a
+/// cell is NOT auto-localized; the host/model selects the locale. So `de` parsing
+/// is opt-in, keeping the en formula behavior byte-identical.
+///
+/// Returns `None` when the cleaned string is not a finite number. en-US
+/// ([`Locale::EnUs`]) is the identity case (decimal `.`, group `,`).
+pub fn parse_number_locale(s: &str, locale: Locale) -> Option<f64> {
+    let loc = locale_data(locale);
+    parse_number_seps(s, loc.decimal, loc.group)
+}
+
+/// Parse a number STRING with EXPLICIT decimal + group separators (the
+/// separator-explicit core of [`parse_number_locale`]; the shape `NUMBERVALUE`
+/// uses). Strips the `group` separator, re-points `decimal` to `.`, ignores
+/// ASCII whitespace, and parses the remainder as an f64. The separators may be
+/// any non-empty `&str` (single-glyph in practice). `None` on a non-finite or
+/// unparseable result.
+pub fn parse_number_seps(s: &str, decimal: &str, group: &str) -> Option<f64> {
+    let mut buf = String::with_capacity(s.len());
+    let mut rest = s.trim();
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix(group) {
+            // Skip the group separator entirely.
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix(decimal) {
+            buf.push('.');
+            rest = after;
+        } else {
+            let mut chars = rest.chars();
+            let c = chars.next()?;
+            if !c.is_whitespace() {
+                buf.push(c);
+            }
+            rest = chars.as_str();
+        }
+    }
+    let n: f64 = buf.parse().ok()?;
+    n.is_finite().then_some(n)
+}
 
 /// Render the magnitude-or-signed value `x` through a numeric `section`. The
 /// caller has already selected the section and decided `force_minus` (true
@@ -678,6 +731,45 @@ mod tests {
     fn sheet_format_locale_de_scientific() {
         // The mantissa separator localizes; the exponent stays neutral.
         assert_eq!(fmt_de("0.00E+00", 12345.0), "1,23E+04");
+    }
+
+    #[test]
+    fn sheet_format_locale_number_parse_de() {
+        // de-DE: "1.234,50" -> 1234.5 (group "." stripped, decimal "," re-pointed).
+        assert_eq!(
+            parse_number_locale("1.234,50", crate::Locale::DeDe),
+            Some(1234.5)
+        );
+        assert_eq!(
+            parse_number_locale("1.000.000", crate::Locale::DeDe),
+            Some(1_000_000.0)
+        );
+        assert_eq!(parse_number_locale("-3,5", crate::Locale::DeDe), Some(-3.5));
+        // en-US is the identity case ("1,234.50" -> 1234.5).
+        assert_eq!(
+            parse_number_locale("1,234.50", crate::Locale::EnUs),
+            Some(1234.5)
+        );
+        // Round-trip: render under de, parse back under de.
+        let rendered = fmt_de("#,##0.00", 1234.5);
+        assert_eq!(
+            parse_number_locale(&rendered, crate::Locale::DeDe),
+            Some(1234.5)
+        );
+        // Unparseable -> None.
+        assert_eq!(
+            parse_number_locale("not a number", crate::Locale::DeDe),
+            None
+        );
+    }
+
+    #[test]
+    fn sheet_format_locale_number_parse_explicit_seps() {
+        // The NUMBERVALUE-shaped explicit-separator core.
+        assert_eq!(parse_number_seps("1.234,50", ",", "."), Some(1234.5));
+        assert_eq!(parse_number_seps("1 234,5", ",", " "), Some(1234.5));
+        // Whitespace is ignored even when not the group separator.
+        assert_eq!(parse_number_seps(" 42 ", ".", ","), Some(42.0));
     }
 
     #[test]

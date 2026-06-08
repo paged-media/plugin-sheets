@@ -18,12 +18,24 @@ workspace = true
 # (rust_decimal MIT or a hand-rolled fixed-decimal — the spike decides) without
 # touching any kernel written against the `Numeric` trait. Exploratory: f64
 # remains the v1 default regardless of the spike outcome.
-exact-decimal = []
+exact-decimal = ["dep:rust_decimal"]
 
 [dependencies]
 sheet-core = { path = "../sheet-core" }
 sheet-format = { path = "../sheet-format" }
 compact_str.workspace = true
+# exact-decimal SPIKE carrier (D-6, M3) — OPTIONAL, keyed on `exact-decimal`.
+# rust_decimal 1.x: MIT, pure-Rust, 28-29 significant digits, wasm-compatible
+# (it ships a wasm32 cfg target shim and no native/C deps — its only required
+# deps are arrayvec + num-traits, both pure Rust). default-features = false +
+# ["std", "maths"]: drops serde/db/rand defaults; `std` is the i128-carrier
+# core; `maths` adds MathematicalOps (powi/powu/powd) used by the `Decimal`
+# Numeric `pow`. Nothing here links into the default (no-feature) build —
+# f64 stays the v1 default (DEFAULT BUILD MUST STAY BYTE-IDENTICAL).
+rust_decimal = { version = "1", default-features = false, features = [
+    "std",
+    "maths",
+], optional = true }
 
 [build-dependencies]
 serde.workspace = true

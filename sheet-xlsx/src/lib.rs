@@ -53,13 +53,14 @@ pub use parts::chart::{ParsedChart as XlsxChart, SheetResolver as ChartSheetReso
 pub use parts::conditional_format::{
     CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, SheetConditionalFormats,
 };
+pub use parts::external_link::{ExternalBook, ExternalLinks};
 pub use parts::styles::{VisualStyle, VisualStyles};
 
 use opc::{ModeledKind, OpcContainer, PartEntry};
 use parts::chart::{ParsedChart, SheetResolver};
 use rels::{
     part_dir, rels_part_for, resolve_target, Relationships, REL_CHART, REL_DRAWING,
-    REL_OFFICE_DOCUMENT, REL_SHARED_STRINGS, REL_STYLES, REL_TABLE,
+    REL_EXTERNAL_LINK, REL_OFFICE_DOCUMENT, REL_SHARED_STRINGS, REL_STYLES, REL_TABLE,
 };
 use sheet_core::cell::{Cell, StyleId};
 use sheet_core::{SheetId, SheetModel};
@@ -109,6 +110,19 @@ pub struct XlsxDocument {
     /// §10.2); this model exists for `sheet-js` to LIST + RENDER charts, never
     /// for re-emit. Document order across sheets.
     pub charts: Vec<ParsedChart>,
+
+    /// The CACHED values of every referenced external workbook (M3
+    /// external-link reads, spec §13; the no-network ruling §1.1), indexed by
+    /// the workbook's `<externalReferences>` order — the `[n]` external-book
+    /// index a formula uses (`=[1]Sheet1!A1`). ADDITIVE + READ-ONLY + CACHED-
+    /// ONLY: external links are NEVER followed (no network, no file access).
+    /// Each `externalLinkN.xml` part stays OPAQUE (never promoted), so it
+    /// re-emits byte-identical on round-trip (preservation invariant, spec
+    /// §10.2). This model exists for a consumer to resolve an external
+    /// reference to its cached value
+    /// (`sheet_calc::external::resolve_cached`), never for re-emit. Empty when
+    /// the workbook references no external books (the common case).
+    pub external_links: ExternalLinks,
 
     /// The OPC container (ordered parts + content types) for re-write.
     container: OpcContainer,
@@ -192,26 +206,46 @@ impl XlsxDocument {
         }
 
         // styles: build the cellXfs index -> StyleId table, the visual style
-        // model (M1 style-map track) keyed by the resolved StyleId, AND the
-        // differential-format `<dxfs>` table (M2 conditional-formatting track).
-        let (xf_to_style, visual_styles, dxfs) = match &styles_part {
+        // model (M1 style-map track) keyed by the resolved StyleId, the
+        // differential-format `<dxfs>` table (M2 conditional-formatting track),
+        // AND the workbook display locale derived from a custom numFmt's
+        // `[$…-LCID]` token (M3 localization track, ruling
+        // `sheet.format.locale.locale-from-workbook`).
+        let (xf_to_style, visual_styles, dxfs, workbook_locale) = match &styles_part {
             Some(name) => match container.part(name) {
                 Some(p) => {
                     let parsed = parts::styles::parse(p.bytes(), &mut model.styles)?;
-                    (parsed.xf_to_style, parsed.visual, parsed.dxfs)
+                    (
+                        parsed.xf_to_style,
+                        parsed.visual,
+                        parsed.dxfs,
+                        parsed.workbook_locale,
+                    )
                 }
                 None => (
                     Vec::new(),
                     parts::styles::VisualStyles::default(),
                     Vec::new(),
+                    None,
                 ),
             },
             None => (
                 Vec::new(),
                 parts::styles::VisualStyles::default(),
                 Vec::new(),
+                None,
             ),
         };
+
+        // Set the document locale from the derived workbook hint. HONEST
+        // FALLBACK: OOXML has no document-locale element, so when no custom
+        // numFmt carries a `[$…-LCID]` token we keep the default Locale::EnUs —
+        // the locale is then expected to be set via the model/host, NOT
+        // auto-detected (the format-code token still localizes per-cell). A
+        // non-en hint sets the whole workbook's display locale.
+        if let Some(loc) = workbook_locale {
+            model.calc.locale = loc;
+        }
 
         // 4. Each worksheet, in workbook (tab) order.
         let mut bindings = Vec::with_capacity(parsed_wb.sheets.len());
@@ -369,6 +403,40 @@ impl XlsxDocument {
             }
         }
 
+        // 4.6. External-link CACHED values (M3 external-link reads, spec §13;
+        // the no-network ruling §1.1). The workbook's `<externalReferences>`
+        // r:ids (in order — the `[n]` external-book index) resolve through the
+        // workbook `.rels` to each `xl/externalLinks/externalLinkN.xml` part,
+        // whose CACHED last-known cell values we parse into the read-only
+        // side-table. CACHED-ONLY by construction: we read ONLY these inline
+        // cache bytes — the referenced source workbook (named in the part's
+        // `<externalBook>`/`.rels` Target) is NEVER opened; no network, no
+        // file access. The externalLink PARTS stay OPAQUE (never promoted), so
+        // they re-emit byte-identical on round-trip (preservation invariant,
+        // spec §10.2) — the same discipline as the chart/table parts.
+        let mut external_links = parts::external_link::ExternalLinks::default();
+        for rid in &parsed_wb.external_refs {
+            // Resolve the r:id through the workbook rels; only `/externalLink`
+            // targets are external-link parts (defensive — the index position
+            // is what a formula's `[n]` names, so we push a book per ref).
+            let book = wb_rels
+                .target_of(rid)
+                .map(|t| resolve_target(&wb_base, t))
+                .filter(|_| {
+                    wb_rels
+                        .rels
+                        .iter()
+                        .any(|r| r.id == *rid && r.is_type(REL_EXTERNAL_LINK))
+                })
+                .and_then(|part| container.part(&part).map(|p| p.bytes().to_vec()))
+                // A malformed external-link part is skipped (preservation-safe:
+                // its bytes still round-trip); the slot becomes an empty book so
+                // the `[n]` index stays aligned with the workbook order.
+                .and_then(|bytes| parts::external_link::parse(&bytes).ok())
+                .unwrap_or_default();
+            external_links.books.push(book);
+        }
+
         // 5. Promote the understood parts so the writer can distinguish
         // lazy-verbatim from re-encode.
         container.promote(&workbook_part, ModeledKind::Workbook);
@@ -390,6 +458,7 @@ impl XlsxDocument {
             dxfs,
             conditional_formats,
             charts,
+            external_links,
             container,
             bindings,
         })

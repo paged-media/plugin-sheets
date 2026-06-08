@@ -18,6 +18,7 @@
 
 pub mod chart;
 pub mod conditional_format;
+pub mod external_link;
 pub mod shared_strings;
 pub mod styles;
 pub mod tables;

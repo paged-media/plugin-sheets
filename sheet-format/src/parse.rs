@@ -22,11 +22,13 @@
 //! neighbour (looking outward in either direction) is an hour (`h`) or
 //! second (`s`) token; otherwise it is a **month**.
 
+use crate::locale::locale_from_lcid;
 use crate::sections::{
     CompareOp, CompiledFormat, Condition, ElapsedUnit, FormatColor, FractionSpec, Section,
     SectionKind, Token,
 };
 use compact_str::CompactString;
+use sheet_core::Locale;
 
 /// Compile-time error from [`compile`] (public API; `thiserror`).
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +57,7 @@ pub fn compile(code: &str) -> Result<CompiledFormat, FormatError> {
             neg: None,
             zero: None,
             text: None,
+            locale: None,
         });
     }
     let raw_sections = split_sections(code);
@@ -65,11 +68,19 @@ pub fn compile(code: &str) -> Result<CompiledFormat, FormatError> {
         )));
     }
 
+    // A `[$…-LCID]` token anywhere in the code declares a per-code locale
+    // (ruling `sheet.format.locale.locale-from-workbook`). The FIRST token's
+    // LCID wins (one display locale per code); `None` if no token carries one.
+    let mut code_locale: Option<Locale> = None;
     let mut sections: Vec<Section> = Vec::with_capacity(raw_sections.len());
     for (i, raw) in raw_sections.iter().enumerate() {
         // The 4th section is always a text section by position.
         let force_text = i == 3;
-        sections.push(parse_section(raw, force_text)?);
+        let (section, sec_locale) = parse_section(raw, force_text)?;
+        if code_locale.is_none() {
+            code_locale = sec_locale;
+        }
+        sections.push(section);
     }
 
     let mut iter = sections.into_iter();
@@ -83,6 +94,7 @@ pub fn compile(code: &str) -> Result<CompiledFormat, FormatError> {
         neg,
         zero,
         text,
+        locale: code_locale,
     })
 }
 
@@ -125,13 +137,17 @@ fn split_sections(code: &str) -> Vec<String> {
     out
 }
 
-/// Lex one section into tokens, classify it, and resolve month/minute.
-fn parse_section(raw: &str, force_text: bool) -> Result<Section, FormatError> {
+/// Lex one section into tokens, classify it, and resolve month/minute. Returns
+/// the [`Section`] plus any per-code [`Locale`] declared by a `[$…-LCID]` token
+/// in this section (ruling `sheet.format.locale.locale-from-workbook`).
+fn parse_section(raw: &str, force_text: bool) -> Result<(Section, Option<Locale>), FormatError> {
     // `General` (case-insensitive), possibly preceded by a color/condition
     // bracket, compiles to a general-flagged number section. We must still
     // scan the brackets to carry the color/condition (e.g. `[Red]General`).
     let mut color: Option<FormatColor> = None;
     let mut condition: Option<Condition> = None;
+    // The locale from the first `[$…-LCID]` token seen in this section.
+    let mut locale: Option<Locale> = None;
 
     let mut tokens: Vec<Token> = Vec::new();
     let mut lit = String::new();
@@ -187,7 +203,17 @@ fn parse_section(raw: &str, force_text: bool) -> Result<Section, FormatError> {
                     }
                     Bracket::Color(c) => color = Some(c),
                     Bracket::Condition(cond) => condition = Some(cond),
-                    Bracket::Currency(sym) => lit.push_str(&sym),
+                    Bracket::Currency { symbol, lcid } => {
+                        lit.push_str(&symbol);
+                        // `[$…-LCID]` carries a per-code display locale; the
+                        // first one seen wins (ruling
+                        // `sheet.format.locale.locale-from-workbook`).
+                        if locale.is_none() {
+                            if let Some(id) = lcid {
+                                locale = Some(locale_from_lcid(id));
+                            }
+                        }
+                    }
                     Bracket::Drop => {}
                 }
             }
@@ -308,13 +334,16 @@ fn parse_section(raw: &str, force_text: bool) -> Result<Section, FormatError> {
     if tokens.len() == 1 {
         if let Token::Literal(s) = &tokens[0] {
             if s.trim().eq_ignore_ascii_case("general") {
-                return Ok(Section {
-                    tokens: vec![],
-                    kind: SectionKind::Number,
-                    general: true,
-                    color,
-                    condition,
-                });
+                return Ok((
+                    Section {
+                        tokens: vec![],
+                        kind: SectionKind::Number,
+                        general: true,
+                        color,
+                        condition,
+                    },
+                    locale,
+                ));
             }
         }
     }
@@ -335,13 +364,16 @@ fn parse_section(raw: &str, force_text: bool) -> Result<Section, FormatError> {
         // the `digits / digits` pattern into a single Token::Fraction.
         resolve_fraction(&mut tokens);
     }
-    Ok(Section {
-        tokens,
-        kind,
-        general: false,
-        color,
-        condition,
-    })
+    Ok((
+        Section {
+            tokens,
+            kind,
+            general: false,
+            color,
+            condition,
+        },
+        locale,
+    ))
 }
 
 /// Result of classifying a `[...]` bracket body.
@@ -352,10 +384,12 @@ enum Bracket {
     Color(FormatColor),
     /// A comparison condition (`[<100]`).
     Condition(Condition),
-    /// A currency/locale token (`[$$-409]`, `[$€-407]`) — lowers to a literal
-    /// currency symbol.
-    Currency(String),
-    /// Anything unmodelled (an indexed `[Color12]`, a bare locale id) — dropped.
+    /// A currency/locale token (`[$$-409]`, `[$€-407]`, `[$-407]`) — lowers to a
+    /// literal currency symbol AND, when an `-<LCID>` suffix is present, a
+    /// per-code display locale (ruling `sheet.format.locale.locale-from-workbook`).
+    /// A pure `[$-407]` contributes an empty symbol but a non-`None` `lcid`.
+    Currency { symbol: String, lcid: Option<u32> },
+    /// Anything unmodelled (an indexed `[Color12]`) — dropped.
     Drop,
 }
 
@@ -374,8 +408,8 @@ fn classify_bracket(body: &str) -> Bracket {
     if let Some(cond) = parse_condition(trimmed) {
         return Bracket::Condition(cond);
     }
-    if let Some(sym) = parse_currency(trimmed) {
-        return Bracket::Currency(sym);
+    if let Some((symbol, lcid)) = parse_currency(trimmed) {
+        return Bracket::Currency { symbol, lcid };
     }
     Bracket::Drop
 }
@@ -425,21 +459,34 @@ fn parse_condition(body: &str) -> Option<Condition> {
     Some(Condition { op, rhs })
 }
 
-/// `[$$-409]`, `[$€-407]`, `[$USD]` -> the currency symbol (everything between
-/// the `$` and the `-locale` suffix). Returns `None` for a body not starting
-/// with `$` (spec §9; ruling `sheet.format.locale-currency-token`).
+/// `[$$-409]`, `[$€-407]`, `[$-407]`, `[$USD]` -> the currency symbol
+/// (everything between the `$` and the `-locale` suffix) AND the optional
+/// LCID hex after the `-` (spec §9; rulings `sheet.format.locale-currency-token`
+/// + `sheet.format.locale.locale-from-workbook`). `None` for a non-`$` body.
 ///
 /// Excel's grammar is `[$<symbol>-<locale-hex>]`; the symbol may be empty
-/// (`[$-409]`, a pure locale tag, which contributes no literal) or multi-char
-/// (`[$USD]`). We emit exactly the symbol portion.
-fn parse_currency(body: &str) -> Option<String> {
+/// (`[$-407]`, a pure locale tag, which contributes no literal) or multi-char
+/// (`[$USD]`). The LCID is a hex number (`409` = en-US, `407` = de-DE); a body
+/// with no `-` (`[$USD]`) carries no LCID. A non-hex suffix yields no LCID (the
+/// symbol still parses), so an odd token degrades to a plain currency literal.
+fn parse_currency(body: &str) -> Option<(String, Option<u32>)> {
     let rest = body.strip_prefix('$')?;
     // The symbol runs up to the FIRST `-` (the locale separator), if any.
-    let symbol = match rest.find('-') {
-        Some(idx) => &rest[..idx],
-        None => rest,
+    let (symbol, lcid) = match rest.find('-') {
+        Some(idx) => {
+            let suffix = &rest[idx + 1..];
+            // The LCID may carry trailing modifiers in real files; parse the
+            // leading hex run only (e.g. `407` from `407` or `0407`).
+            let hex: String = suffix
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
+            let id = u32::from_str_radix(&hex, 16).ok();
+            (&rest[..idx], id)
+        }
+        None => (rest, None),
     };
-    Some(symbol.to_string())
+    Some((symbol.to_string(), lcid))
 }
 
 /// Rewrite a `digits Literal("/") digits` run into a single [`Token::Fraction`]
@@ -720,5 +767,27 @@ mod tests {
         let f = compile("General").unwrap();
         assert_eq!(f.pos.kind, SectionKind::Number);
         assert!(f.pos.tokens.is_empty());
+    }
+
+    #[test]
+    fn sheet_format_locale_from_workbook_token() {
+        // A [$-407] (or [$€-407]) token declares a per-code de-DE locale; a
+        // pure [$-409] is en-US; a code with no token carries no locale.
+        assert_eq!(
+            compile("[$-407]#,##0.00").unwrap().locale,
+            Some(Locale::DeDe)
+        );
+        assert_eq!(compile("[$€-407]#,##0").unwrap().locale, Some(Locale::DeDe));
+        assert_eq!(compile("[$$-409]#,##0").unwrap().locale, Some(Locale::EnUs));
+        assert_eq!(compile("#,##0.00").unwrap().locale, None);
+        // The €/$ symbol still emits as a literal (currency-token ruling intact).
+        let de = compile("[$€-407]#,##0").unwrap();
+        assert!(de
+            .pos
+            .tokens
+            .iter()
+            .any(|t| matches!(t, Token::Literal(s) if s == "€")));
+        // [$USD] (no -LCID) carries no locale.
+        assert_eq!(compile("[$USD]0").unwrap().locale, None);
     }
 }

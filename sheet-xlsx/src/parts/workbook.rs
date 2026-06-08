@@ -18,6 +18,13 @@
 //! `date1904` flag from `<workbookPr>`, and `<definedName>` rows (folded
 //! into the model's [`NameTable`] as raw `Formula` text — the parser is not
 //! a dependency of the XLSX layer, so names resolve in the consumer, T1).
+//!
+//! M3 ADDITIVE (external-link reads, spec §13): the ordered
+//! `<externalReferences><externalReference r:id="…"/>` r:ids, in workbook
+//! order — the index a formula's `[n]` prefix names (`=[1]Sheet1!A1`). Each
+//! resolves through the workbook `.rels` to an `externalLinkN.xml` part whose
+//! CACHED values are read separately (the source workbook is NEVER opened —
+//! cached-only, no network, §1.1).
 
 use crate::error::XlsxError;
 use crate::opc::attr;
@@ -42,6 +49,12 @@ pub struct ParsedWorkbook {
     pub date_system: DateSystem,
     /// Defined names, folded into the model's table (raw formula text).
     pub names: NameTable,
+    /// `<externalReference r:id>` ids in workbook order (M3 external-link
+    /// reads, spec §13). The position here is the `[n]` external-book index a
+    /// formula uses (1-based: index `0` here is `[1]`); each id resolves
+    /// through the workbook `.rels` to an `externalLinkN.xml` part. Empty when
+    /// the workbook references no external books (the common case).
+    pub external_refs: Vec<String>,
 }
 
 /// Parse `workbook.xml`.
@@ -54,6 +67,7 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
     let mut sheets = Vec::new();
     let mut date_system = DateSystem::Date1900;
     let mut names = NameTable::default();
+    let mut external_refs: Vec<String> = Vec::new();
 
     // definedName carries its target as element text; track the in-progress
     // name + accumulate its text.
@@ -77,6 +91,11 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
                     b"sheet" => {
                         sheets.push(parse_sheet(&e)?);
                     }
+                    b"externalReference" => {
+                        if let Some(rid) = attr(&e, b"id")? {
+                            external_refs.push(rid);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -92,6 +111,11 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
                     }
                     b"sheet" => {
                         sheets.push(parse_sheet(&e)?);
+                    }
+                    b"externalReference" => {
+                        if let Some(rid) = attr(&e, b"id")? {
+                            external_refs.push(rid);
+                        }
                     }
                     b"definedName" => {
                         let name = attr(&e, b"name")?.unwrap_or_default();
@@ -134,6 +158,7 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
         sheets,
         date_system,
         names,
+        external_refs,
     })
 }
 
@@ -183,6 +208,35 @@ mod tests {
             _ => panic!("expected formula target"),
         }
         assert_eq!(defs[1].1.scope, NameScope::Sheet(1));
+    }
+
+    #[test]
+    fn external_references_in_order() {
+        // `<externalReferences>` r:ids parse in workbook order (the `[n]`
+        // external-book index). M3 external-link reads (spec §13).
+        let xml = br#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets>
+  <externalReferences>
+    <externalReference r:id="rId2"/>
+    <externalReference r:id="rId3"/>
+  </externalReferences>
+</workbook>"#;
+        let wb = parse(xml).unwrap();
+        assert_eq!(
+            wb.external_refs,
+            vec!["rId2".to_string(), "rId3".to_string()]
+        );
+    }
+
+    #[test]
+    fn no_external_references_is_empty() {
+        let xml = br#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets>
+</workbook>"#;
+        let wb = parse(xml).unwrap();
+        assert!(wb.external_refs.is_empty());
     }
 
     #[test]

@@ -56,9 +56,14 @@
 //!   the fill char EXACTLY ONCE at its position (column-width expansion is the
 //!   typeset lane's job downstream).
 //! - **locale-currency-token** (`sheet.format.locale-currency-token`):
-//!   `[$<symbol>-<locale-hex>]` emits exactly the SYMBOL portion (dropping the
-//!   locale id); a pure `[$-409]` locale tag contributes no literal; locale-
-//!   driven separators/decimal marks are NOT applied in T0 (en grouping only).
+//!   `[$<symbol>-<locale-hex>]` emits exactly the SYMBOL portion; a pure
+//!   `[$-409]` locale tag contributes no literal. UPDATED by the M3 LOCALIZATION
+//!   track (spec §9, D-8; registry `locale.yaml`
+//!   `sheet.format.locale.locale-from-workbook`): the `-<LCID>` suffix is NO
+//!   longer dropped — it selects the RENDERED separators for the D-8 v1 set, so
+//!   `[$€-407]#,##0` of `1234` is `€1.234` (de-DE `.` grouping), while every
+//!   non-de LCID (`409`, `809`, `411`, `414`, …) stays en grouping (en is the
+//!   unmodelled-LCID fallback). The symbol/position rules are unchanged.
 
 use sheet_core::{CellValue, DateSystem, Locale};
 use sheet_format::{compile, format_value, format_value_styled, FormatColor, FormatCtx};
@@ -288,11 +293,12 @@ fn sheet_format_padding() {
 fn sheet_format_locale_currency_token() {
     run_corpus("corpus/format-corpus/currency.golden.tsv");
 
-    // The symbol portion is emitted; the -locale suffix is dropped.
+    // The symbol portion is emitted; the -locale suffix selects the separators
+    // (M3 localization track): en LCIDs keep en grouping, de LCID 407 localizes.
     assert_eq!(nfmt("[$$-409]#,##0", 1234.0), "$1,234");
-    assert_eq!(nfmt("[$€-407]#,##0", 1234.0), "€1,234");
-    assert_eq!(nfmt("[$£-809]#,##0.00", 12.5), "£12.50");
-    // A pure locale tag [$-409] has an empty symbol — no literal contributed.
+    assert_eq!(nfmt("[$€-407]#,##0", 1234.0), "€1.234"); // de-DE "." grouping
+    assert_eq!(nfmt("[$£-809]#,##0.00", 12.5), "£12.50"); // en-GB stays en
+                                                          // A pure locale tag [$-409] has an empty symbol — no literal contributed.
     assert_eq!(nfmt("[$-409]#,##0", 1234.0), "1,234");
     // A bare [$USD] (no -locale) emits the whole symbol "USD".
     assert_eq!(nfmt("[$USD]0", 5.0), "USD5");

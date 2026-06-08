@@ -8,8 +8,8 @@
 #
 #     python3 corpus/xlsx-corpus/generate.py
 #
-# Regenerates all six *.xlsx in this directory deterministically (fixed zip
-# member order + a fixed timestamp so the bytes are stable across runs).
+# Regenerates all *.xlsx fixtures in this directory deterministically (fixed
+# zip member order + a fixed timestamp so the bytes are stable across runs).
 
 import os
 import zipfile
@@ -35,6 +35,7 @@ CT_VML = "application/vnd.openxmlformats-officedocument.vmlDrawing"
 CT_TABLE = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"
 CT_DRAWING = "application/vnd.openxmlformats-officedocument.drawing+xml"
 CT_CHART = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+CT_EXTLINK = "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"
 
 RT_OFFICE_DOC = NS_R + "/officeDocument"
 RT_WORKSHEET = NS_R + "/worksheet"
@@ -44,6 +45,11 @@ RT_CALCCHAIN = NS_R + "/calcChain"
 RT_TABLE = NS_R + "/table"
 RT_DRAWING = NS_R + "/drawing"
 RT_CHART = NS_R + "/chart"
+RT_EXTLINK = NS_R + "/externalLink"
+# An external-link part's OWN rel to the (never-opened) source workbook file —
+# an OPC EXTERNAL relationship (TargetMode="External"). We store the URI but
+# NEVER resolve it: external links are not followed (spec §1.1).
+RT_EXTLINK_PATH = NS_R + "/externalLinkPath"
 
 # DrawingML chart namespaces.
 NS_C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
@@ -82,8 +88,10 @@ def root_rels():
     )
 
 
-def workbook(sheets, date1904=False, defined_names=None):
-    """sheets: list of (name, sheetId, rId). defined_names: list of (name, text, localSheetId|None)."""
+def workbook(sheets, date1904=False, defined_names=None, external_refs=None):
+    """sheets: list of (name, sheetId, rId). defined_names: list of
+    (name, text, localSheetId|None). external_refs: list of rId (the
+    <externalReferences> order = the [n] external-book index, M3 spec §13)."""
     s = XML_DECL
     s += f'<workbook xmlns="{NS_MAIN}" xmlns:r="{NS_R}">'
     if date1904:
@@ -100,6 +108,11 @@ def workbook(sheets, date1904=False, defined_names=None):
             else:
                 s += f'<definedName name="{nm}" localSheetId="{local}">{text}</definedName>'
         s += "</definedNames>"
+    if external_refs:
+        s += "<externalReferences>"
+        for rid in external_refs:
+            s += f'<externalReference r:id="{rid}"/>'
+        s += "</externalReferences>"
     s += "</workbook>"
     return s
 
@@ -676,6 +689,97 @@ def gen_09_chart():
     write_zip("09-chart.xlsx", members)
 
 
+def gen_10_extlink():
+    """10: external-workbook link reads (M3, spec §13; the no-network ruling
+    §1.1). The workbook declares ONE <externalReference> (the [1] external
+    book); workbook.xml.rels maps it to xl/externalLinks/externalLink1.xml,
+    whose CACHED snapshot holds the last-known values of a referenced (but NOT
+    embedded) workbook 'budget.xlsx' — sheet 'Sheet1' (A1=42 number, B1='hello'
+    str, A2=TRUE bool, B2=#DIV/0! error) and sheet 'Costs' (C3=3.5).
+
+    Sheet1!A1 of THIS workbook holds the local formula =[1]Sheet1!A1; Excel
+    stores its CACHED result (42) inline in the cell's own <v>, so the cell
+    DISPLAYS 42 with no AST support (the frozen parser never sees the [1]
+    prefix). A2 references the external book too (=[1]Sheet1!B2) with cached
+    #DIV/0!.
+
+    The external-link part's OWN .rels points at the source workbook with
+    TargetMode='External' — a URI we record but NEVER resolve (no network, no
+    file access). Exercises: <externalReferences> parse, externalLink1.xml
+    cached-value parse, the cached-value read, the documented #REF! fallback for
+    an un-cached cell, and round-trip preservation of the OPAQUE externalLink
+    part + its external .rels."""
+    # Local sheet: two formula cells whose CACHED results are stored inline.
+    rows = (
+        '<row r="1">'
+        '<c r="A1" t="n"><f>[1]Sheet1!A1</f><v>42</v></c>'
+        "</row>"
+        '<row r="2">'
+        '<c r="A2" t="e"><f>[1]Sheet1!B2</f><v>#DIV/0!</v></c>'
+        "</row>"
+    )
+    sheet1 = ws("A1:A2", rows)
+
+    # The external-link part: cached sheet names + cached cell values. NO source
+    # workbook is embedded; this inline cache is all we ever read.
+    extlink1 = (
+        XML_DECL
+        + f'<externalLink xmlns="{NS_MAIN}" xmlns:r="{NS_R}">'
+        '<externalBook r:id="rId1">'
+        "<sheetNames>"
+        '<sheetName val="Sheet1"/>'
+        '<sheetName val="Costs"/>'
+        "</sheetNames>"
+        "<sheetDataSet>"
+        '<sheetData sheetId="0">'
+        '<row r="1">'
+        '<cell r="A1"><v>42</v></cell>'
+        '<cell r="B1" t="str"><v>hello</v></cell>'
+        "</row>"
+        '<row r="2">'
+        '<cell r="A2" t="b"><v>1</v></cell>'
+        '<cell r="B2" t="e"><v>#DIV/0!</v></cell>'
+        "</row>"
+        "</sheetData>"
+        '<sheetData sheetId="1">'
+        '<row r="3"><cell r="C3" t="n"><v>3.5</v></cell></row>'
+        "</sheetData>"
+        "</sheetDataSet>"
+        "</externalBook>"
+        "</externalLink>"
+    )
+    # The external-link part's rels: the (never-opened) source workbook, marked
+    # TargetMode="External". We store the URI but never resolve it (§1.1).
+    extlink1_rels = (
+        XML_DECL
+        + f'<Relationships xmlns="{NS_REL}">'
+        f'<Relationship Id="rId1" Type="{RT_EXTLINK_PATH}" '
+        'Target="file:///C:/budgets/budget.xlsx" TargetMode="External"/>'
+        "</Relationships>"
+    )
+
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+            ("/xl/externalLinks/externalLink1.xml", CT_EXTLINK),
+        ])),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook(
+            [("Sheet1", 1, "rId1")],
+            external_refs=["rId2"],
+        )),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+            ("rId2", RT_EXTLINK, "externalLinks/externalLink1.xml"),
+        ])),
+        ("xl/worksheets/sheet1.xml", sheet1),
+        ("xl/externalLinks/externalLink1.xml", extlink1),
+        ("xl/externalLinks/_rels/externalLink1.xml.rels", extlink1_rels),
+    ]
+    write_zip("10-extlink.xlsx", members)
+
+
 def main():
     gen_01_minimal()
     gen_02_formulas()
@@ -686,6 +790,7 @@ def main():
     gen_07_tables()
     gen_08_condfmt()
     gen_09_chart()
+    gen_10_extlink()
 
 
 if __name__ == "__main__":

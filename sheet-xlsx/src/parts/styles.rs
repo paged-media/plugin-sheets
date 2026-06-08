@@ -241,6 +241,16 @@ pub struct ParsedStyles {
     /// bold/italic + an explicit font/fill colour. Empty when the workbook
     /// has no conditional formatting (or no `<dxfs>`).
     pub dxfs: Vec<VisualStyle>,
+    /// A workbook display locale DERIVED from the styles' custom number-format
+    /// codes (ruling `sheet.format.locale.locale-from-workbook`). OOXML carries
+    /// no document-level locale element, so the only RELIABLE in-file signal is
+    /// a `[$<symbol>-<LCID>]` token on a custom `numFmt` (an authoring app emits
+    /// `[$-407]` for a German number format). The FIRST custom format code that
+    /// declares a non-en locale wins; `None` when no code carries one — the
+    /// caller then keeps the default [`sheet_core::Locale::EnUs`] (the honest
+    /// fallback: most xlsx do NOT carry a clear document locale; it is set via
+    /// the model/host, not auto-detected). Never overrides a non-en hint with en.
+    pub workbook_locale: Option<sheet_core::Locale>,
 }
 
 /// Parse `styles.xml`, interning each `cellXfs` entry into `styles` AND
@@ -248,6 +258,25 @@ pub struct ParsedStyles {
 /// sub-tables.
 pub fn parse(xml: &[u8], styles: &mut StyleTable) -> Result<ParsedStyles, XlsxError> {
     let parsed = parse_raw(xml)?;
+
+    // Derive the workbook display locale from the FIRST custom numFmt code that
+    // carries a `[$…-LCID]` token resolving to a non-en locale (ruling
+    // `sheet.format.locale.locale-from-workbook`). `compile` is the single
+    // source of the `[$…-LCID]` grammar (no re-implementation here). Scan in a
+    // stable order (the BTreeMap iterates by numFmtId) so the choice is
+    // deterministic. en-US is NOT recorded as a hint (it is the default; a bare
+    // `[$-409]` should not "lock" the workbook to en over a later de code).
+    let mut workbook_locale: Option<sheet_core::Locale> = None;
+    for code in parsed.custom_fmts.values() {
+        if let Ok(compiled) = sheet_format::compile(code) {
+            if let Some(loc) = compiled.locale {
+                if loc != sheet_core::Locale::EnUs {
+                    workbook_locale = Some(loc);
+                    break;
+                }
+            }
+        }
+    }
 
     let mut xf_to_style = Vec::with_capacity(parsed.xfs.len());
     let mut visual = VisualStyles::default();
@@ -289,6 +318,7 @@ pub fn parse(xml: &[u8], styles: &mut StyleTable) -> Result<ParsedStyles, XlsxEr
         xf_to_style,
         visual,
         dxfs,
+        workbook_locale,
     })
 }
 
@@ -776,6 +806,41 @@ mod tests {
         assert_eq!(normalize_rgb("ffff0000").as_deref(), Some("#FF0000"));
         assert_eq!(normalize_rgb("nothex!!").as_deref(), None);
         assert_eq!(normalize_rgb("FFF").as_deref(), None);
+    }
+
+    #[test]
+    fn sheet_format_locale_from_workbook_numfmt_token() {
+        // A custom numFmt carrying a [$-407] de-DE locale token sets the
+        // derived workbook locale (ruling sheet.format.locale.locale-from-workbook).
+        let xml = br#"<?xml version="1.0"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1">
+    <numFmt numFmtId="164" formatCode="[$-407]#,##0.00"/>
+  </numFmts>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>
+</styleSheet>"#;
+        let mut st = StyleTable::new();
+        let p = parse(xml, &mut st).unwrap();
+        assert_eq!(p.workbook_locale, Some(sheet_core::Locale::DeDe));
+    }
+
+    #[test]
+    fn sheet_format_locale_from_workbook_no_hint_defaults_en() {
+        // No [$…-LCID] token anywhere → no hint (caller keeps Locale::EnUs).
+        // A bare [$-409] (en-US) is NOT recorded as a hint either.
+        let xml = br#"<?xml version="1.0"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="2">
+    <numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/>
+    <numFmt numFmtId="165" formatCode="[$-409]0.00"/>
+  </numFmts>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>
+</styleSheet>"#;
+        let mut st = StyleTable::new();
+        let p = parse(xml, &mut st).unwrap();
+        assert_eq!(p.workbook_locale, None);
     }
 
     #[test]

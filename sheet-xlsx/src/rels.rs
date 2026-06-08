@@ -40,6 +40,11 @@ pub const REL_DRAWING: &str = "/drawing";
 /// A drawing → chart-part relationship (`xl/charts/chartN.xml`, the DrawingML
 /// chart; ECMA-376 §21.2). One per `<c:chart>` graphic frame in the drawing.
 pub const REL_CHART: &str = "/chart";
+/// A workbook → external-link-part relationship
+/// (`xl/externalLinks/externalLinkN.xml`, ECMA-376 §18.14). One per
+/// `<externalReference>`; carries the CACHED values of a referenced external
+/// workbook (M3 external-link reads, spec §13; the no-network ruling §1.1).
+pub const REL_EXTERNAL_LINK: &str = "/externalLink";
 
 /// One `<Relationship>` row.
 #[derive(Debug, Clone)]
