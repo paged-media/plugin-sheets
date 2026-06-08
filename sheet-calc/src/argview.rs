@@ -106,6 +106,47 @@ pub fn materialize_range(model: &SheetModel, range: RangeRef) -> RangeBuf {
     }
 }
 
+/// Materialize a range like [`materialize_range`], but MASK each cell for which
+/// `mask` returns `true` to [`CellValue::Empty`]. Used by SUBTOTAL / AGGREGATE
+/// to EXCLUDE cells that are themselves nested SUBTOTAL/AGGREGATE results
+/// (ECMA-376 §18.17.7 — a SUBTOTAL never re-aggregates another SUBTOTAL inside
+/// its range). A masked cell reads as blank, so every inner aggregate skips it
+/// (value aggregates and COUNTA alike — `scan_refs` treats `Empty` as blank).
+/// `mask` is called with the cell's absolute [`CellRef`]; the geometry is still
+/// the FULL requested range (the kernel's row/col expectations are unchanged).
+pub fn materialize_range_masked(
+    model: &SheetModel,
+    range: RangeRef,
+    mask: &mut dyn FnMut(CellRef) -> bool,
+) -> RangeBuf {
+    let n = range.normalized();
+    let rows = n.rows();
+    let cols = n.cols();
+    let mut cells = Vec::with_capacity(rows.saturating_mul(cols) as usize);
+    for r in n.start.row..=n.end.row {
+        for c in n.start.col..=n.end.col {
+            let cell = CellRef {
+                sheet: n.start.sheet,
+                row: r,
+                col: c,
+                row_abs: false,
+                col_abs: false,
+            };
+            cells.push(if mask(cell) {
+                CellValue::Empty
+            } else {
+                cell_value(model, cell)
+            });
+        }
+    }
+    RangeBuf {
+        origin: n.start,
+        rows,
+        cols,
+        cells,
+    }
+}
+
 /// Materialize a single cell as a 1×1 [`RangeBuf`] carrying its origin — used
 /// for `ref_args` functions (`ROW`/`COLUMN`) handed a bare cell reference: the
 /// kernel needs the *reference*, not the value.

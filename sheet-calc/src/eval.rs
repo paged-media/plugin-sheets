@@ -493,6 +493,39 @@ enum ArgPlan {
     BufAt(usize),
 }
 
+/// Whether `fid` is SUBTOTAL or AGGREGATE — the two aggregation functions that
+/// EXCLUDE nested SUBTOTAL/AGGREGATE results from their ranges (ECMA-376
+/// §18.17.7). The evaluator masks those cells at range materialization
+/// (`plan_args`) so the pure kernels never double-count them.
+fn is_subtotal_family(fid: FuncId) -> bool {
+    matches!(sheet_core::funcs::meta(fid).name, "SUBTOTAL" | "AGGREGATE")
+}
+
+/// True when the cell at `cell` holds a formula whose ROOT call is itself a
+/// SUBTOTAL or AGGREGATE — i.e. the cell IS a subtotal result, which an OUTER
+/// SUBTOTAL/AGGREGATE must skip (the Excel nested-exclusion rule:
+/// `SUBTOTAL(9, A1:A6)` where `A6 = SUBTOTAL(9, A1:A5)` sums A1:A5 ONCE, not
+/// twice). Only the direct root is matched (the standard `=SUBTOTAL(...)`
+/// total-row shape); a SUBTOTAL buried inside a larger expression
+/// (`=SUBTOTAL(...)+1`) is NOT treated as a subtotal result, matching Excel's
+/// documented behaviour. Reads the cell's stored formula by address — the same
+/// model door `ISFORMULA` / `FORMULATEXT` use.
+fn cell_is_subtotal_result(model: &SheetModel, cell: CellRef) -> bool {
+    let Some(ws) = model.sheet(cell.sheet) else {
+        return false;
+    };
+    let Some(c) = ws.cell(cell.row, cell.col) else {
+        return false;
+    };
+    let Some(fid) = c.formula else {
+        return false;
+    };
+    let Some(f) = model.formula(fid) else {
+        return false;
+    };
+    matches!(&f.root, Expr::Func(ffid, _) if is_subtotal_family(*ffid))
+}
+
 /// Materialize a call's arguments into the owned [`RangeBuf`] backings plus a
 /// parallel [`ArgPlan`] list. Shared by [`eval_func`] and [`eval_func_rich`] so
 /// the scalar and array doors build their `&[Arg]` slice identically. The caller
@@ -508,17 +541,39 @@ fn plan_args(
     let mut bufs: Vec<RangeBuf> = Vec::new();
     let mut plans: Vec<ArgPlan> = Vec::with_capacity(args.len());
 
+    // SUBTOTAL / AGGREGATE EXCLUDE nested SUBTOTAL/AGGREGATE results from their
+    // ranges (ECMA-376 §18.17.7). We mask those cells to blank HERE — at range
+    // materialization, where the evaluator holds the model — so the pure
+    // kernels stay pure (they just see blanks, which every inner aggregate
+    // already skips). FINDING 3: pre-fix the kernel saw plain values and
+    // double-counted nested subtotals (the only flagged scope limit that
+    // returned a confidently-wrong scalar — `SUBTOTAL(9,A1:A6)` with a nested
+    // A6 gave 30 instead of 15).
+    let exclude_subtotals = is_subtotal_family(fid);
+    // Materialize a range, masking nested subtotal cells iff this is a
+    // SUBTOTAL/AGGREGATE call. (A non-subtotal caller never pays the per-cell
+    // formula lookup.)
+    let materialize = |model: &SheetModel, r: RangeRef| -> RangeBuf {
+        if exclude_subtotals {
+            argview::materialize_range_masked(model, r, &mut |cell| {
+                cell_is_subtotal_result(model, cell)
+            })
+        } else {
+            argview::materialize_range(model, r)
+        }
+    };
+
     for arg in args {
         match arg {
             Expr::Range(r) => {
                 let resolved = resolve_range_for_arg(model, *r);
-                bufs.push(argview::materialize_range(model, resolved));
+                bufs.push(materialize(model, resolved));
                 plans.push(ArgPlan::BufAt(bufs.len() - 1));
             }
             // A defined-name that targets a range materializes as a range arg.
             Expr::Name(nid) => match name_range_target(model, *nid) {
                 Some(r) => {
-                    bufs.push(argview::materialize_range(model, r));
+                    bufs.push(materialize(model, r));
                     plans.push(ArgPlan::BufAt(bufs.len() - 1));
                 }
                 None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
@@ -528,7 +583,7 @@ fn plan_args(
             // live region the anchor read degrades to its scalar value.
             Expr::SpillRef(inner) => match spill_ref_range(spills, inner) {
                 Some(rect) => {
-                    bufs.push(argview::materialize_range(model, spill_rect_to_range(rect)));
+                    bufs.push(materialize(model, spill_rect_to_range(rect)));
                     plans.push(ArgPlan::BufAt(bufs.len() - 1));
                 }
                 None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
@@ -539,7 +594,7 @@ fn plan_args(
             // column degrades to the scalar `#REF!`/`#NAME?` the eval path emits.
             Expr::StructuredRef(s) => match resolve_structured_ref(model, s, ctx) {
                 Ok(r) => {
-                    bufs.push(argview::materialize_range(model, r));
+                    bufs.push(materialize(model, r));
                     plans.push(ArgPlan::BufAt(bufs.len() - 1));
                 }
                 Err(e) => plans.push(ArgPlan::Scalar(CellValue::Error(e))),
@@ -550,6 +605,19 @@ fn plan_args(
                 bufs.push(argview::materialize_ref_1x1(model, *r));
                 plans.push(ArgPlan::BufAt(bufs.len() - 1));
             }
+            // SUBTOTAL/AGGREGATE: a bare single-cell ref that IS a nested
+            // subtotal result is excluded too (not just cells inside a range
+            // arg). Mask it to blank so the kernel skips it; otherwise it reads
+            // as its scalar value. (FINDING 3 — `SUBTOTAL(9, A1:A3, A7)` with
+            // `A7 = SUBTOTAL(...)` excludes A7.)
+            Expr::Ref(r) if exclude_subtotals => {
+                let v = if cell_is_subtotal_result(model, *r) {
+                    CellValue::Empty
+                } else {
+                    argview::cell_value(model, *r)
+                };
+                plans.push(ArgPlan::Scalar(v));
+            }
             // A reference-returning special form (OFFSET/INDIRECT) as an
             // argument materializes its RESOLVED range, so a range-aware outer
             // function (`SUM(OFFSET(A1,0,0,3,1))`) sees the whole area, not just
@@ -558,7 +626,7 @@ fn plan_args(
             Expr::Func(ffid, _) if sheet_core::funcs::meta(*ffid).special_form => {
                 match eval_as_ref(model, arg, ctx, spills) {
                     Some(r) => {
-                        bufs.push(argview::materialize_range(model, r));
+                        bufs.push(materialize(model, r));
                         plans.push(ArgPlan::BufAt(bufs.len() - 1));
                     }
                     None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),

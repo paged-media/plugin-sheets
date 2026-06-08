@@ -55,7 +55,7 @@
 
 use crate::error::XlsxError;
 use crate::opc::attr;
-use crate::parts::styles::VisualStyle;
+use crate::parts::styles::{indexed_color, theme_color, VisualStyle};
 use sheet_core::parse_a1;
 
 /// The comparison operator of a `cellIs` rule (ECMA-376 §18.18.15
@@ -115,8 +115,13 @@ pub struct CfValueObject {
 pub struct ColorScale {
     /// The value objects (domain endpoints), in order (low → high).
     pub cfvos: Vec<CfValueObject>,
-    /// The colour at each stop (`#RRGGBB`), index-aligned with `cfvos`.
-    pub colors: Vec<String>,
+    /// The colour at each stop, INDEX-ALIGNED with `cfvos` (one entry per
+    /// `<color>` element). `Some("#RRGGBB")` is a resolved colour; `None` is a
+    /// stop whose colour could not be resolved to a fixed RGB (an unmapped
+    /// `theme`/`indexed`, an `auto`/empty colour) — kept as a placeholder so
+    /// the alignment with `cfvos` is preserved (FINDING 2). The lowering maps
+    /// a `None` to a documented default.
+    pub colors: Vec<Option<String>>,
 }
 
 /// A data-bar rule: min/max value objects + the bar colour.
@@ -268,6 +273,11 @@ impl ColorScale {
     /// from the range domain in the lowering). Mismatched cfvo/colour counts
     /// pair up to the shorter length (a defensive, lossless truncation).
     fn to_lower(&self) -> sheet_lower::ColorScale {
+        // `cfvos` and `colors` are kept INDEX-ALIGNED at parse time (one color
+        // entry per `<color>`, `None` for an unresolved stop — FINDING 2), so
+        // the positional zip is now sound. A `None` colour (an unmapped
+        // theme/indexed slot, or auto/empty) falls back to black `#000000`
+        // (the documented default — `parse_hex_rgb`'s own malformed floor).
         let stops = self
             .cfvos
             .iter()
@@ -276,7 +286,7 @@ impl ColorScale {
                 // Only an explicit numeric endpoint (`type="num" val=N`) is an
                 // absolute value; `min`/`max`/`percent`/… derive from the range.
                 value: if cfvo.kind == "num" { cfvo.val } else { None },
-                rgb: parse_hex_rgb(color),
+                rgb: parse_hex_rgb(color.as_deref().unwrap_or("#000000")),
             })
             .collect();
         sheet_lower::ColorScale { stops }
@@ -363,9 +373,12 @@ pub fn parse_block(xml: &[u8]) -> Result<Option<CfBlock>, XlsxError> {
                 }
                 b"color" => {
                     if let Some(c) = cur.as_mut() {
-                        if let Some(rgb) = read_rgb(&e)? {
-                            c.colors.push(rgb);
-                        }
+                        // FINDING 2 — push ONE entry per `<color>` element
+                        // (even when it doesn't resolve to a fixed RGB), so
+                        // `colors` stays index-aligned with `cfvos`. A theme/
+                        // indexed colour now resolves; an unresolved one is a
+                        // `None` placeholder, never a dropped stop.
+                        c.colors.push(read_rgb(&e)?);
                     }
                 }
                 _ => {}
@@ -426,7 +439,10 @@ struct RuleAccum {
     dxf_id: Option<u32>,
     formulas: Vec<String>,
     cfvos: Vec<CfValueObject>,
-    colors: Vec<String>,
+    /// One entry per `<color>` element, index-aligned with `cfvos`. `None` is
+    /// a stop whose colour did not resolve to a fixed RGB (FINDING 2 — kept as
+    /// a placeholder so the cfvo↔color alignment survives).
+    colors: Vec<Option<String>>,
 }
 
 impl RuleAccum {
@@ -469,7 +485,9 @@ impl RuleAccum {
             }),
             "dataBar" => CfRuleKind::DataBar(DataBar {
                 cfvos: self.cfvos,
-                color: self.colors.into_iter().next(),
+                // The single bar colour (first `<color>`); flatten the
+                // placeholder `Option` (a data bar's colour is itself optional).
+                color: self.colors.into_iter().next().flatten(),
             }),
             "iconSet" => CfRuleKind::IconSet,
             _ => CfRuleKind::Preserved,
@@ -559,25 +577,46 @@ fn parse_one_range(tok: &str) -> Option<(u32, u32, u32, u32)> {
     }
 }
 
-/// Read a `<color rgb=.. />` element's colour to `#RRGGBB`, dropping the alpha
-/// byte; `None` if absent / not a hex colour. (Conditional-format colours in
-/// scales/bars are written as explicit `rgb`; `theme`/`indexed` fall through —
-/// the colour stop is then dropped, documented.)
+/// Resolve a `<color>` element's colour to `#RRGGBB`, or `None` when no fixed
+/// RGB is resolvable. Handles ALL the attribute forms a colour-scale stop can
+/// carry — explicit `rgb=` (alpha byte dropped), legacy `indexed=` (the
+/// ECMA-376 §18.8.27 palette, reused from `styles`), and `theme=` (the
+/// best-effort Office-default mapping in `styles::theme_color`). A `theme`
+/// slot beyond the mapped set, an `auto`/empty colour, or a malformed hex all
+/// resolve to `None`.
+///
+/// FINDING 2 — `read_rgb` used to read ONLY `rgb=`; a `theme`/`indexed` stop
+/// returned `None` and (combined with a push-only-on-`Some` caller) was
+/// DROPPED, which then misaligned the positional `cfvo`↔`color` zip in
+/// `ColorScale::to_lower` (every later stop got the wrong colour, the last
+/// vanished). The caller now ALWAYS pushes one entry per `<color>` so the
+/// `cfvos`/`colors` vecs stay index-aligned even when this returns `None`.
 fn read_rgb(e: &quick_xml::events::BytesStart<'_>) -> Result<Option<String>, XlsxError> {
-    let Some(rgb) = attr(e, b"rgb")? else {
-        return Ok(None);
-    };
-    let hex = rgb.trim();
-    let body = match hex.len() {
-        8 => &hex[2..],
-        6 => hex,
-        _ => return Ok(None),
-    };
-    if body.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(Some(format!("#{}", body.to_ascii_uppercase())))
-    } else {
-        Ok(None)
+    if let Some(rgb) = attr(e, b"rgb")? {
+        let hex = rgb.trim();
+        let body = match hex.len() {
+            8 => &hex[2..],
+            6 => hex,
+            _ => return Ok(None),
+        };
+        return Ok(if body.chars().all(|c| c.is_ascii_hexdigit()) {
+            Some(format!("#{}", body.to_ascii_uppercase()))
+        } else {
+            None
+        });
     }
+    if let Some(indexed) = attr(e, b"indexed")? {
+        if let Ok(i) = indexed.trim().parse::<u32>() {
+            return Ok(indexed_color(i).map(str::to_owned));
+        }
+    }
+    if let Some(theme) = attr(e, b"theme")? {
+        if let Ok(t) = theme.trim().parse::<u32>() {
+            return Ok(theme_color(t).map(str::to_owned));
+        }
+    }
+    // `auto="1"` or an empty <color/> → no fixed colour.
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -673,7 +712,10 @@ mod tests {
             CfRuleKind::ColorScale(cs) => {
                 assert_eq!(cs.cfvos.len(), 2);
                 assert_eq!(cs.cfvos[0].kind, "min");
-                assert_eq!(cs.colors, vec!["#FFFFFF", "#FF0000"]);
+                assert_eq!(
+                    cs.colors,
+                    vec![Some("#FFFFFF".to_string()), Some("#FF0000".to_string())]
+                );
             }
             other => panic!("expected ColorScale, got {other:?}"),
         }
@@ -698,6 +740,83 @@ mod tests {
             }
             other => panic!("expected ColorScale, got {other:?}"),
         }
+    }
+
+    /// FINDING 2 regression — a 3-colour scale whose MIDDLE stop is a `theme`
+    /// colour (no `rgb=`). Pre-fix `read_rgb` returned `None` for it and the
+    /// push-only-on-`Some` caller DROPPED it, so `colors` had 2 entries against
+    /// 3 cfvos and the positional zip in `to_lower` misaligned (the middle stop
+    /// got the LAST colour and the last stop vanished). The parser must keep one
+    /// colour entry per `<color>` (resolving the theme/indexed where it can) so
+    /// the alignment survives.
+    #[test]
+    fn sheet_lower_condfmt_colorscale_theme_indexed_stops_align() {
+        // theme="4" is the Office accent1 blue (#4472C4); indexed="2" is red
+        // (#FF0000) from the legacy palette. Both lack `rgb=`.
+        let xml = br#"<conditionalFormatting sqref="D1:D9">
+  <cfRule type="colorScale" priority="1">
+    <colorScale>
+      <cfvo type="num" val="0"/><cfvo type="num" val="50"/><cfvo type="num" val="100"/>
+      <color rgb="FFF8696B"/><color theme="4"/><color indexed="2"/>
+    </colorScale>
+  </cfRule>
+</conditionalFormatting>"#;
+        let block = parse_block(xml).unwrap().unwrap();
+        let cs = match &block.rules[0].kind {
+            CfRuleKind::ColorScale(cs) => cs,
+            other => panic!("expected ColorScale, got {other:?}"),
+        };
+        // ONE colour entry per cfvo — the alignment invariant.
+        assert_eq!(cs.cfvos.len(), 3);
+        assert_eq!(cs.colors.len(), 3, "one colour per cfvo (no dropped stop)");
+        // The theme + indexed stops resolved (not dropped, not None).
+        assert_eq!(
+            cs.colors,
+            vec![
+                Some("#F8696B".to_string()), // explicit rgb (alpha stripped)
+                Some("#4472C4".to_string()), // theme=4 → accent1 blue
+                Some("#FF0000".to_string()), // indexed=2 → red
+            ]
+        );
+
+        // The lowered stops stay correctly paired (the bug surfaced HERE — a
+        // misaligned zip put the wrong colour on each stop).
+        let lowered = cs.to_lower();
+        assert_eq!(lowered.stops.len(), 3);
+        assert_eq!(lowered.stops[0].rgb, (0xF8, 0x69, 0x6B));
+        assert_eq!(lowered.stops[1].rgb, (0x44, 0x72, 0xC4));
+        assert_eq!(lowered.stops[2].rgb, (0xFF, 0x00, 0x00));
+        assert_eq!(lowered.stops[1].value, Some(50.0));
+    }
+
+    /// FINDING 2 — an UNRESOLVABLE stop (a theme slot past the mapped set) is
+    /// kept as a `None` PLACEHOLDER, not dropped, so later stops stay aligned;
+    /// the lowering falls back to the documented `#000000` default for it.
+    #[test]
+    fn sheet_lower_condfmt_colorscale_unresolved_stop_holds_alignment() {
+        // theme="9" is past the mapped Office slots → unresolved.
+        let xml = br#"<conditionalFormatting sqref="E1:E9">
+  <cfRule type="colorScale" priority="1">
+    <colorScale>
+      <cfvo type="num" val="0"/><cfvo type="num" val="50"/><cfvo type="num" val="100"/>
+      <color rgb="FF00FF00"/><color theme="9"/><color rgb="FF0000FF"/>
+    </colorScale>
+  </cfRule>
+</conditionalFormatting>"#;
+        let block = parse_block(xml).unwrap().unwrap();
+        let cs = match &block.rules[0].kind {
+            CfRuleKind::ColorScale(cs) => cs,
+            other => panic!("expected ColorScale, got {other:?}"),
+        };
+        assert_eq!(cs.colors.len(), 3, "unresolved stop kept as placeholder");
+        assert_eq!(cs.colors[1], None);
+        // The THIRD stop still gets its own blue (not shifted up onto stop 2).
+        assert_eq!(cs.colors[2], Some("#0000FF".to_string()));
+
+        let lowered = cs.to_lower();
+        assert_eq!(lowered.stops[0].rgb, (0x00, 0xFF, 0x00)); // green
+        assert_eq!(lowered.stops[1].rgb, (0x00, 0x00, 0x00)); // None → #000000
+        assert_eq!(lowered.stops[2].rgb, (0x00, 0x00, 0xFF)); // blue, aligned
     }
 
     #[test]

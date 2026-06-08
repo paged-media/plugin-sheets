@@ -23,8 +23,40 @@
 // insertTextFrame in the batch and its string rides out in `texts` for the
 // caller to pour (insertText) once it resolves the new frames' stories —
 // exactly the resolve-the-created-element door the sheet lower uses.
+//
+// COLOUR (spec §8.4 swatch-coherence). The geometry IR carries each
+// primitive's fill/stroke as a `#RRGGBB` literal (the palette + the
+// pie-slice distinction). The host's `frameFillColor`/`frameStrokeColor`
+// take a `Value::ColorRef` — a `Color/<id>` SWATCH reference, NOT inline
+// hex (verified against core: `paged-mutate` stores the ref string and the
+// CMM resolves it through the document's swatch table; IDML FillColor is a
+// reference, the FillStrokeCluster precedent). So colours can't ride inline.
+// We therefore (1) mint ONE document swatch per DISTINCT chart colour
+// (createSwatch, RGB space, 0..255 channels — the IDML convention, core
+// graphic.rs `v/255.0`) at a DETERMINISTIC id derived from the hex, then
+// (2) reference that swatch id on each path via setElementProperty. This is
+// the path the wire actually supports AND it advances swatch-coherence
+// (§8.4): the chart's colours become real, named, round-trippable document
+// swatches a designer can see and re-use, not anonymous one-off fills.
+//
+// The per-element targeting uses the SAME protocol-v34 `$created` sentinel
+// the binding uses: a setElementProperty whose elementId is `$created`
+// resolves to the element minted by the MOST-RECENT creating child of the
+// batch (core model.rs). So each path's style ops are emitted IMMEDIATELY
+// after its insertPath, while `$created` still points at it. (createSwatch
+// is NOT a "creating child" — core `created_element_id` only counts
+// InsertNode/CreateGroup — so the swatch ops can sit first without
+// disturbing the sentinel.) The binding rides the FIRST created element, so
+// it is emitted right after that element's own style ops, before the next
+// create shifts the sentinel.
 
-import type { Mutation, PageId } from "@paged-media/plugin-api";
+import type {
+  ElementId,
+  Mutation,
+  PageId,
+  SwatchSpec,
+  Value,
+} from "@paged-media/plugin-api";
 
 import { BINDING_KEY, type Binding } from "./binding";
 
@@ -217,6 +249,150 @@ function rectRing(r: RectPrim): [number, number][] {
   ];
 }
 
+// ── Colour → document swatch (spec §8.4 swatch-coherence) ────────────────────
+
+/** The `$created` sentinel as a polygon element id — an insertPath mints a
+ *  polygon node, so its fill/stroke/binding address it through this. The host
+ *  resolves `$created` to the most-recent creating child of the batch. */
+const CREATED_POLYGON: ElementId = { kind: "polygon", id: "$created" };
+
+/** Normalise a `#RGB` / `#RRGGBB` (case-insensitive) hex to the canonical
+ *  uppercase 6-digit form WITHOUT the leading `#`, or `null` if it is not a
+ *  well-formed hex colour (a defensive guard — a malformed colour degrades to
+ *  "no swatch", never crashes the lower). 3-digit shorthand expands per CSS
+ *  (`#abc` → `AABBCC`). */
+function normalizeHex(hex: string): string | null {
+  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return null;
+  let body = m[1];
+  if (body.length === 3) {
+    body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
+  }
+  return body.toUpperCase();
+}
+
+/** The deterministic document-swatch id for a chart colour. Keyed by the
+ *  canonical hex so the SAME colour across primitives (and across re-lowers)
+ *  reuses ONE swatch — the §8.4 coherence property. The `u`-prefixed local
+ *  part follows the `Color/u<...>` minted-id convention; the hex makes it
+ *  stable + human-recognisable in the Swatches panel. */
+function swatchIdForHex(canonHex: string): string {
+  return `Color/uPagedSheetChart${canonHex}`;
+}
+
+/** RGB channel triple (0..255) from a canonical 6-digit hex body. */
+function rgb255(canonHex: string): [number, number, number] {
+  return [
+    parseInt(canonHex.slice(0, 2), 16),
+    parseInt(canonHex.slice(2, 4), 16),
+    parseInt(canonHex.slice(4, 6), 16),
+  ];
+}
+
+/** A `frameFillColor` / `frameStrokeColor` colorRef Value over a swatch id. */
+function colorRefValue(swatchId: string): Value {
+  return { type: "colorRef", value: swatchId };
+}
+
+/** Collect the DISTINCT chart colours (fills + strokes) across the geometry,
+ *  in first-appearance order, as canonical hex bodies. Deterministic. */
+function distinctColors(geom: ChartGeometry): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (c: string | null) => {
+    if (c == null) return;
+    const h = normalizeHex(c);
+    if (h == null || seen.has(h)) return;
+    seen.add(h);
+    out.push(h);
+  };
+  for (const prim of geom.prims) {
+    switch (prim.kind) {
+      case "rect":
+        add(prim.fill);
+        add(prim.stroke);
+        break;
+      case "line":
+        add(prim.stroke);
+        break;
+      case "polygon":
+        add(prim.fill);
+        add(prim.stroke);
+        break;
+      case "wedge":
+        add(prim.fill);
+        add(prim.stroke);
+        break;
+      // text carries no fill/stroke colour in the IR.
+    }
+  }
+  return out;
+}
+
+/** The createSwatch ops for every distinct chart colour — RGB process
+ *  swatches at deterministic ids, 0..255 channels (IDML convention). Emitted
+ *  FIRST in the batch; they are not "creating children" so they don't move
+ *  the `$created` sentinel. */
+function swatchOps(geom: ChartGeometry): Mutation[] {
+  return distinctColors(geom).map((canonHex) => {
+    const [r, g, b] = rgb255(canonHex);
+    const spec: SwatchSpec = {
+      selfId: swatchIdForHex(canonHex),
+      name: `paged.sheet chart ${canonHex}`,
+      space: "RGB",
+      value: [r, g, b],
+      model: "Process",
+    };
+    return { op: "createSwatch", args: { spec } };
+  });
+}
+
+/** The fill/stroke/stroke-weight style ops for a just-created path (addressed
+ *  through `$created`). Order is fill → stroke colour → stroke weight; a
+ *  null/malformed colour emits nothing (it falls back to the document
+ *  default, never a wrong colour). `strokeW` rides only when there IS a
+ *  stroke (a 0-weight stroke is no stroke). */
+function styleOps(
+  fill: string | null,
+  stroke: string | null,
+  strokeW: number,
+): Mutation[] {
+  const ops: Mutation[] = [];
+  const fillHex = fill == null ? null : normalizeHex(fill);
+  if (fillHex != null) {
+    ops.push({
+      op: "setElementProperty",
+      args: {
+        elementId: CREATED_POLYGON,
+        path: "frameFillColor",
+        value: colorRefValue(swatchIdForHex(fillHex)),
+      },
+    });
+  }
+  const strokeHex = stroke == null ? null : normalizeHex(stroke);
+  if (strokeHex != null) {
+    ops.push({
+      op: "setElementProperty",
+      args: {
+        elementId: CREATED_POLYGON,
+        path: "frameStrokeColor",
+        value: colorRefValue(swatchIdForHex(strokeHex)),
+      },
+    });
+    if (strokeW > 0) {
+      ops.push({
+        op: "setElementProperty",
+        args: {
+          elementId: CREATED_POLYGON,
+          path: "frameStrokeWeight",
+          value: { type: "length", value: strokeW },
+        },
+      });
+    }
+  }
+  return ops;
+}
+
 // ── The translator ──────────────────────────────────────────────────────────
 
 /**
@@ -225,16 +401,20 @@ function rectRing(r: RectPrim): [number, number][] {
  * host import beyond wire TYPES, no chart semantics (the geometry was already
  * decided in Rust). Deterministic — same geometry => same mutations.
  *
- * The batch emits, in geometry order:
- *  - rect      → insertPath (closed 4-corner ring),
- *  - line      → insertPath (open polyline),
- *  - polygon   → insertPath (closed ring),
+ * The batch emits, in order:
+ *  - one createSwatch per DISTINCT chart colour (first, swatch-coherence),
+ * then in geometry order:
+ *  - rect      → insertPath (closed 4-corner ring) + fill/stroke style ops,
+ *  - line      → insertPath (open polyline) + stroke style ops,
+ *  - polygon   → insertPath (closed ring) + fill/stroke style ops,
  *  - wedge     → insertPath (closed center+arc ring; a full disc omits the
- *                center), and
+ *                center) + fill/stroke style ops, and
  *  - text      → insertTextFrame (a 1-line box at the label anchor),
- * then a setPluginMetadata writing the binding onto the FIRST created element
+ * with a setPluginMetadata writing the binding onto the FIRST created element
  * (the `$created` sentinel) so ONE undo removes the whole chart + its binding.
- * Each text's string + anchor rides out in `texts` (phase-2 pour order).
+ * Each colour-bearing path's fill/stroke style ops are emitted IMMEDIATELY
+ * after its insertPath, so each `$created` resolves to its own element. Each
+ * text's string + anchor rides out in `texts` (phase-2 pour order).
  */
 export function chartGeometryToMutations(
   geom: ChartGeometry,
@@ -244,28 +424,64 @@ export function chartGeometryToMutations(
   const { pageId, bounds } = placement;
   const [top, left] = bounds;
 
-  const ops: Mutation[] = [];
+  // (0) The colour swatches — minted once per distinct colour, FIRST so the
+  // per-path frameFillColor/frameStrokeColor refs resolve. Not creating
+  // children, so they leave the `$created` sentinel untouched.
+  const ops: Mutation[] = swatchOps(geom);
   const texts: ChartTextLabel[] = [];
+
+  // Whether a page element has been created yet (the binding rides the FIRST
+  // one). `bound` flips true the moment we emit the binding so later creates
+  // don't re-bind. `firstKind` records what the first created node IS so the
+  // binding's `$created` placeholder carries the matching element kind.
+  let bound = false;
+
+  /** Append a created path/frame's style ops, then — if this is the FIRST
+   *  created element — the binding (while `$created` still points at it). */
+  const afterCreate = (kind: "polygon" | "textFrame", styles: Mutation[]) => {
+    ops.push(...styles);
+    if (!bound) {
+      bound = true;
+      ops.push({
+        op: "setPluginMetadata",
+        args: {
+          elementId: { kind, id: "$created" },
+          key: BINDING_KEY,
+          value: JSON.stringify(binding),
+        },
+      });
+    }
+  };
 
   for (const prim of geom.prims) {
     switch (prim.kind) {
       case "rect":
         ops.push(insertPath(pageId, left, top, rectRing(prim), false));
+        afterCreate("polygon", styleOps(prim.fill, prim.stroke, prim.strokeW));
         break;
       case "line":
         if (prim.pts.length >= 2) {
           ops.push(insertPath(pageId, left, top, prim.pts, true));
+          // A polyline has no fill — only the series stroke.
+          afterCreate("polygon", styleOps(null, prim.stroke, prim.strokeW));
         }
         break;
       case "polygon":
         if (prim.pts.length >= 2) {
           ops.push(insertPath(pageId, left, top, prim.pts, false));
+          afterCreate(
+            "polygon",
+            styleOps(prim.fill, prim.stroke, prim.strokeW),
+          );
         }
         break;
       case "wedge": {
         const ring = wedgeRing(prim);
         if (ring.length >= 3) {
           ops.push(insertPath(pageId, left, top, ring, false));
+          // A wedge carries no stroke weight in the IR; a hairline default
+          // applies when a stroke colour is present.
+          afterCreate("polygon", styleOps(prim.fill, prim.stroke, 0));
         }
         break;
       }
@@ -289,6 +505,9 @@ export function chartGeometryToMutations(
           op: "insertTextFrame",
           args: { pageId, bounds: [boxTop, boxLeft, boxTop + h, boxLeft + w] },
         });
+        // A text frame carries no fill/stroke style; it may still be the
+        // FIRST created element (a text-only chart) and thus the binding host.
+        afterCreate("textFrame", []);
         texts.push({
           text: prim.s,
           at: [ax, ay],
@@ -300,40 +519,12 @@ export function chartGeometryToMutations(
     }
   }
 
-  // The binding rides on the FIRST created element (the `$created` sentinel
-  // resolves to the first minted node of the batch). If the chart has NO
-  // primitives there is nothing to bind to — the batch is empty (the caller
-  // skips an empty chart).
-  if (ops.length > 0) {
-    ops.push({
-      op: "setPluginMetadata",
-      args: {
-        elementId: firstCreatedTarget(geom),
-        key: BINDING_KEY,
-        value: JSON.stringify(binding),
-      },
-    });
+  // If NOTHING was created (no primitives, or only degenerate ones) the batch
+  // holds at most the swatch ops with no element to bind to — emit an empty
+  // batch so the caller skips it (an empty chart binds nothing).
+  if (!bound) {
+    return { batch: { op: "batch", args: { ops: [] } }, texts };
   }
 
   return { batch: { op: "batch", args: { ops } }, texts };
-}
-
-/** The `$created` element target for the binding: the FIRST minted node's
- *  kind. A vector primitive mints a `polygon` (insertPath); a text-only chart
- *  (no vectors — e.g. an empty-data title) mints a `textFrame`. The host
- *  resolves `$created` to the just-minted node and the metadata gate verifies
- *  the key is this plugin's namespace (the lower-to-mutations precedent). */
-function firstCreatedTarget(
-  geom: ChartGeometry,
-): { kind: "polygon"; id: string } | { kind: "textFrame"; id: string } {
-  const firstVector = geom.prims.some(
-    (p) =>
-      p.kind === "rect" ||
-      p.kind === "line" ||
-      p.kind === "polygon" ||
-      p.kind === "wedge",
-  );
-  return firstVector
-    ? { kind: "polygon", id: "$created" }
-    : { kind: "textFrame", id: "$created" };
 }

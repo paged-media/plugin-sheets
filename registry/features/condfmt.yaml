@@ -43,12 +43,15 @@
 
 - id: sheet.lower.condfmt.colorscale
   title: "colorScale (2/3-color) -> per-cell fill override (T2: the interpolated color becomes a local fill override)"
-  ruling: "T2: a 2- or 3-color scale lowers to a per-cell fill override computed by interpolating the scale across the range's value domain (spec §8.3 — direct formatting as a constrained local override). min/max cfvo endpoints derive from the range's numeric min/max; `num val` endpoints are absolute; per-channel linear lerp, rounded."
+  ruling: "T2: a 2- or 3-color scale lowers to a per-cell fill override computed by interpolating the scale across the range's value domain (spec §8.3 — direct formatting as a constrained local override). min/max cfvo endpoints derive from the range's numeric min/max; `num val` endpoints are absolute; per-channel linear lerp, rounded. STOP/COLOUR ALIGNMENT (FINDING 2): a `<color>` stop with NO `rgb=` (theme/indexed) resolves via the legacy palette / Office-default theme map (shared with styles.rs); when a stop is still unresolvable it is kept as a `None` PLACEHOLDER (never dropped) so the positional cfvo↔color zip stays aligned, falling back to `#000000` in the lowering. The 08 fixture uses explicit rgb so the misalignment was previously uncaught."
   tier: implemented
   status: implemented
-  provenance: ["ECMA-376 §18.3.1.16 (colorScale)", "spec §8.3, §10.4"]
+  provenance: ["ECMA-376 §18.3.1.16 (colorScale)", "ECMA-376 §18.8.27 (indexed palette)", "spec §8.3, §10.4"]
   tests:
-    rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_colorscale"]
+    rust:
+      - "sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_colorscale"
+      - "sheet-xlsx/src/parts/conditional_format.rs::sheet_lower_condfmt_colorscale_theme_indexed_stops_align"
+      - "sheet-xlsx/src/parts/conditional_format.rs::sheet_lower_condfmt_colorscale_unresolved_stop_holds_alignment"
 
 - id: sheet.lower.condfmt.databar
   title: "dataBar -> a drawn rule/rect (T2: the bar lowers to a drawn rectangle in frame-content coordinates)"

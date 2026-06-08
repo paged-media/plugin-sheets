@@ -19,13 +19,19 @@
 # - AGGREGATE: function_num 1-11 only (AVERAGE/COUNT/COUNTA/MAX/MIN/PRODUCT/
 #   STDEV.S/STDEV.P/SUM/VAR.S/VAR.P); options 0/4 (ignore nothing) and 6 (ignore
 #   error values). function_num 12-19 (MEDIAN/MODE/LARGE/SMALL/PERCENTILE.INC/
-#   QUARTILE.INC and friends) and the hidden-row / nested-subtotal options
-#   (1/2/3/5/7) are NOT interpreted in T2 -> #NUM! (bad function_num) / #VALUE!
-#   (unsupported option). No row visibility reaches the pure kernel.
+#   QUARTILE.INC and friends) and the HIDDEN-ROW options (1/2/3/5/7) are NOT
+#   interpreted in T2 -> #NUM! (bad function_num) / #VALUE! (unsupported
+#   option). No row visibility reaches the pure kernel. NESTED-SUBTOTAL
+#   exclusion IS implemented (eval-side, see SUBTOTAL note) for every option.
 # - SUBTOTAL: function_num 1-11 and 101-111. T2 has no row-visibility metadata
 #   in the pure kernel, so 1-11 and 101-111 compute IDENTICALLY (both include all
-#   cells); nested SUBTOTAL/AGGREGATE results inside a ref are NOT re-excluded
-#   (the pure kernel sees plain values). Documented, not faked.
+#   cells). NESTED SUBTOTAL/AGGREGATE results inside a ref ARE EXCLUDED (FINDING
+#   3, ECMA-376 §18.17.7): a pure kernel can't see precedent formulas, so the
+#   EVALUATOR masks nested-subtotal cells to blank during range materialization
+#   (sheet-calc/eval.rs plan_args, gated on the outer call being
+#   SUBTOTAL/AGGREGATE) before the kernel runs. Only the direct =SUBTOTAL(...)
+#   root counts as a nested result (Excel-matching); a SUBTOTAL buried in a
+#   larger expression does not.
 # - CONVERT: a documented BASIC unit set only — length (m/ft/in/mi/km), mass
 #   (g/kg/lbm), time (s/min/hr/day), temperature (C/F/K). Unknown unit or
 #   mismatched dimension -> #N/A.
@@ -51,9 +57,11 @@
   range_aware: true
   rust: t2misc::subtotal
   status: implemented
-  provenance: ["ECMA-376 §18.17.7 (SUBTOTAL) — function_num (1-11 incl-manual, 101-111 ignore-hidden) then ref(s); nested SUBTOTALs are excluded from the aggregate. T2: no row-visibility metadata in the pure kernel, so 1-11 == 101-111 (ruling in families/t2misc.rs)."]
+  provenance: ["ECMA-376 §18.17.7 (SUBTOTAL) — function_num (1-11 incl-manual, 101-111 ignore-hidden) then ref(s); nested SUBTOTAL/AGGREGATE results are excluded from the aggregate (implemented eval-side, FINDING 3 — sheet-calc/eval.rs masks them at materialization). T2: no row-visibility metadata in the pure kernel, so 1-11 == 101-111 (ruling in families/t2misc.rs)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_subtotal"]
+    rust:
+      - "sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_subtotal"
+      - "sheet-conformance/tests/special_forms.rs::sheet_fn_math_subtotal_excludes_nested"
     corpus: ["corpus/fn-corpus/t2misc/subtotal.golden.tsv"]
 
 - id: sheet.fn.math.roman

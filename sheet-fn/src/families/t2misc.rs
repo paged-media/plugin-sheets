@@ -33,26 +33,42 @@
 //!   `LARGE`, `SMALL`, `PERCENTILE.INC`, `QUARTILE.INC`, `PERCENTILE.EXC`,
 //!   `QUARTILE.EXC`) take a trailing `k`/quantile argument and are **deferred
 //!   in T2** → `#VALUE!`. Any other `function_num` → `#VALUE!` (Excel).
-//! - **`options` 0, 4, or 6** only. `0`/`4` = "ignore nothing" (in the pure
-//!   kernel these are identical: there is no nested-`SUBTOTAL`/`AGGREGATE`
-//!   metadata to ignore). `6` = "ignore error values" (an error cell inside a
-//!   range is skipped rather than propagated). The hidden-row options
-//!   (`1`,`2`,`3`,`5`,`7`) need row-visibility metadata that never reaches a
-//!   pure kernel → `#VALUE!`. (Spec §2: no SDK/model access from a kernel.)
+//! - **`options` 0, 4, or 6** only. `0`/`4` = "ignore nothing" (they are
+//!   identical here — both still EXCLUDE nested `SUBTOTAL`/`AGGREGATE` results,
+//!   which Excel does for every option). `6` = "ignore error values" (an error
+//!   cell inside a range is skipped rather than propagated). The hidden-row
+//!   options (`1`,`2`,`3`,`5`,`7`) need row-visibility metadata that never
+//!   reaches a pure kernel → `#VALUE!`. (Spec §2: no SDK/model access from a
+//!   kernel.)
 //!
 //! Under option `0`/`4`, an error cell anywhere in a `ref` **is** the result
 //! (first error wins, row-major) — exactly the aggregation family's ruling.
 //! Under option `6`, error cells are skipped.
+//!
+//! **Nested-result exclusion (FINDING 3, now implemented eval-side):** like
+//! `SUBTOTAL`, `AGGREGATE` skips cells in its ranges that are themselves
+//! `SUBTOTAL`/`AGGREGATE` results. A pure kernel can't see precedent formulas,
+//! so the evaluator masks those cells to blank during range materialization
+//! (`sheet-calc/eval.rs` `plan_args` → `materialize_range_masked`) BEFORE this
+//! kernel runs — the kernel just sees blanks and skips them.
 //!
 //! ## `SUBTOTAL(function_num, ref1, …)`
 //!
 //! `function_num` 1–11 (include manually-hidden rows) and 101–111 (ignore
 //! manually-hidden rows) — same inner-aggregate mapping as `AGGREGATE` above.
 //! **T2 ruling:** a pure kernel has no row-visibility metadata, so 1–11 and
-//! 101–111 compute **identically** (all cells participate). `SUBTOTAL` also
-//! excludes the results of *nested* `SUBTOTAL` calls inside a `ref`; a pure
-//! kernel sees only plain values, so this exclusion is documented but not
-//! re-derived. An error cell in a `ref` propagates (first error wins).
+//! 101–111 compute **identically** (all cells participate). `SUBTOTAL`
+//! EXCLUDES the results of *nested* `SUBTOTAL`/`AGGREGATE` calls inside a `ref`
+//! (ECMA-376 §18.17.7) — `SUBTOTAL(9, A1:A6)` where `A6 = SUBTOTAL(9, A1:A5)`
+//! sums A1:A5 once, not twice. FINDING 3: a pure kernel can't see precedent
+//! formulas, so this exclusion is done EVAL-SIDE — the evaluator masks nested
+//! subtotal cells to blank during range materialization (`sheet-calc/eval.rs`
+//! `plan_args` → `materialize_range_masked`, gated on the outer call being
+//! SUBTOTAL/AGGREGATE) BEFORE this kernel runs. The kernel stays pure: it just
+//! sees the masked blanks and skips them. (Only the direct `=SUBTOTAL(...)`
+//! root is treated as a nested result, matching Excel; a SUBTOTAL inside a
+//! larger expression is not.) An error cell in a `ref` propagates (first error
+//! wins).
 //!
 //! ## `ROMAN(number, [form])` / `ARABIC(text)`
 //!
@@ -337,8 +353,11 @@ pub fn aggregate(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// `SUBTOTAL(function_num, ref1, …)` (registry `sheet.fn.math.subtotal`).
 /// `function_num` 1–11 (include hidden) and 101–111 (ignore hidden); T2 has no
 /// row-visibility metadata so the two ranges compute identically (module
-/// docs). Errors propagate (first error wins). The leading arg is the
-/// selector; the rest are the refs.
+/// docs). NESTED SUBTOTAL/AGGREGATE cells inside a `ref` are excluded — but
+/// that happens EVAL-SIDE (the evaluator masks them to blank before this kernel
+/// runs; FINDING 3, module docs), so this pure kernel just sees blanks. Errors
+/// propagate (first error wins). The leading arg is the selector; the rest are
+/// the refs.
 pub fn subtotal(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     let raw = match scalar_u32(args.first()) {
         Ok(n) => n,

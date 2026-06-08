@@ -12,9 +12,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "bin");
+import {
+  chartGeometryToMutations,
+  makeBinding,
+  type ChartGeometry,
+} from "@paged-media/sheet-host-model";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BIN = join(HERE, "..", "bin");
 const WASM = join(BIN, "sheet_js_bg.wasm");
 const built = existsSync(WASM);
+const CHART_XLSX = join(HERE, "..", "..", "..", "corpus/xlsx-corpus/09-chart.xlsx");
 
 describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
   it("boots, calculates, lowers, and round-trips xlsx", async () => {
@@ -95,6 +103,74 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
     // nothing.
     expect(e.get_cell_display(5, 0, 0)).toBe("");
     expect(e.list_sheets().length).toBe(1);
+    e.free();
+  });
+
+  // FINDING 1 end-to-end smoke: get_chart_geometry on the real 09-chart
+  // workbook, lower it through chartGeometryToMutations, and prove the chart's
+  // FILL/STROKE colours now ride out as document swatches + frame colour refs
+  // (pre-fix the whole palette was silently dropped).
+  it("lowers a real chart's palette to swatches + frame colour refs (finding 1)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+    e.load_xlsx(readFileSync(CHART_XLSX));
+
+    const charts = e.list_charts() as Array<{ index: number }>;
+    expect(charts.length).toBeGreaterThan(0);
+
+    const geom = e.get_chart_geometry(charts[0].index, 300, 200) as ChartGeometry;
+    // The geometry carries colour-bearing primitives (the bug was that these
+    // colours never reached the host mutations).
+    const colourBearing = geom.prims.filter(
+      (p) =>
+        (p.kind === "rect" && p.fill) ||
+        (p.kind === "wedge" && p.fill) ||
+        (p.kind === "polygon" && p.fill) ||
+        (p.kind === "line" && p.stroke),
+    );
+    expect(colourBearing.length).toBeGreaterThan(0);
+
+    const { batch } = chartGeometryToMutations(
+      geom,
+      { pageId: "Page/u1", bounds: [0, 0, 200, 300] },
+      makeBinding("Sheet1", "A1:B5", 1),
+    );
+    const ops = (batch as { args: { ops: Array<{ op: string; args: Record<string, unknown> }> } })
+      .args.ops;
+
+    // At least one createSwatch (the palette becomes real document swatches).
+    const swatches = ops.filter((o) => o.op === "createSwatch");
+    expect(swatches.length).toBeGreaterThan(0);
+    // Each swatch is an RGB swatch with 0..255 channels.
+    for (const s of swatches) {
+      const spec = s.args.spec as { space: string; value: number[] };
+      expect(spec.space).toBe("RGB");
+      expect(spec.value).toHaveLength(3);
+      for (const ch of spec.value) {
+        expect(ch).toBeGreaterThanOrEqual(0);
+        expect(ch).toBeLessThanOrEqual(255);
+      }
+    }
+
+    // At least one frameFillColor or frameStrokeColor ref, pointing at a minted
+    // swatch id (NOT a default-coloured path — the finding-1 fix).
+    const colourRefs = ops.filter(
+      (o) =>
+        o.op === "setElementProperty" &&
+        ((o.args.path as string) === "frameFillColor" ||
+          (o.args.path as string) === "frameStrokeColor"),
+    );
+    expect(colourRefs.length).toBeGreaterThan(0);
+    const swatchIds = new Set(
+      swatches.map((s) => (s.args.spec as { selfId: string }).selfId),
+    );
+    for (const c of colourRefs) {
+      const v = c.args.value as { type: string; value: string };
+      expect(v.type).toBe("colorRef");
+      expect(swatchIds.has(v.value)).toBe(true);
+    }
+
     e.free();
   });
 });

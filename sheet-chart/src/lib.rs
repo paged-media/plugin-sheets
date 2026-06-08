@@ -24,14 +24,17 @@
 //!   a CORE SDK surface, NEVER another plugin, spec §2.1); the SAME geometry
 //!   feeds the sheets-mode grid view. One generator, two projections.
 //!
-//! ## Phase status (M2 Phase A)
+//! ## Phase status (M2 charts track — complete)
 //!
 //! The types are FROZEN here (the M2 chart-build track builds against them).
-//! [`geometry::generate`] is real END-TO-END for the **Column** kind (axis
-//! frame + per-bar Rects with linear value scaling + tick/category labels) so
-//! the IR is proven; Bar shares it in Phase A. Line/Area/Scatter return the
-//! axis-frame stub (series geometry is the Phase B charts track); Pie/Donut
-//! return an empty frame (the wedge generator is Phase B).
+//! [`geometry::generate`] is real END-TO-END for EVERY curated kind
+//! (post-plotters-swap, 2026-06-08): **Column**/**Bar** (axis frame + per-bar
+//! Rects with linear value scaling + tick/category labels), **Line**/**Area**
+//! (polyline series + area-fill polygons over the cartesian frame),
+//! **Pie**/**Donut** (per-slice Wedges, donut = pie with a centre hole), and
+//! **Scatter** (diamond markers in (x, y) value space). No kind returns a stub;
+//! the cartesian kinds share plotters' axis frame + value scale (see the
+//! [`geometry`] module docs).
 //!
 //! ## Dependency discipline (spec §4 rule 3)
 //!

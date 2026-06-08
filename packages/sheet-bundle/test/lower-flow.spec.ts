@@ -201,14 +201,28 @@ describe("sheet_chart_lower_paged_draw: bundle two-phase flow", () => {
     const ok = await lowerChartToFrame(host, fakeChartEngine(), 0);
 
     expect(ok).toBe(true);
-    // Phase 1 — one batch with insertPath (the rect) + insertTextFrame (the
-    // label) + the binding metadata.
+    // Phase 1 — one batch with a colour swatch (the rect's #4E79A7 fill) +
+    // insertPath (the rect) + its frameFillColor + insertTextFrame (the label)
+    // + the binding metadata.
     expect(mutations[0].op).toBe("batch");
-    const ops = (mutations[0] as { args: { ops: Array<{ op: string }> } }).args
-      .ops;
+    const ops = (mutations[0] as {
+      args: { ops: Array<{ op: string; args?: unknown }> };
+    }).args.ops;
     expect(ops.some((o) => o.op === "insertPath")).toBe(true);
     expect(ops.some((o) => o.op === "insertTextFrame")).toBe(true);
-    expect(ops[ops.length - 1].op).toBe("setPluginMetadata");
+    // The chart palette is now lowered: a createSwatch + a frameFillColor ref
+    // (FINDING 1 — colours were previously dropped entirely).
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(true);
+    expect(
+      ops.some(
+        (o) =>
+          o.op === "setElementProperty" &&
+          (o.args as { path: string }).path === "frameFillColor",
+      ),
+    ).toBe(true);
+    // The binding rides the FIRST created element (so it sits after the rect's
+    // style ops, not necessarily last in the batch).
+    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
     // Phase 2 — the label text poured into the resolved story.
     const pour = mutations.find((m) => m.op === "insertText") as {
       args: { text: string };

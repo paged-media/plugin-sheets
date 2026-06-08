@@ -210,3 +210,85 @@ fn sheet_fn_info_isformula_tracks_edits() {
     e.enter(0, 0, 0, "=1+1").unwrap();
     assert_eq!(val(&e, 0, 5, 0), CellValue::Bool(true));
 }
+
+// ================= SUBTOTAL / AGGREGATE nested exclusion (FINDING 3) =========
+//
+// Excel: SUBTOTAL/AGGREGATE EXCLUDE cells in their ranges that are themselves
+// SUBTOTAL/AGGREGATE results (ECMA-376 §18.17.7) — the classic total-row case
+// `SUBTOTAL(9, A1:A6)` where `A6 = SUBTOTAL(9, A1:A5)` must NOT double-count.
+// A pure kernel can't see precedent formulas, so the evaluator masks the
+// nested-result cells to blank during range materialization (eval.rs
+// plan_args). These pin that behaviour through the frozen Engine surface.
+
+/// The headline regression: a nested SUBTOTAL in the range is excluded, so the
+/// outer SUBTOTAL sums the leaf values once (15), not 15+15=30 (the pre-fix
+/// silently-wrong scalar).
+#[test]
+fn sheet_fn_math_subtotal_excludes_nested() {
+    let mut e = engine();
+    // A1:A5 = 1,2,3,4,5 (sum 15). A6 is a NESTED subtotal over A1:A5.
+    for (r, v) in [(0, "1"), (1, "2"), (2, "3"), (3, "4"), (4, "5")] {
+        e.enter(0, r, 0, v).unwrap();
+    }
+    e.enter(0, 5, 0, "=SUBTOTAL(9,A1:A5)").unwrap(); // A6 = 15 (nested)
+    assert_eq!(val(&e, 0, 5, 0), num(15.0));
+
+    // SUBTOTAL(9, A1:A6) must EXCLUDE A6 (a nested subtotal) → 15, not 30.
+    e.enter(0, 7, 0, "=SUBTOTAL(9,A1:A6)").unwrap(); // A8
+    assert_eq!(val(&e, 0, 7, 0), num(15.0));
+
+    // COUNT (function_num 2) also excludes the nested cell: A1:A6 has 6
+    // populated cells but the nested A6 is masked → 5 numeric cells.
+    e.enter(0, 8, 0, "=SUBTOTAL(2,A1:A6)").unwrap(); // A9
+    assert_eq!(val(&e, 0, 8, 0), num(5.0));
+
+    // The 101-111 form excludes nested results identically (T2: no hidden-row
+    // distinction, but the nested-exclusion is independent of that).
+    e.enter(0, 9, 0, "=SUBTOTAL(109,A1:A6)").unwrap(); // A10
+    assert_eq!(val(&e, 0, 9, 0), num(15.0));
+}
+
+/// AGGREGATE excludes nested SUBTOTAL/AGGREGATE results too (same eval-side
+/// masking), for every supported option.
+#[test]
+fn sheet_fn_math_subtotal_excludes_nested_aggregate() {
+    let mut e = engine();
+    for (r, v) in [(0, "10"), (1, "20"), (2, "30")] {
+        e.enter(0, r, 0, v).unwrap();
+    }
+    e.enter(0, 3, 0, "=AGGREGATE(9,0,A1:A3)").unwrap(); // A4 = 60 (nested)
+    assert_eq!(val(&e, 0, 3, 0), num(60.0));
+
+    // AGGREGATE(9, 0, A1:A4) excludes the nested A4 → 60, not 120.
+    e.enter(0, 5, 0, "=AGGREGATE(9,0,A1:A4)").unwrap(); // A6
+    assert_eq!(val(&e, 0, 5, 0), num(60.0));
+
+    // A SUBTOTAL nested inside an AGGREGATE range is also excluded.
+    e.enter(0, 6, 0, "=SUBTOTAL(9,A1:A3)").unwrap(); // A7 = 60 (nested subtotal)
+    e.enter(0, 8, 0, "=AGGREGATE(9,0,A1:A3,A7)").unwrap(); // A9 = 60, A7 excluded
+    assert_eq!(val(&e, 0, 8, 0), num(60.0));
+}
+
+/// A plain (non-subtotal) formula cell in the range is NOT excluded — only
+/// cells whose formula ROOT is a SUBTOTAL/AGGREGATE are masked. This pins the
+/// boundary: `=SUM(...)` results still participate.
+#[test]
+fn sheet_fn_math_subtotal_includes_plain_formula_cells() {
+    let mut e = engine();
+    for (r, v) in [(0, "1"), (1, "2"), (2, "3")] {
+        e.enter(0, r, 0, v).unwrap();
+    }
+    e.enter(0, 3, 0, "=SUM(A1:A3)").unwrap(); // A4 = 6 (a SUM, not a SUBTOTAL)
+    assert_eq!(val(&e, 0, 3, 0), num(6.0));
+
+    // SUBTOTAL over A1:A4 INCLUDES the SUM cell (it is not a subtotal result):
+    // 1+2+3+6 = 12.
+    e.enter(0, 5, 0, "=SUBTOTAL(9,A1:A4)").unwrap(); // A6
+    assert_eq!(val(&e, 0, 5, 0), num(12.0));
+
+    // A SUBTOTAL buried in a larger expression (`=SUBTOTAL(...)+0`) is NOT a
+    // bare subtotal result, so it participates (Excel-matching boundary).
+    e.enter(0, 6, 0, "=SUBTOTAL(9,A1:A3)+0").unwrap(); // A7 = 6, root is Binary(+)
+    e.enter(0, 8, 0, "=SUBTOTAL(9,A1:A3,A7)").unwrap(); // A9 = 6 + 6 = 12
+    assert_eq!(val(&e, 0, 8, 0), num(12.0));
+}
