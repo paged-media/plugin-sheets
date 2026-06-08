@@ -15,6 +15,13 @@ sheet-core = { path = "../sheet-core" }
 sheet-format = { path = "../sheet-format" }
 serde = { workspace = true }
 compact_str = { workspace = true }
+# The chart-layout engine: plotters drives the axis/scale/segmented-category
+# coordinate math; sheet-chart's GeomBackend (a custom DrawingBackend) turns
+# its draw calls into the frozen ChartGeometry IR. plotters-core only — no
+# bitmap/svg/font backends (see the workspace dep comment). MIT/Apache-2.0
+# (deny.toml allowlist).
+plotters = { workspace = true }
+plotters-backend = { workspace = true }
 
 [dev-dependencies]
 serde_json.workspace = true

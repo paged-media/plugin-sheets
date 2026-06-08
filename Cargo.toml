@@ -41,6 +41,20 @@ smallvec = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+# Chart layout engine (sheet-chart, spec §8.4). default-features = false keeps
+# ONLY plotters-core: the ChartBuilder/coordinate engine + the DrawingBackend
+# trait + the series helpers — NO bitmap/svg backend, NO font rasterizer
+# (ttf-parser/font-kit/ab_glyph), NO `image`. sheet-chart drives a CUSTOM
+# vector DrawingBackend that emits the frozen ChartGeometry IR; text metrics
+# are approximated in the backend (no font feature). The series helpers
+# (histogram/line/area/point) carry no extra deps.
+plotters = { version = "0.3", default-features = false, features = [
+    "histogram",
+    "line_series",
+    "area_series",
+    "point_series",
+] }
+plotters-backend = { version = "0.3", default-features = false }
 serde_json = "1"
 ryu = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }

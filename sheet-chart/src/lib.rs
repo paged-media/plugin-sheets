@@ -41,6 +41,7 @@
 //! (types) and `sheet-format` (axis number formats, Phase B); no SDK, no
 //! `sheet-calc`, no inter-plugin contact.
 
+mod backend;
 pub mod geometry;
 pub mod model;
 
