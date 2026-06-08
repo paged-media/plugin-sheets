@@ -1,0 +1,11 @@
+# sheet.fn.stat.stdev-s golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# STDEV.S(number1,…): SAMPLE standard deviation (divide by n-1); needs >=2
+# numbers else #DIV/0!. Range non-numerics skipped; error cell propagates.
+# Provenance: Microsoft STDEV.S (public docs).
+two-four-six	=STDEV.S(A1:A3)	A1=2;A2=4;A3=6	2
+one-to-five	=STDEV.S(A1:A5)	A1=1;A2=2;A3=3;A4=4;A5=5	1.58113883008419
+four-eight	=STDEV.S(A1:A2)	A1=4;A2=8	2.82842712474619
+single-number-div0	=STDEV.S(A1:A1)	A1=5	#DIV/0!
+error-propagates	=STDEV.S(A1:A3)	A1=1;A2=#N/A;A3=3	#N/A
+skip-nonnumeric	=STDEV.S(A1:A4)	A1=2;A2=x;A3=4;A4=6	2

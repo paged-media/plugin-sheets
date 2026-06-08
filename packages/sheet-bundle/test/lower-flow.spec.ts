@@ -40,6 +40,14 @@ function fakeEngine(): SheetEngine {
       rules: { h: [{ at: 18, from: 0, to: 100 }], v: [] },
       merges: [],
     }),
+    getGridScene: () => ({
+      viewport: { firstRow: 0, firstCol: 0, rows: 0, cols: 0, xOffsets: [0], yOffsets: [0] },
+      cells: [],
+      styles: [],
+      gridlines: { h: [], v: [] },
+      selection: null,
+    }),
+    setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 1, cols: 2 }],
     dispose() {},
   };

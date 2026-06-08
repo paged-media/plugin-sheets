@@ -21,6 +21,7 @@ sheet-fn = { path = "../sheet-fn" }
 sheet-format = { path = "../sheet-format" }
 sheet-xlsx = { path = "../sheet-xlsx" }
 sheet-lower = { path = "../sheet-lower" }
+sheet-grid = { path = "../sheet-grid" }
 serde.workspace = true
 # `zip` is already in the tree (sheet-xlsx); used here only to author the
 # embedded empty workbook for the `SheetEngine::new()` start-without-a-file path.

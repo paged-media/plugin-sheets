@@ -1,0 +1,21 @@
+# sheet.format.locale-currency-token — [$symbol-locale] currency/locale tokens
+# (spec §9; ECMA-376 §18.8.31 currency/locale tokens). Ruling
+# sheet.format.locale-currency-token: the grammar is [$<symbol>-<locale-hex>];
+# we emit exactly the SYMBOL portion (everything between the $ and the first
+# -locale suffix) as a literal at its position, and drop the locale id. A pure
+# locale tag [$-409] has an empty symbol (contributes no literal). A bare
+# [$USD] (no -locale) emits the whole "USD". Locale-driven separators/decimal
+# marks are NOT applied in T0 (en grouping/decimal only).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+cur-dollar-409	[$$-409]#,##0	1234	$1,234
+cur-euro-407	[$€-407]#,##0	1234	€1,234
+cur-pound-809	[$£-809]#,##0.00	12.5	£12.50
+cur-locale-only	[$-409]#,##0	1234	1,234
+cur-symbol-only	[$USD]0	5	USD5
+cur-dollar-decimals	[$$-409]#,##0.00	1234.5	$1,234.50
+cur-yen	[$¥-411]#,##0	5000	¥5,000
+cur-suffix	#,##0" "[$kr-414]	1234	1,234 kr
+cur-euro-suffix	#,##0.00" "[$€-407]	9.5	9.50 €
+cur-dollar-neg	[$$-409]#,##0	-1234	-$1,234
+cur-franc	[$CHF-807]#,##0	100	CHF100
+cur-zero	[$$-409]#,##0	0	$0

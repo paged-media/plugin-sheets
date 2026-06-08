@@ -1,0 +1,12 @@
+# sheet.fn.text.dollar golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# DOLLAR(number, [decimals]): leading '$', thousands grouping, decimals
+# default 2; negative decimals round left of the point. Currency symbol is
+# the T0 '$' literal; a negative uses the simple leading-minus "-$" form
+# (NOT Excel's parentheses) — documented T0 ruling (see text2.rs).
+dollar-default	=DOLLAR(1234.567)	-	$1,234.57
+dollar-zero-decimals	=DOLLAR(1234.5,0)	-	$1,235
+dollar-negative	=DOLLAR(-1234.5,0)	-	-$1,235
+dollar-negative-decimals	=DOLLAR(1234.567,-2)	-	$1,200
+dollar-cell	=DOLLAR(A1)	A1=9.5	$9.50
+dollar-error-propagates	=DOLLAR(A1)	A1=#VALUE!	#VALUE!

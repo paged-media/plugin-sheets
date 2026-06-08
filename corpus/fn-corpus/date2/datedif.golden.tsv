@@ -1,0 +1,15 @@
+# sheet.fn.date.datedif — DATEDIF(start, end, unit), 1900 system, General fmt.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# Microsoft public docs. Units Y/M/D/MD/YM/YD; case-insensitive. Reversed range
+# (end<start) and an unknown unit are both #NUM! (the documented DATEDIF ruling).
+# Reference span: 43845=2020-01-15 .. 44275=2021-03-20.
+datedif.years	=DATEDIF(43845,44275,"Y")		1
+datedif.months	=DATEDIF(43845,44275,"M")		14
+datedif.days	=DATEDIF(43845,44275,"D")		430
+datedif.md	=DATEDIF(43845,44275,"MD")		5
+datedif.ym	=DATEDIF(43845,44275,"YM")		2
+datedif.yd	=DATEDIF(43845,44275,"YD")		64
+datedif.lowercase-unit	=DATEDIF(43845,44275,"d")		430
+datedif.reversed-num	=DATEDIF(44275,43845,"Y")		#NUM!
+datedif.bad-unit-num	=DATEDIF(43845,44275,"Q")		#NUM!
+datedif.error-prop	=DATEDIF(1/0,44275,"D")		#DIV/0!

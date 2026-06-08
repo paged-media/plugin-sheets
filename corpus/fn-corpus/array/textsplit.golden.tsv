@@ -1,0 +1,7 @@
+# TEXTSPLIT(text, col_delim, [row_delim], ...) — split to a 2-D block (M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. An empty col_delim -> #VALUE!.
+# The host cell holds the top-left field; `expected` projects it.
+split-col	=TEXTSPLIT("a,b,c",",")		a
+split-2d	=TEXTSPLIT("a,b;c,d",",",";")		a
+split-ref	=TEXTSPLIT(A1,"-")	A1=text:x-y-z	x
+split-empty-delim	=TEXTSPLIT("a,b","")		#VALUE!

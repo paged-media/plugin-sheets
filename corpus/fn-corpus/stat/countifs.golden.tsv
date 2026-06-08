@@ -1,0 +1,12 @@
+# sheet.fn.stat.countifs golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# COUNTIFS(criteria_range1, criteria1, …): counts offset positions where ALL
+# pairs match (AND across pairs); criteria ranges must share one shape else
+# #VALUE!. Never errors except a malformed/mismatched call. Provenance:
+# Microsoft COUNTIFS (public docs).
+single-pair	=COUNTIFS(A1:A4,">2")	A1=1;A2=2;A3=3;A4=4	2
+two-pairs-and	=COUNTIFS(A1:A4,"N",B1:B4,">100")	A1=N;A2=N;A3=S;A4=N;B1=150;B2=90;B3=200;B4=120	2
+text-equality	=COUNTIFS(A1:A4,"apple")	A1=apple;A2=pear;A3=apple;A4=apple	3
+no-match-zero	=COUNTIFS(A1:A3,"Z")	A1=N;A2=N;A3=S	0
+shape-mismatch-value	=COUNTIFS(A1:A3,">0",B1:B2,">0")	A1=1;A2=2;A3=3;B1=1;B2=2	#VALUE!
+wildcard	=COUNTIFS(A1:A4,"a*")	A1=apple;A2=Avocado;A3=banana;A4=cherry	2

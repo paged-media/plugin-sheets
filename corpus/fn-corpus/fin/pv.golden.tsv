@@ -1,0 +1,11 @@
+# sheet.fn.fin.pv golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# PV(rate, nper, pmt, [fv], [type]) — present value of an annuity. The PV of
+# a stream of (positive) receipts comes back negative (cash you would pay to
+# acquire it). r=0 is the linear -(fv+pmt*nper).
+# id<TAB>formula<TAB>setup<TAB>expected
+pv-annuity	=PV(0.08/12,240,500)	-	-59777.1458511878
+pv-simple	=PV(0.1,1,0,-110)	-	100
+pv-zero-rate	=PV(0,5,-100)	-	500
+pv-coerce-text	=PV("0",5,-100)	-	500
+pv-error-prop	=PV(1/0,5,-100)	-	#DIV/0!
+pv-arity	=PV(0.1,5)	-	#VALUE!

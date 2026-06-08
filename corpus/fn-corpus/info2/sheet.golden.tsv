@@ -1,0 +1,16 @@
+# sheet.fn.info.sheet golden corpus (spec §7, §11; Microsoft SHEET docs).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# SHEET([value]) is the 1-based sheet index of a reference; with no argument it
+# is the sheet of the cell being evaluated (EvalCtx.current.sheet + 1); with a
+# RANGE argument it is the sheet of the reference's top-left (origin + 1). A
+# lone A1 token in the family decoder resolves to a scalar VALUE (not a range),
+# so a range needs explicit A1:B2 syntax to keep the reference recoverable.
+# These goldens are replayed on a single-sheet engine/decoder whose current cell
+# and every range origin live on sheet 0, so each case is 1. T1 LIMITATION: a
+# sheet-NAME text argument is unsupported (a scalar arg falls back to the current
+# cell's sheet), so the scalar cases below also resolve to the current sheet (1).
+no-arg-is-current-sheet	=SHEET()		1
+single-cell-range-origin-sheet	=SHEET(A1:A1)	A1=5	1
+multi-cell-range-origin-sheet	=SHEET(A1:B2)	A1=1;B2=4	1
+scalar-value-arg-falls-back	=SHEET(99)		1
+scalar-text-name-arg-falls-back	=SHEET("Sheet1")		1

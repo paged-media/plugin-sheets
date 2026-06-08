@@ -1,0 +1,11 @@
+# sheet.fn.fin.npv golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# NPV(rate, value1, [value2], ...) — the FIRST value is discounted ONE FULL
+# period (Excel end-of-period assumption). The t0-outlay idiom is
+# `=v0 + NPV(rate, v1...)`. Ranges skip non-numerics; an error cell
+# propagates. id<TAB>formula<TAB>setup<TAB>expected
+npv-simple	=NPV(0.1,110)	-	100
+npv-zero-rate	=NPV(0,1,2,3)	-	6
+npv-doc	=NPV(0.1,-10000,3000,4200,6800)	-	1188.44341233522
+npv-range	=NPV(0.1,A1:A4)	A1=-10000;A2=3000;A3=4200;A4=6800	1188.44341233522
+npv-range-skips-text	=NPV(0,A1:A3)	A1=1;A2=text:x;A3=3	4
+npv-error-prop	=NPV(0.1,A1:A2)	A1=1;A2=#N/A	#N/A

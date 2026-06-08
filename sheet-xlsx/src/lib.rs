@@ -49,11 +49,12 @@ pub mod sheet_doc;
 pub mod write;
 
 pub use error::XlsxError;
+pub use parts::styles::{VisualStyle, VisualStyles};
 
 use opc::{ModeledKind, OpcContainer, PartEntry};
 use rels::{
     part_dir, rels_part_for, resolve_target, Relationships, REL_OFFICE_DOCUMENT,
-    REL_SHARED_STRINGS, REL_STYLES,
+    REL_SHARED_STRINGS, REL_STYLES, REL_TABLE,
 };
 use sheet_core::cell::{Cell, StyleId};
 use sheet_core::{SheetId, SheetModel};
@@ -71,6 +72,14 @@ pub struct XlsxDocument {
     /// parses these into model `FormulaId`s on load and writes printed text
     /// back here before save for edited cells.
     pub formula_texts: BTreeMap<(SheetId, u32, u32), String>,
+
+    /// The interpreted visual style model (M1 style-map track, spec §8.3),
+    /// keyed by the resolved `StyleId`. Built from `styles.xml`'s
+    /// font/fill/border sub-tables, kept SEPARATE from the frozen `CellStyle`
+    /// (whose `font`/`fill`/`border` stay opaque `u32` slots). The lowering
+    /// reads this to build the IR-v2 styles table; it is read-only derived
+    /// state, never written back (round-trip stays verbatim).
+    pub visual_styles: parts::styles::VisualStyles,
 
     /// The OPC container (ordered parts + content types) for re-write.
     container: OpcContainer,
@@ -142,13 +151,17 @@ impl XlsxDocument {
             model.strings.intern(s.clone());
         }
 
-        // styles: build the cellXfs index -> StyleId table.
-        let xf_to_style = match &styles_part {
+        // styles: build the cellXfs index -> StyleId table AND the visual
+        // style model (M1 style-map track) keyed by the resolved StyleId.
+        let (xf_to_style, visual_styles) = match &styles_part {
             Some(name) => match container.part(name) {
-                Some(p) => parts::styles::parse(p.bytes(), &mut model.styles)?.xf_to_style,
-                None => Vec::new(),
+                Some(p) => {
+                    let parsed = parts::styles::parse(p.bytes(), &mut model.styles)?;
+                    (parsed.xf_to_style, parsed.visual)
+                }
+                None => (Vec::new(), parts::styles::VisualStyles::default()),
             },
-            None => Vec::new(),
+            None => (Vec::new(), parts::styles::VisualStyles::default()),
         };
 
         // 4. Each worksheet, in workbook (tab) order.
@@ -202,6 +215,33 @@ impl XlsxDocument {
             }
             model.sheet_mut(sid).expect("just added").cells = cells;
 
+            // Structured tables (ListObjects, spec §6.4 / ECMA-376 §18.5): a
+            // worksheet references its table parts through its OWN `.rels`
+            // (`<tableParts>` in the sheet xml lists the r:ids; the relationships
+            // resolve to `xl/tables/tableN.xml`). We parse each into the model so
+            // structured refs resolve; the table PARTS stay opaque (never
+            // promoted), so they re-emit byte-identical (preservation invariant,
+            // spec §10.2 — understood now, not rewritten).
+            let ws_rels_part = rels_part_for(&ws_part);
+            if let Some(ws_rels_bytes) = container.part(&ws_rels_part).map(|p| p.bytes().to_vec()) {
+                let ws_rels = Relationships::parse(&ws_rels_bytes)?;
+                let ws_base = part_dir(&ws_part);
+                let mut tables = Vec::new();
+                for rel in ws_rels.all_of_type(REL_TABLE) {
+                    let table_part = resolve_target(&ws_base, &rel.target);
+                    if let Some(table_bytes) =
+                        container.part(&table_part).map(|p| p.bytes().to_vec())
+                    {
+                        // A malformed table part is skipped (preservation-safe:
+                        // its bytes still round-trip); the model just omits it.
+                        if let Ok(table) = parts::tables::parse(&table_bytes, sid) {
+                            tables.push(table);
+                        }
+                    }
+                }
+                model.sheet_mut(sid).expect("just added").tables = tables;
+            }
+
             worksheet_parts.push(ws_part.clone());
             bindings.push(SheetBinding {
                 sheet_id: sid,
@@ -227,6 +267,7 @@ impl XlsxDocument {
         Ok(XlsxDocument {
             model,
             formula_texts,
+            visual_styles,
             container,
             bindings,
         })

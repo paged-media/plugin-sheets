@@ -18,5 +18,6 @@
 
 pub mod shared_strings;
 pub mod styles;
+pub mod tables;
 pub mod workbook;
 pub mod worksheet;

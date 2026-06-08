@@ -1,0 +1,11 @@
+# sheet.fn.text.textafter golden corpus (spec §7, §11 M1; Microsoft
+# TEXTAFTER, T1 subset). Format: id<TAB>formula<TAB>setup<TAB>expected
+# TEXTAFTER(text, delimiter, [instance]): substring after the instance-th
+# delimiter; instance defaults 1, negative counts from the end;
+# case-insensitive by default; not-found -> #N/A; empty delimiter -> whole text.
+textafter-first	=TEXTAFTER("a-b-c","-")	-	b-c
+textafter-second	=TEXTAFTER("a-b-c","-",2)	-	c
+textafter-from-end	=TEXTAFTER("a-b-c","-",-1)	-	c
+textafter-not-found	=TEXTAFTER("abc","-")	-	#N/A
+textafter-cell	=TEXTAFTER(A1,"@")	A1=text:user@example.com	example.com
+textafter-instance-zero	=TEXTAFTER("a-b","-",0)	-	#N/A

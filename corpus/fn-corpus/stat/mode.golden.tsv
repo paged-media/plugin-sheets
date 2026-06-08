@@ -1,0 +1,10 @@
+# sheet.fn.stat.mode golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# MODE(number1,…) (legacy MODE = MODE.SNGL): the most frequently occurring
+# value; ties resolve to the value that appears first; no value repeats -> #N/A
+# (Excel). Provenance: ECMA-376 §18.17.7 (MODE).
+single-mode	=MODE(A1:A5)	A1=1;A2=2;A3=4;A4=4;A5=5	4
+tie-first-seen	=MODE(A1:A4)	A1=2;A2=3;A3=2;A4=3	2
+three-repeats	=MODE(A1:A6)	A1=7;A2=7;A3=7;A4=2;A5=9;A6=2	7
+no-repeat-na	=MODE(A1:A3)	A1=1;A2=2;A3=3	#N/A
+error-propagates	=MODE(A1:A3)	A1=1;A2=#VALUE!;A3=1	#VALUE!

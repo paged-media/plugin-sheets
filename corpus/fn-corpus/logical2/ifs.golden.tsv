@@ -1,0 +1,17 @@
+# sheet.fn.logical.ifs golden corpus (spec §7, §11; Microsoft IFS public docs).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# IFS(condition1, value1, [condition2, value2], …) returns the value paired
+# with the first TRUE condition. Conditions coerce via to_bool (number != 0 is
+# TRUE; only the literal words TRUE/FALSE coerce from text). Rulings: no TRUE
+# condition -> #N/A (no default slot, unlike IF); an odd argument count (a
+# dangling final condition) -> #N/A; an error in a condition propagates (first-
+# condition-error-wins); non-boolean text in a condition -> #VALUE!.
+# Args use ';' as the separator (the family decoder splits on ';').
+first-true-wins	=IFS(FALSE;"a";TRUE;"b")		b
+first-pair-true	=IFS(TRUE;"a";TRUE;"b")		a
+number-condition-nonzero-true	=IFS(0;"x";5;"y")		y
+ref-condition	=IFS(A1;"hit";A2;"miss")	A1=TRUE;A2=FALSE	hit
+no-match-is-na	=IFS(FALSE;1;0;2)		#N/A
+odd-arity-is-na	=IFS(FALSE;1;TRUE)		#N/A
+error-condition-propagates	=IFS(A1;1;TRUE;2)	A1=#DIV/0!	#DIV/0!
+non-boolean-text-is-value	=IFS("maybe";1)		#VALUE!

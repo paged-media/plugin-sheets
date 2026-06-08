@@ -223,6 +223,27 @@ pub fn time_fraction(h: u32, m: u32, s: f64) -> f64 {
     (h as f64 * 3600.0 + m as f64 * 60.0 + s) / 86400.0
 }
 
+/// Total elapsed (hours, minutes, seconds) for a serial under an elapsed-time
+/// format (`[h]` / `[m]` / `[s]`; spec §9, ruling `sheet.format.elapsed-brackets`).
+///
+/// Unlike [`serial_to_hms`], these are TOTAL accumulators — not the modular
+/// wall-clock components — so a serial of `1.5` (one and a half days) yields
+/// `36` total hours, `2160` total minutes, `129600` total seconds. The whole
+/// serial (integer days included) participates: each unit is the serial scaled
+/// to that unit and rounded to the nearest whole unit, half away from zero.
+/// Returns `None` for a non-finite or negative serial.
+pub fn serial_to_elapsed(serial: f64) -> Option<(i64, i64, i64)> {
+    if !serial.is_finite() || serial < 0.0 {
+        return None;
+    }
+    // Round to the nearest second first (matching the wall-clock path), then
+    // derive each total from that integer-second base so [h]/[m]/[s] agree.
+    let total_secs = (serial * 86400.0).round() as i64;
+    let hours = total_secs / 3600;
+    let minutes = total_secs / 60;
+    Some((hours, minutes, total_secs))
+}
+
 /// Fractional part of a serial -> (h, m, s), rounded to the nearest second.
 /// Rounding can carry: e.g. a fraction of 23:59:59.7 rounds to 24:00:00,
 /// which this returns as `(0, 0, 0)` (the day rollover is the caller's

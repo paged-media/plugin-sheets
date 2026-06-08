@@ -19,7 +19,7 @@
 //! count). Literals (quoted, escaped, and the always-literal punctuation)
 //! interleave verbatim.
 
-use crate::sections::{Section, Token};
+use crate::sections::{FractionSpec, Section, Token};
 use std::fmt::Write as _;
 
 /// Render the magnitude-or-signed value `x` through a numeric `section`. The
@@ -28,6 +28,14 @@ use std::fmt::Write as _;
 /// tokens) means `General` — handled by the caller, never reached here with
 /// real General intent, but we fall back to a plain decimal to be safe.
 pub fn render_number(x: f64, section: &Section, force_minus: bool) -> String {
+    // Fraction path if the section has a fraction token (`# ?/?`).
+    if let Some(Token::Fraction(spec)) = section
+        .tokens
+        .iter()
+        .find(|t| matches!(t, Token::Fraction(_)))
+    {
+        return render_fraction(x, section, *spec, force_minus);
+    }
     // Scientific path if the section has an exponent token.
     if section
         .tokens
@@ -82,6 +90,9 @@ pub fn render_number(x: f64, section: &Section, force_minus: bool) -> String {
     for t in &section.tokens {
         match t {
             Token::Literal(s) => out.push_str(s),
+            // Repeat-fill char (`*x`): T0 emits it ONCE (no column width;
+            // ruling `sheet.format.padding`).
+            Token::Fill(c) => out.push(*c),
             Token::Percent => out.push('%'),
             Token::DecimalPoint => {
                 seen_decimal = true;
@@ -408,6 +419,199 @@ fn render_scientific(x: f64, section: &Section, force_minus: bool) -> String {
     }
     let _ = write!(out, "{:0width$}", e.unsigned_abs(), width = exp_width);
     out
+}
+
+/// Render a fraction format (`# ?/?`, `# ??/??`, `# ?/16`; spec §9, ruling
+/// `sheet.format.fractions`).
+///
+/// The section's tokens look like `[integer placeholders] Fraction(spec)
+/// [trailing literals]`. We split `|x|` into the integer part (rendered
+/// through the leading digit placeholders) and a remaining fractional part,
+/// fit the best `n/d` for that fraction within the spec's denominator-digit
+/// budget (or to the fixed denominator), and weave it back into the literal
+/// order. When there is NO integer placeholder the value is shown as an
+/// improper fraction (`n/d` with `n >= d` allowed).
+///
+/// ## Excel rulings adopted here
+/// - Best fit minimizes `|frac - n/d|` over `1 <= d <= 10^den_digits - 1`,
+///   preferring the SMALLER denominator on ties (Excel's behaviour).
+/// - A fraction that fits exactly to `0/1` collapses: with an integer part the
+///   fraction slot blanks to spaces (a `?` slot is space-padded); a pure
+///   fraction shows `0` (via the `0/1` -> the renderer keeps `n=0,d=1`).
+/// - The integer part uses Excel display rounding only through the carry from
+///   the fraction (e.g. `2 24/25` of 2.96 with `?/?` rounds the fraction so it
+///   does not exceed 1, carrying into the integer).
+fn render_fraction(x: f64, section: &Section, spec: FractionSpec, force_minus: bool) -> String {
+    let neg = x < 0.0;
+    let mag = x.abs();
+
+    let has_int_part = section.tokens.iter().any(|t| {
+        // A digit placeholder that comes BEFORE the fraction token is the
+        // whole-number part.
+        matches!(t, Token::DigitZero | Token::DigitHash | Token::DigitSpace)
+    });
+
+    let (mut whole, frac) = if has_int_part {
+        (mag.floor(), mag - mag.floor())
+    } else {
+        (0.0, mag)
+    };
+
+    let max_den: u32 = if let Some(d) = spec.fixed {
+        d
+    } else {
+        (10u32.pow(spec.den_digits as u32)).saturating_sub(1).max(1)
+    };
+
+    let (mut num, den) = match spec.fixed {
+        Some(d) => {
+            // Fixed denominator: round numerator to nearest.
+            let n = (frac * d as f64).round() as u32;
+            (n, d)
+        }
+        None => best_fraction(frac, max_den),
+    };
+
+    // A numerator that rounds up to the denominator carries into the whole part
+    // (e.g. 2.99 with `?/?` -> 3, fraction 0/1).
+    if den > 0 && num >= den {
+        whole += (num / den) as f64;
+        num %= den;
+    }
+
+    // Render the integer placeholders (left of the fraction).
+    let int_specs = collect_int_specs(&section.tokens);
+    let int_digits = if has_int_part {
+        let s = format!("{whole:.0}");
+        strip_leading_zeros(&s)
+    } else {
+        String::new()
+    };
+    let grouped = has_grouping(&section.tokens);
+    let int_rendered = render_int_part(&int_digits, &int_specs, grouped);
+
+    // Build the numerator/denominator strings, honouring the placeholder widths
+    // (`?` space-pads; `0` zero-pads; `#` no pad).
+    let num_specs = fraction_num_specs(&section.tokens);
+    let den_specs = fraction_den_specs(&section.tokens, spec.fixed);
+
+    let mut out = String::new();
+    if force_minus || neg {
+        out.push('-');
+    }
+
+    let mut int_written = false;
+    let mut frac_written = false;
+    for t in &section.tokens {
+        match t {
+            Token::Literal(s) => out.push_str(s),
+            Token::Fill(c) => out.push(*c),
+            Token::DigitZero | Token::DigitHash | Token::DigitSpace => {
+                if !int_written {
+                    out.push_str(&int_rendered);
+                    int_written = true;
+                }
+            }
+            Token::Fraction(_) => {
+                if !int_written && has_int_part {
+                    out.push_str(&int_rendered);
+                    int_written = true;
+                }
+                if !frac_written {
+                    // With an integer part and a zero fraction, the slot is
+                    // blanked (space-padded) so "2    " not "2 0/1".
+                    if has_int_part && num == 0 {
+                        out.push_str(&pad_slot(&num_specs));
+                        out.push(' '); // the `/` slot blanks to a space
+                        out.push_str(&pad_slot(&den_specs));
+                    } else {
+                        out.push_str(&render_frac_digits(num, &num_specs));
+                        out.push('/');
+                        out.push_str(&render_frac_digits(den, &den_specs));
+                    }
+                    frac_written = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Best `n/d` approximation of `0 <= frac < 1` with `1 <= d <= max_den`,
+/// minimizing `|frac - n/d|`, preferring the smaller denominator on ties.
+fn best_fraction(frac: f64, max_den: u32) -> (u32, u32) {
+    if frac == 0.0 {
+        return (0, 1);
+    }
+    let mut best = (0u32, 1u32);
+    let mut best_err = f64::INFINITY;
+    for d in 1..=max_den {
+        let n = (frac * d as f64).round() as u32;
+        let err = (frac - n as f64 / d as f64).abs();
+        // Strictly-less keeps the FIRST (smallest) d on ties.
+        if err < best_err - 1e-12 {
+            best_err = err;
+            best = (n, d);
+        }
+    }
+    best
+}
+
+/// Render a numerator/denominator integer through its placeholder specs:
+/// `0` zero-pads to width, `?` space-pads, `#` no pad (left-aligned digits).
+fn render_frac_digits(value: u32, specs: &[DigitKind]) -> String {
+    let digits = value.to_string();
+    let zero_min = specs.iter().filter(|d| **d == DigitKind::Zero).count();
+    let space_min = specs.iter().filter(|d| **d == DigitKind::Space).count();
+    let mut body = digits;
+    if body.len() < zero_min {
+        let pad = zero_min - body.len();
+        let mut p = "0".repeat(pad);
+        p.push_str(&body);
+        body = p;
+    }
+    let want = zero_min + space_min;
+    if body.len() < want {
+        let pad = want - body.len();
+        let mut p = " ".repeat(pad);
+        p.push_str(&body);
+        body = p;
+    }
+    body
+}
+
+/// All-space slot of the placeholder width (used to blank a zero fraction).
+fn pad_slot(specs: &[DigitKind]) -> String {
+    " ".repeat(specs.len().max(1))
+}
+
+/// Numerator placeholder specs: digit placeholders that come AFTER the integer
+/// part but BEFORE the fraction token. Since [`crate::parse::resolve_fraction`]
+/// folds those into the Fraction token, we reconstruct widths from the spec.
+fn fraction_num_specs(tokens: &[Token]) -> Vec<DigitKind> {
+    // The numerator digit count was captured in the FractionSpec; reconstruct a
+    // space-padded (`?`) spec of that width — the most common authoring form.
+    // (Exact per-placeholder kinds are not retained post-fold; `?` matches
+    // Excel's typical `# ?/?`.)
+    if let Some(Token::Fraction(spec)) = tokens.iter().find(|t| matches!(t, Token::Fraction(_))) {
+        vec![DigitKind::Space; spec.num_digits.max(1)]
+    } else {
+        vec![DigitKind::Space]
+    }
+}
+
+/// Denominator placeholder specs from the fraction token (fixed-denominator
+/// codes render the literal denominator, so no padding slots).
+fn fraction_den_specs(tokens: &[Token], fixed: Option<u32>) -> Vec<DigitKind> {
+    if fixed.is_some() {
+        return vec![];
+    }
+    if let Some(Token::Fraction(spec)) = tokens.iter().find(|t| matches!(t, Token::Fraction(_))) {
+        vec![DigitKind::Space; spec.den_digits.max(1)]
+    } else {
+        vec![DigitKind::Space]
+    }
 }
 
 #[cfg(test)]

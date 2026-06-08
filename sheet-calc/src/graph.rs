@@ -141,6 +141,40 @@ impl DepGraph {
                 // NameTarget::Formula contributes no edge (T1, eval -> #NAME?).
             }
         }
+        // Structured-reference (table) deps: a `Table1[Col]` reads its table by
+        // NAME (spec §6.4). We resolve the name to the table's FULL extent box
+        // and register that as a range key — so a write ANYWHERE inside the
+        // table (a data edit, or extending the header/totals rows) dirties the
+        // structured-ref dependents (the table-track dep edge, registered HERE
+        // rather than in `extract.rs`, which has no model to resolve against).
+        // The whole-extent box is a deliberate over-approximation (cheap and
+        // correct: a structured ref's resolved area is always a sub-box of it).
+        for name in &refs.tables {
+            if let Some((_sid, t)) = model.resolve_table(name) {
+                let key = RangeKey::from_range(t.range);
+                range_keys.push(key);
+                self.range_dependents.entry(key).or_default().insert(cell);
+            }
+        }
+        // A bare in-table structured ref (`[@Col]`, empty table name) anchors to
+        // the table whose ROW span includes the formula's own cell — resolved
+        // HERE (the graph has both the cell and the model). Row-span matching
+        // (not full containment) mirrors `eval::table_containing`, so a helper
+        // column just OUTSIDE the table's columns but row-aligned still depends
+        // on the table. Register its box so a write inside the table reflows the
+        // in-table formula.
+        if refs.has_self_table_ref {
+            if let Some(ws) = model.sheet(cell.sheet) {
+                if let Some(t) = ws.tables.iter().find(|t| {
+                    let n = t.range.normalized();
+                    n.start.sheet == cell.sheet && cell.row >= n.start.row && cell.row <= n.end.row
+                }) {
+                    let key = RangeKey::from_range(t.range);
+                    range_keys.push(key);
+                    self.range_dependents.entry(key).or_default().insert(cell);
+                }
+            }
+        }
 
         if !cell_deps.is_empty() {
             self.cell_deps_of.insert(cell, cell_deps);
@@ -325,6 +359,43 @@ mod tests {
         assert_eq!(g.dependents_of(cr(0, 1, 0)), vec![cr(0, 0, 2)]);
         // A write outside does not.
         assert!(g.dependents_of(cr(0, 3, 0)).is_empty());
+    }
+
+    #[test]
+    fn structured_ref_registers_table_box_dep() {
+        // A formula that reads a structured ref (RefSet carries the table NAME)
+        // gets a range edge to the table's full extent, so a write inside the
+        // table dirties the dependent (the tables-track dep edge).
+        let mut m = SheetModel::new();
+        m.add_sheet("Sheet1");
+        let table = sheet_core::Table {
+            name: "Sales".into(),
+            range: RangeRef {
+                start: cr(0, 0, 0),
+                end: cr(0, 3, 2),
+            }, // A1:C4
+            columns: vec!["Region".into(), "Units".into(), "Total".into()],
+            header_row: true,
+            totals_row: false,
+            style_name: None,
+        };
+        m.sheet_mut(0).unwrap().tables.push(table);
+
+        let mut g = DepGraph::new();
+        // E1 = SUM(Sales[Units]) — the RefSet records the table by name.
+        let mut refs = RefSet::default();
+        refs.tables.push("Sales".into());
+        g.register(cr(0, 0, 4), &refs, &m);
+        // A write inside the table extent dirties E1.
+        assert_eq!(g.dependents_of(cr(0, 2, 1)), vec![cr(0, 0, 4)]);
+        // A write outside the table extent does not.
+        assert!(g.dependents_of(cr(0, 9, 9)).is_empty());
+        // An unknown table name registers no edge (no panic, no dep).
+        let mut g2 = DepGraph::new();
+        let mut refs2 = RefSet::default();
+        refs2.tables.push("Nope".into());
+        g2.register(cr(0, 0, 4), &refs2, &m);
+        assert!(g2.dependents_of(cr(0, 2, 1)).is_empty());
     }
 
     #[test]

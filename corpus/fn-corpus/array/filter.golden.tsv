@@ -1,0 +1,8 @@
+# FILTER(range, include, [if_empty]) — keep rows whose mask is truthy (M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. An empty result with no
+# if_empty grounds Excel's #CALC! to #N/A; with if_empty it returns that value.
+# The host cell holds the first kept row's top-left; `expected` projects it.
+filter-keep	=FILTER(A1:A3,B1:B3)	A1=10;A2=20;A3=30;B1=1;B2=0;B3=1	10
+filter-second	=FILTER(A1:A3,B1:B3)	A1=10;A2=20;A3=30;B1=0;B2=1;B3=0	20
+filter-empty-na	=FILTER(A1:A2,B1:B2)	A1=1;A2=2;B1=0;B2=0	#N/A
+filter-empty-fallback	=FILTER(A1:A2,B1:B2,"none")	A1=1;A2=2;B1=0;B2=0	none

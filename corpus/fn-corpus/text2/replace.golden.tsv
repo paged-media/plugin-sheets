@@ -1,0 +1,11 @@
+# sheet.fn.text.replace golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# REPLACE(old, start_num, num_chars, new): 1-based, char-counted. start<1 or
+# negative num_chars -> #VALUE!; start past the end appends; num_chars past
+# the end clamps.
+replace-head	=REPLACE("abcdefg",1,3,"XY")	-	XYdefg
+replace-insert	=REPLACE("abc",2,0,"--")	-	a--bc
+replace-append-past-end	=REPLACE("abc",10,2,"XY")	-	abcXY
+replace-clamp-len	=REPLACE("abcdef",3,99,"Z")	-	abZ
+replace-cell	=REPLACE(A1,1,4,"2024")	A1=text:2023-Q1	2024-Q1
+replace-start-zero-is-value	=REPLACE("abc",0,1,"X")	-	#VALUE!

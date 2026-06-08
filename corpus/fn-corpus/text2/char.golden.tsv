@@ -1,0 +1,9 @@
+# sheet.fn.text.char golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# CHAR(number): latin-1 code point 1..=255 to character; 0 or >255 -> #VALUE!.
+char-upper-a	=CHAR(65)	-	A
+char-lower-a	=CHAR(97)	-	a
+char-truncates	=CHAR(66.9)	-	B
+char-zero-is-value	=CHAR(0)	-	#VALUE!
+char-over-255-is-value	=CHAR(256)	-	#VALUE!
+char-error-propagates	=CHAR(A1)	A1=#DIV/0!	#DIV/0!

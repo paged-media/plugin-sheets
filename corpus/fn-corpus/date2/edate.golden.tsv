@@ -1,0 +1,12 @@
+# sheet.fn.date.edate — EDATE(start_date, months), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. The serial `months` whole months after start, keeping the
+# day-of-month clamped to the target month's length. Expected = serial.
+edate.plus-one-clamp	=EDATE(44227,1)		44255
+edate.mid-month	=EDATE(44211,2)		44270
+edate.backward	=EDATE(44227,-2)		44165
+edate.leap-to-nonleap	=EDATE(43890,12)		44255
+edate.zero-months	=EDATE(44211,0)		44211
+edate.from-cells	=EDATE(A1,A2)	A1=44211;A2=2	44270
+edate.error-prop	=EDATE(1/0,1)		#DIV/0!
+edate.negative-num	=EDATE(-1,1)		#NUM!

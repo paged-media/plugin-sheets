@@ -67,6 +67,22 @@
 use sheet_core::{Align, Cell, CellValue, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
 
+// ---- Multi-frame pagination (spec §8.2, T1; the "killer feature"). ----
+//
+// `lower_range` (this file) is the single-frame primitive; `paginate` threads
+// a tall range across an ordered list of frame content-boxes (S-05: the chain
+// TOPOLOGY is still an SDK gap, so the caller supplies the ordered frames).
+pub mod paginate;
+pub use paginate::{paginate, FrameBox, Page, PaginateOptions};
+
+// ---- Style resolution (IR v2, M1 style-map track; spec §8.3). ----
+//
+// The resolver that turns a cell's `StyleId` + a `VisualStyleSource` into the
+// deduplicated `LoweredContent.styles` table + per-cell `style_key`. The SAME
+// resolver feeds the grid scene (cross-surface parity).
+pub mod style;
+pub use style::{NoStyles, StyleResolver, VisualAttrs, VisualStyleSource};
+
 // ---- T0 geometry rulings (spec §8.2). ----
 
 /// xlsx character-unit -> point conversion for column widths (T0 ruling,
@@ -285,11 +301,33 @@ fn align_str(align: Align) -> &'static str {
 /// or evaluates. An unknown `sheet` lowers to an empty-but-shaped region
 /// (column/row geometry from the range, no cells/merges) rather than
 /// panicking — lowering is best-effort derived state.
+///
+/// This is the unstyled door (frozen signature): every cell resolves to the
+/// default style (key 0). Callers with a [`VisualStyleSource`] (the parsed
+/// XLSX visual styles) use [`lower_range_styled`] to populate the IR-v2
+/// styles table.
 pub fn lower_range(
     model: &SheetModel,
     sheet: SheetId,
     range: CellRange,
     opts: &ViewOptions,
+) -> LoweredContent {
+    lower_range_styled(model, sheet, range, opts, &style::NoStyles)
+}
+
+/// Lower a `(sheet, range, view options)` binding, resolving REAL visual
+/// styles through `visual` into the IR-v2 [`LoweredContent::styles`] table +
+/// per-cell `style_key` (spec §8.3, the style-map track). Identical to
+/// [`lower_range`] in every other respect; passing [`style::NoStyles`]
+/// reproduces it exactly. The grid scene resolves the SAME styles for the
+/// SAME cells (`sheet_grid::grid_scene_styled`) — the cross-surface-parity
+/// contract.
+pub fn lower_range_styled(
+    model: &SheetModel,
+    sheet: SheetId,
+    range: CellRange,
+    opts: &ViewOptions,
+    visual: &impl style::VisualStyleSource,
 ) -> LoweredContent {
     let (top, left, bottom, right) = range.normalized();
     let ws = model.sheet(sheet);
@@ -298,6 +336,9 @@ pub fn lower_range(
         date_system: model.calc.date_system,
     };
     let mut cache = FormatCache::default();
+    // The style resolver builds the deduped IR-v2 styles table as cells are
+    // walked (in row/col index order — deterministic).
+    let mut style_resolver = style::StyleResolver::new(visual);
 
     // ---- Columns: range-relative index + width (pt). ----
     let mut cols = Vec::with_capacity((right - left + 1) as usize);
@@ -331,17 +372,20 @@ pub fn lower_range(
         // Cells cover the FULL range width positionally (empty => "").
         let mut cells = Vec::with_capacity((right - left + 1) as usize);
         for c in left..=right {
-            let (text, align) = match ws.and_then(|w| w.cell(r, c)) {
-                Some(cell) => lower_cell(model, cell, &mut cache, &ctx),
-                None => (String::new(), Align::General),
+            let (text, align, style_key) = match ws.and_then(|w| w.cell(r, c)) {
+                Some(cell) => {
+                    let (text, align) = lower_cell(model, cell, &mut cache, &ctx);
+                    // Resolve the cell's StyleId to a deduped IR-v2 key. An
+                    // empty cell has nothing to style, so it stays key 0.
+                    (text, align, style_resolver.key_for(cell.style))
+                }
+                None => (String::new(), Align::General, 0),
             };
             cells.push(LoweredCell {
                 col: c - left,
                 text,
                 align,
-                // T0: every cell uses the default style (key 0); the
-                // style-map track populates real keys in Phase B.
-                style_key: 0,
+                style_key,
             });
         }
 
@@ -386,9 +430,10 @@ pub fn lower_range(
         rows,
         rules,
         merges,
-        // T0: a single default style entry (key 0). The style-map track
-        // (Phase B) emits real styles and per-cell `style_key`s.
-        styles: vec![LoweredStyle::default_key0()],
+        // The deduped IR-v2 styles table the cells' `style_key`s index into.
+        // With `NoStyles` this is exactly `[LoweredStyle::default_key0()]`
+        // (the frozen-`lower_range` behaviour); a real source populates it.
+        styles: style_resolver.into_styles(),
     }
 }
 

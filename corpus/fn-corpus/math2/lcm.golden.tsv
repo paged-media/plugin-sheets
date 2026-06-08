@@ -1,0 +1,11 @@
+# LCM — least common multiple of the truncated, non-negative integer
+# operands (ECMA-376 §18.17.7). Variadic and range-aware; any zero operand
+# makes the result 0; negative operand -> #NUM!.
+# id	formula	setup	expected
+lcm-pair	=LCM(4,6)	-	12
+lcm-triple	=LCM(4,6,8)	-	24
+lcm-zero	=LCM(0,5)	-	0
+lcm-coprime	=LCM(3,7)	-	21
+lcm-range	=LCM(A1:A3)	A1=3;A2=4;A3=6	12
+lcm-negative	=LCM(-1,4)	-	#NUM!
+lcm-range-error	=LCM(A1:A2)	A1=3;A2=#DIV/0!	#DIV/0!

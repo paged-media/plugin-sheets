@@ -1,0 +1,14 @@
+# sheet.fn.date.weeknum — WEEKNUM(serial, [return_type]), 1900 system, General.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. System-1 week numbering: week 1 contains Jan 1. Default /
+# 17 = Sunday-start; 2/11 = Monday-start; 12..16 = Tue..Sat; 21 = ISO-8601.
+# Out-of-range return_type -> #NUM!. 44197=2021-01-01(Fri), 44200=2021-01-04(Mon),
+# 44378=2021-07-01, 44561=2021-12-31.
+weeknum.default-sunday	=WEEKNUM(44197)		1
+weeknum.monday-start	=WEEKNUM(44200,2)		2
+weeknum.mid-year	=WEEKNUM(44378)		27
+weeknum.year-end	=WEEKNUM(44561)		53
+weeknum.iso-mode-21	=WEEKNUM(44197,21)		53
+weeknum.from-cell	=WEEKNUM(A1)	A1=44197	1
+weeknum.bad-type-num	=WEEKNUM(44197,99)		#NUM!
+weeknum.error-prop	=WEEKNUM(1/0)		#DIV/0!

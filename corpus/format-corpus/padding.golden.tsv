@@ -1,0 +1,19 @@
+# sheet.format.padding — the repeat-fill char *x (spec §9; ECMA-376 §18.8.31
+# * and _ tokens). In Excel, *x repeats the fill char x to fill the column to
+# its width. Ruling sheet.format.padding: the engine has NO column width (the
+# typeset lane sets width downstream), so T0 emits the fill char EXACTLY ONCE
+# at its position. The companion _x (skip a char width) is approximated as a
+# single space (already an M0 behavior; included here for completeness).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+pad-fill-dash-before	*-0	5	-5
+pad-fill-dash-after	0"x"*-	5	5x-
+pad-fill-letter	0*x	5	5x
+pad-fill-dollar-space	$* #,##0	1234	$ 1,234
+pad-fill-star	0*=	5	5=
+pad-fill-dot	0*.5	5	5.5
+pad-skip-space	_(0	5	 5
+pad-skip-and-fill	*-#,##0	1234	-1,234
+pad-fill-paren	0*)	5	5)
+pad-fill-neg	*-0	-5	--5
+pad-fill-zero-pad	*-000	7	-007
+pad-fill-decimals	0.0*-	2.5	2.5-

@@ -1,0 +1,13 @@
+# sheet.fn.date.datevalue — DATEVALUE(date_text), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. T1 accepts ISO yyyy-mm-dd and US mm/dd/yyyy (and m/d/yy
+# with the 00..29 -> 2000+yy, 30..99 -> 1900+yy window). Unparseable -> #VALUE!.
+# Expected = serial. 44197=2021-01-01, 44561=2021-12-31, 1=1900-01-01.
+datevalue.iso	=DATEVALUE("2021-01-01")		44197
+datevalue.us-4digit	=DATEVALUE("1/1/2021")		44197
+datevalue.us-2digit	=DATEVALUE("1/1/21")		44197
+datevalue.iso-year-end	=DATEVALUE("2021-12-31")		44561
+datevalue.epoch	=DATEVALUE("1900-01-01")		1
+datevalue.from-cell	=DATEVALUE(A1)	A1=text:2021-01-01	44197
+datevalue.unparseable	=DATEVALUE("not a date")		#VALUE!
+datevalue.error-prop	=DATEVALUE(1/0)		#DIV/0!

@@ -107,6 +107,15 @@ pub struct LowerOptions {
     pub header_rows: Option<u32>,
 }
 
+/// Grid-scene options forwarded verbatim from the TS `GridSceneOptions` (serde
+/// defaults so an absent/partial object is accepted). `include_gridlines`
+/// toggles the [`sheet_grid::RuleSet`] at every visible track boundary.
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GridSceneOptions {
+    pub include_gridlines: Option<bool>,
+}
+
 // ─────────────────────────────────────────────────────────── the session
 
 /// The native engine session: an [`Engine`] (owning the model) + the
@@ -125,6 +134,11 @@ pub struct SheetSession {
     edited: BTreeSet<(SheetId, u32, u32)>,
     /// Formula texts that failed to parse on load (kept verbatim).
     unparsed_formulas: u32,
+    /// The sheets-mode selection rectangle (spec §8.1): engine state set by
+    /// [`SheetSession::set_grid_selection`] and folded into the next
+    /// [`SheetSession::get_grid_scene`] for the SAME sheet. `None` until the
+    /// panel records one; a selection on sheet A is not shown on sheet B.
+    selection: Option<(SheetId, sheet_grid::GridSelection)>,
 }
 
 /// The T0 cap on cells materialized by a single [`SheetSession::get_range_lowered`]
@@ -177,6 +191,7 @@ impl SheetSession {
             doc,
             edited: BTreeSet::new(),
             unparsed_formulas: 0,
+            selection: None,
         }
     }
 
@@ -234,6 +249,7 @@ impl SheetSession {
             doc,
             edited: BTreeSet::new(),
             unparsed_formulas,
+            selection: None,
         })
     }
 
@@ -422,6 +438,101 @@ impl SheetSession {
         };
         let model = self.engine.as_ref().expect("engine present").model();
         Ok(lower_range(model, sheet, cell_range, &view))
+    }
+
+    /// Window a worksheet into a [`sheet_grid::GridScene`] for the sheets-mode
+    /// vector grid surface (spec §8.1, S-02). The engine windows from the
+    /// `(first_row, first_col)` scroll origin bounded by `(w_pt, h_pt)` and
+    /// materializes only the visible populated cells (`sheet_grid::grid_scene`
+    /// does the O(visible) windowing); the stored selection for THIS sheet
+    /// (see [`set_grid_selection`](Self::set_grid_selection)) is folded into the
+    /// returned scene. An OOB sheet id is a boundary error (finding-2 discipline,
+    /// matching `set_cell`/`get_range_lowered`).
+    pub fn get_grid_scene(
+        &self,
+        sheet: u16,
+        first_row: u32,
+        first_col: u32,
+        w_pt: f64,
+        h_pt: f64,
+        opts: GridSceneOptions,
+    ) -> Result<sheet_grid::GridScene, SessionError> {
+        // Validate the sheet id (FREEZE AMENDMENT, audit finding 2). An unknown
+        // sheet would otherwise yield an empty-but-shaped scene; the boundary
+        // rejects an OOB id for the same contract as `set_cell`.
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
+        if (sheet as usize) >= sheet_count {
+            return Err(SessionError(format!(
+                "sheet id {sheet} out of range ({sheet_count} sheets)"
+            )));
+        }
+
+        let grid_opts = sheet_grid::GridOptions {
+            include_gridlines: opts.include_gridlines.unwrap_or(true),
+        };
+        let model = self.engine.as_ref().expect("engine present").model();
+        let mut scene =
+            sheet_grid::grid_scene(model, sheet, first_row, first_col, w_pt, h_pt, &grid_opts);
+
+        // Fold in the session's stored selection for THIS sheet (spec §8.1 —
+        // selection is engine state the panel requests, not scene-derived).
+        // `grid_scene` always returns `selection: None` (Phase A); a selection
+        // recorded for a different sheet is not shown here.
+        if let Some((sel_sheet, sel)) = &self.selection {
+            if *sel_sheet == sheet {
+                scene.selection = Some(sheet_grid::GridSelection {
+                    anchor_row: sel.anchor_row,
+                    anchor_col: sel.anchor_col,
+                    rows: sel.rows,
+                    cols: sel.cols,
+                });
+            }
+        }
+
+        Ok(scene)
+    }
+
+    /// Record the sheets-mode selection rectangle for `sheet`, consumed by the
+    /// next [`get_grid_scene`](Self::get_grid_scene) for the same sheet (spec
+    /// §8.1 — selection is engine state, the panel only requests it). An OOB
+    /// sheet id is a boundary error (finding-2 discipline).
+    pub fn set_grid_selection(
+        &mut self,
+        sheet: u16,
+        anchor_row: u32,
+        anchor_col: u32,
+        rows: u32,
+        cols: u32,
+    ) -> Result<(), SessionError> {
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
+        if (sheet as usize) >= sheet_count {
+            return Err(SessionError(format!(
+                "sheet id {sheet} out of range ({sheet_count} sheets)"
+            )));
+        }
+
+        self.selection = Some((
+            sheet,
+            sheet_grid::GridSelection {
+                anchor_row,
+                anchor_col,
+                rows,
+                cols,
+            },
+        ));
+        Ok(())
     }
 
     /// Enumerate the workbook's sheets (id, name, used extent). `rows`/`cols`

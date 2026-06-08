@@ -1,0 +1,11 @@
+# sheet.fn.fin.xnpv golden corpus (spec §7, §11 T1; Microsoft XNPV docs).
+# XNPV(rate, values, dates) — NPV of DATED cash flows on Actual/365 from the
+# first date. Dates are truncated to integer serials; a date before the first
+# date -> #NUM!; mismatched value/date counts -> #NUM!. rate <= -1 -> #NUM!.
+# id<TAB>formula<TAB>setup<TAB>expected
+xnpv-zero-rate	=XNPV(0,A1:A3,B1:B3)	A1=-100;A2=50;A3=60;B1=1;B2=366;B3=731	10
+xnpv-doc	=XNPV(0.09,A1:A5,B1:B5)	A1=-10000;A2=2750;A3=4250;A4=3250;A5=2750;B1=1;B2=42;B3=189;B4=295;B5=360	2347.55419948854
+xnpv-rate-le-neg1	=XNPV(-1,A1:A2,B1:B2)	A1=-100;A2=110;B1=1;B2=366	#NUM!
+xnpv-date-before-first	=XNPV(0.1,A1:A2,B1:B2)	A1=-100;A2=110;B1=10;B2=5	#NUM!
+xnpv-count-mismatch	=XNPV(0.1,A1:A3,B1:B2)	A1=-100;A2=50;A3=60;B1=1;B2=366	#NUM!
+xnpv-error-prop	=XNPV(0.1,A1:A2,B1:B2)	A1=#N/A;A2=110;B1=1;B2=366	#N/A

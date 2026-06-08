@@ -97,6 +97,22 @@ impl Dirty {
         self.set.clone()
     }
 
+    /// Reseed the volatile cells into the dirty cut WITHOUT taking a snapshot
+    /// (spill fixpoint: volatiles reseed ONCE per recalc, not per sub-pass, so a
+    /// volatile cell does not keep the spill-reflow loop alive forever).
+    pub fn reseed_volatile(&mut self) {
+        for v in &self.volatile {
+            self.set.insert(*v);
+        }
+    }
+
+    /// Snapshot the current dirty cut and CLEAR it, so cells dirtied during the
+    /// snapshot's processing (e.g. spill-reflow dependents) accumulate fresh for
+    /// the next drain. Empty result ⇒ the fixpoint has settled.
+    pub fn drain_set(&mut self) -> FxHashSet<CellRef> {
+        std::mem::take(&mut self.set)
+    }
+
     /// Clear the pending dirty cut (after a pass computed it). Volatile
     /// membership is retained (it reseeds next pass).
     pub fn clear(&mut self) {

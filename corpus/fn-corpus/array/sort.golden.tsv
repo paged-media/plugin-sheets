@@ -1,0 +1,8 @@
+# SORT(range,[sort_index],[sort_order],[by_col]) — stable sort (M1 spill).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. order 1 = ascending (default),
+# -1 = descending; any other -> #VALUE!. The host cell holds the first sorted
+# entry's top-left; `expected` projects it.
+sort-asc	=SORT(A1:A3)	A1=3;A2=1;A3=2	1
+sort-desc	=SORT(A1:A3,1,-1)	A1=3;A2=1;A3=2	3
+sort-text	=SORT(A1:A3)	A1=text:c;A2=text:a;A3=text:b	a
+sort-bad-order	=SORT(A1:A2,1,2)	A1=1;A2=2	#VALUE!

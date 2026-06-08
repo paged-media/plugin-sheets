@@ -1,0 +1,10 @@
+# sheet.fn.stat.stdevp golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# Legacy STDEVP(number1,…) == STDEV.P (POPULATION, divide by n); needs >=1
+# number else #DIV/0!. Provenance: ECMA-376 §18.17.7 (STDEVP) — legacy alias of
+# the population estimator.
+two-four-six	=STDEVP(A1:A3)	A1=2;A2=4;A3=6	1.63299316185545
+one-to-five	=STDEVP(A1:A5)	A1=1;A2=2;A3=3;A4=4;A5=5	1.4142135623731
+four-eight	=STDEVP(A1:A2)	A1=4;A2=8	2
+single-number-ok	=STDEVP(A1:A1)	A1=5	0
+empty-div0	=STDEVP(A1:A2)	A1=a;A2=	#DIV/0!

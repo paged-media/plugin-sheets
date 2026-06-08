@@ -1,0 +1,10 @@
+# sheet.fn.fin.syd golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# SYD(cost, salvage, life, per) — sum-of-years'-digits depreciation
+# (cost-salvage)*(life-per+1)*2/(life*(life+1)). life<=0 or per outside
+# 1..=life -> #NUM!. id<TAB>formula<TAB>setup<TAB>expected
+syd-first	=SYD(30000,7500,10,1)	-	4090.90909090909
+syd-last	=SYD(30000,7500,10,10)	-	409.090909090909
+syd-coerce-text	=SYD("30000",7500,10,1)	-	4090.90909090909
+syd-per-too-big	=SYD(30000,7500,10,11)	-	#NUM!
+syd-per-zero	=SYD(30000,7500,10,0)	-	#NUM!
+syd-error-prop	=SYD(30000,7500,1/0,1)	-	#DIV/0!

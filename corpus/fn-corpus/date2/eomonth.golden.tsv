@@ -1,0 +1,12 @@
+# sheet.fn.date.eomonth — EOMONTH(start_date, months), 1900 system, General fmt.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. The serial of the LAST day of the month `months` after
+# start. Expected = serial.
+eomonth.same-month	=EOMONTH(44211,0)		44227
+eomonth.next-month	=EOMONTH(44211,1)		44255
+eomonth.leap-feb	=EOMONTH(43845,1)		43890
+eomonth.backward	=EOMONTH(44286,-1)		44255
+eomonth.year-end	=EOMONTH(44545,0)		44561
+eomonth.from-cells	=EOMONTH(A1,A2)	A1=44211;A2=1	44255
+eomonth.error-prop	=EOMONTH(NA(),0)		#N/A
+eomonth.negative-num	=EOMONTH(-5,0)		#NUM!

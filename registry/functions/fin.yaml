@@ -1,6 +1,6 @@
 # sheet.fn.fin.* — financial family (M1, spec §13 M1). Schema: see
-# math.yaml. All rows status: planned — the M1 fin track wires the kernels
-# under sheet-fn/src/families/fin.rs. Provenance: ECMA-376 §18.17.7 +
+# math.yaml. All rows status: implemented — the M1 fin track wired the
+# kernels under sheet-fn/src/families/fin.rs. Provenance: ECMA-376 §18.17.7 +
 # public Microsoft function docs.
 
 - id: sheet.fn.fin.npv
@@ -10,7 +10,7 @@
   volatility: none
   range_aware: true
   rust: fin::npv
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (NPV) — rate then variadic cash flows"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_npv"]
@@ -23,7 +23,7 @@
   volatility: none
   range_aware: true
   rust: fin::irr
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (IRR) — values, optional guess"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_irr"]
@@ -36,7 +36,7 @@
   volatility: none
   range_aware: true
   rust: fin::xnpv
-  status: planned
+  status: implemented
   provenance: ["Microsoft XNPV (public docs) — rate, values, dates"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_xnpv"]
@@ -49,7 +49,7 @@
   volatility: none
   range_aware: true
   rust: fin::xirr
-  status: planned
+  status: implemented
   provenance: ["Microsoft XIRR (public docs) — values, dates, optional guess"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_xirr"]
@@ -62,7 +62,7 @@
   volatility: none
   range_aware: false
   rust: fin::pmt
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (PMT) — rate, nper, pv, [fv], [type]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_pmt"]
@@ -75,7 +75,7 @@
   volatility: none
   range_aware: false
   rust: fin::ipmt
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (IPMT) — rate, per, nper, pv, [fv], [type]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_ipmt"]
@@ -88,7 +88,7 @@
   volatility: none
   range_aware: false
   rust: fin::ppmt
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (PPMT) — rate, per, nper, pv, [fv], [type]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_ppmt"]
@@ -101,7 +101,7 @@
   volatility: none
   range_aware: false
   rust: fin::fv
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (FV) — rate, nper, pmt, [pv], [type]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_fv"]
@@ -114,7 +114,7 @@
   volatility: none
   range_aware: false
   rust: fin::pv
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (PV) — rate, nper, pmt, [fv], [type]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_pv"]
@@ -127,7 +127,7 @@
   volatility: none
   range_aware: false
   rust: fin::rate
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RATE) — nper, pmt, pv, [fv], [type], [guess]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_rate"]
@@ -140,7 +140,7 @@
   volatility: none
   range_aware: false
   rust: fin::nper
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (NPER) — rate, pmt, pv, [fv], [type]"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_nper"]
@@ -153,7 +153,7 @@
   volatility: none
   range_aware: true
   rust: fin::mirr
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MIRR) — values, finance_rate, reinvest_rate"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_mirr"]
@@ -166,7 +166,7 @@
   volatility: none
   range_aware: false
   rust: fin::sln
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SLN) — straight-line depreciation"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_sln"]
@@ -179,7 +179,7 @@
   volatility: none
   range_aware: false
   rust: fin::syd
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SYD) — sum-of-years-digits depreciation"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_syd"]
@@ -192,7 +192,7 @@
   volatility: none
   range_aware: false
   rust: fin::db
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DB) — fixed-declining-balance depreciation"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_db"]
@@ -205,7 +205,7 @@
   volatility: none
   range_aware: false
   rust: fin::ddb
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DDB) — double-declining-balance depreciation"]
   tests:
     rust: ["sheet-conformance/tests/fn_fin.rs::sheet_fn_fin_ddb"]

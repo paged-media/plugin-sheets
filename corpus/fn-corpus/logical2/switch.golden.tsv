@@ -1,0 +1,16 @@
+# sheet.fn.logical.switch golden corpus (spec §7, §11; Microsoft SWITCH docs).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# SWITCH(expression, value1, result1, [value2, result2], …, [default]) compares
+# expression against each valueN by the cross-type total order coerce::compare
+# (the same equality lookup uses) and returns the first matching resultN.
+# Rulings: a lone trailing argument after the pairs is the default; no match and
+# no default -> #N/A; an error in the expression propagates; text matches
+# case-insensitively (the compare fold); a number never matches numeric text.
+# Args use ';' as the separator (the family decoder splits on ';').
+matches-second-pair	=SWITCH(2;1;"one";2;"two")		two
+matches-first-pair	=SWITCH(1;1;"one";2;"two")		one
+default-when-no-match	=SWITCH(9;1;"one";2;"two";"none")		none
+no-match-no-default-is-na	=SWITCH(9;1;"one")		#N/A
+number-never-matches-text	=SWITCH(5;"5";"text";"def")		def
+text-matches-case-insensitive	=SWITCH("HELLO";"hello";"hit")		hit
+error-expression-propagates	=SWITCH(A1;1;"one")	A1=#REF!	#REF!

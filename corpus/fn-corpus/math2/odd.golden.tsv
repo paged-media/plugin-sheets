@@ -1,0 +1,10 @@
+# ODD — round AWAY from zero to the nearest odd integer (ECMA-376
+# §18.17.7). ODD(0) == 1.
+# id	formula	setup	expected
+odd-already	=ODD(3)	-	3
+odd-up	=ODD(2)	-	3
+odd-neg-already	=ODD(-1)	-	-1
+odd-neg-up	=ODD(-2)	-	-3
+odd-frac	=ODD(1.5)	-	3
+odd-zero	=ODD(0)	-	1
+odd-error	=ODD(A1)	A1=#N/A	#N/A

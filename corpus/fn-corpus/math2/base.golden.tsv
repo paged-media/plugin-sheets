@@ -1,0 +1,15 @@
+# BASE — render a non-negative integer in radix (2..=36) as upper-case
+# text, left-padded with '0' to min_length (Microsoft docs). Negative
+# number / out-of-range radix / bad min_length -> #NUM!. Result is Text;
+# the General projection is the text itself.
+# id	formula	setup	expected
+base-binary	=BASE(7,2)	-	111
+base-hex	=BASE(255,16)	-	FF
+base-zero	=BASE(0,2)	-	0
+base-padded	=BASE(7,2,8)	-	00000111
+base-pad-noop	=BASE(255,16,1)	-	FF
+base-trunc	=BASE(7.9,2)	-	111
+base-negative	=BASE(-1,2)	-	#NUM!
+base-radix-low	=BASE(7,1)	-	#NUM!
+base-radix-high	=BASE(7,37)	-	#NUM!
+base-error	=BASE(A1,2)	A1=#REF!	#REF!

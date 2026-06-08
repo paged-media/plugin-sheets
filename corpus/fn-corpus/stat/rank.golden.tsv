@@ -1,0 +1,10 @@
+# sheet.fn.stat.rank golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# Legacy RANK(number, ref, [order]) == RANK.EQ: descending default, ascending
+# when order is nonzero, ties share the top rank, absent -> #N/A. Provenance:
+# ECMA-376 §18.17.7 (RANK) — legacy alias of RANK.EQ.
+descending-top	=RANK(7,A1:A5)	A1=7;A2=3.5;A3=3.5;A4=1;A5=2	1
+tie-shares-rank	=RANK(3.5,A1:A5)	A1=7;A2=3.5;A3=3.5;A4=1;A5=2	2
+bottom	=RANK(1,A1:A5)	A1=7;A2=3.5;A3=3.5;A4=1;A5=2	5
+ascending-order	=RANK(1,A1:A4,1)	A1=7;A2=3;A3=1;A4=2	1
+absent-na	=RANK(50,A1:A3)	A1=7;A2=3;A3=1	#N/A

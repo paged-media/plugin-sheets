@@ -52,7 +52,7 @@ use sheet_core::{CellValue, DateSystem};
 pub use cache::FormatCache;
 pub use general::format_general;
 pub use parse::{compile, FormatError};
-pub use sections::CompiledFormat;
+pub use sections::{CompiledFormat, FormatColor};
 
 /// Context for a format pass: currently the workbook date system (spec §9).
 /// Reserved for locale once the v1 locale set lands (D-8).
@@ -72,35 +72,67 @@ impl Default for FormatCtx {
 /// Format a [`CellValue`] through a compiled format (spec §9). Section
 /// selection, `General` fallback, the date/time vs numeric split, and the
 /// text mask all resolve here.
+///
+/// FROZEN signature (M0): this is exactly what `sheet-fn`'s TEXT,
+/// `sheet-lower`, and `sheet-js` build against. Internally it now delegates to
+/// [`format_value_styled`] and DROPS the color sidecar — the displayed string
+/// is byte-for-byte unchanged from M0 (a color bracket never altered the
+/// glyphs, only the unmodelled-until-M1 color).
 pub fn format_value(v: &CellValue, fmt: &CompiledFormat, ctx: &FormatCtx) -> String {
+    format_value_styled(v, fmt, ctx).0
+}
+
+/// Format a [`CellValue`] AND return the [`FormatColor`] requested by a
+/// `[Red]`-style color bracket on the SELECTED section (spec §9; ruling
+/// `sheet.format.color-brackets`).
+///
+/// The color is a *sidecar*: Excel's eight named color brackets do not change
+/// the rendered glyphs — they recolor the cell — so the string returned here
+/// is identical to [`format_value`]'s, and the `Option<FormatColor>` carries
+/// the color for the lowering layer to map into a style override. `None` when
+/// the selected section carries no color bracket (every M0 code). The color is
+/// taken from whichever section section-selection picks (so a code like
+/// `[Red][<0]0.0;0.0` only colors negatives).
+pub fn format_value_styled(
+    v: &CellValue,
+    fmt: &CompiledFormat,
+    ctx: &FormatCtx,
+) -> (String, Option<FormatColor>) {
     match v {
-        // Errors render as their token regardless of the code. Text/bool use
-        // the text section (4th) when present, else pass through.
-        CellValue::Error(e) => e.as_str().to_string(),
+        // Errors render as their token regardless of the code (no color).
+        CellValue::Error(e) => (e.as_str().to_string(), None),
+        // Text/bool use the text section (4th) when present, else pass through.
+        // A color bracket on the applicable text section colors the text.
         CellValue::Text(_) | CellValue::Bool(_) => format_text_value(v, fmt),
         CellValue::Empty => match &fmt.text {
-            Some(sec) => render_text_section(sec, ""),
-            None => String::new(),
+            Some(sec) => (render_text_section(sec, ""), sec.color),
+            None => (String::new(), None),
         },
         CellValue::Number(n) => format_number_value(*n, fmt, ctx),
     }
 }
 
 /// Render a numeric cell: pick the section, then dispatch to the date/time
-/// or numeric renderer. An empty section means `General`.
-fn format_number_value(n: f64, fmt: &CompiledFormat, ctx: &FormatCtx) -> String {
-    let (section, force_minus) = fmt.select_numeric(n);
+/// or numeric renderer. An empty section means `General`. Returns the section's
+/// color bracket alongside the string (ruling `sheet.format.color-brackets`).
+fn format_number_value(
+    n: f64,
+    fmt: &CompiledFormat,
+    ctx: &FormatCtx,
+) -> (String, Option<FormatColor>) {
+    let (section, force_minus, color) = fmt.select_numeric_styled(n);
 
-    // The General keyword (or empty whole-code) renders via General.
+    // The General keyword (or empty whole-code) renders via General. A color
+    // bracket on a `[Red]General` section still colors the output.
     if section.general {
-        return format_general(&CellValue::Number(n));
+        return (format_general(&CellValue::Number(n)), color);
     }
     // An explicitly empty section (e.g. from `;;;`) hides the value.
     if section.tokens.is_empty() {
-        return String::new();
+        return (String::new(), color);
     }
 
-    match section.kind {
+    let s = match section.kind {
         sections::SectionKind::DateTime => {
             match datetime::render_datetime(n, section, ctx.date_system) {
                 Some(s) => s,
@@ -113,14 +145,16 @@ fn format_number_value(n: f64, fmt: &CompiledFormat, ctx: &FormatCtx) -> String 
         // A text-classified section selected for a number renders its
         // literals only (no @ substitution for numbers).
         sections::SectionKind::Text => render_text_section(section, ""),
-    }
+    };
+    (s, color)
 }
 
 /// Render a text or bool value. The applicable text section is the 4th when
 /// present, else the 1st section IF it is itself text-classified (a
 /// single-section code like `@@` or `"Note: "@` applies to text). Otherwise
-/// the raw text passes through (bools as TRUE/FALSE).
-fn format_text_value(v: &CellValue, fmt: &CompiledFormat) -> String {
+/// the raw text passes through (bools as TRUE/FALSE). Returns the applicable
+/// text section's color bracket (ruling `sheet.format.color-brackets`).
+fn format_text_value(v: &CellValue, fmt: &CompiledFormat) -> (String, Option<FormatColor>) {
     let raw = match v {
         CellValue::Text(t) => t.to_string(),
         CellValue::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
@@ -136,8 +170,8 @@ fn format_text_value(v: &CellValue, fmt: &CompiledFormat) -> String {
         }
     });
     match text_section {
-        Some(sec) => render_text_section(sec, &raw),
-        None => raw,
+        Some(sec) => (render_text_section(sec, &raw), sec.color),
+        None => (raw, None),
     }
 }
 
@@ -164,6 +198,11 @@ mod tests {
     fn fv(code: &str, v: CellValue) -> String {
         let f = compile(code).unwrap();
         format_value(&v, &f, &FormatCtx::default())
+    }
+
+    fn fvs(code: &str, v: CellValue) -> (String, Option<FormatColor>) {
+        let f = compile(code).unwrap();
+        format_value_styled(&v, &f, &FormatCtx::default())
     }
 
     #[test]
@@ -213,5 +252,42 @@ mod tests {
         // ";;;" hides every value type.
         assert_eq!(fv(";;;", CellValue::Number(5.0)), "");
         assert_eq!(fv(";;;", CellValue::from("x")), "");
+    }
+
+    #[test]
+    fn styled_color_sidecar_drops_in_format_value() {
+        // The string from format_value is identical to the styled string; the
+        // color is dropped (ruling sheet.format.color-brackets).
+        let (s, c) = fvs("[Red]0.00", CellValue::Number(5.0));
+        assert_eq!(s, "5.00");
+        assert_eq!(c, Some(FormatColor::Red));
+        assert_eq!(fv("[Red]0.00", CellValue::Number(5.0)), "5.00");
+    }
+
+    #[test]
+    fn styled_color_follows_selected_section() {
+        // [Red] only on the negative section: positives uncolored.
+        let f = compile("0.0;[Red]-0.0").unwrap();
+        let ctx = FormatCtx::default();
+        assert_eq!(
+            format_value_styled(&CellValue::Number(5.0), &f, &ctx),
+            ("5.0".to_string(), None)
+        );
+        assert_eq!(
+            format_value_styled(&CellValue::Number(-5.0), &f, &ctx),
+            ("-5.0".to_string(), Some(FormatColor::Red))
+        );
+    }
+
+    #[test]
+    fn conditional_default_section_suppresses_minus() {
+        // Excel: the unconditioned fallthrough is the "otherwise" (negative)
+        // section — it does NOT auto-prefix a minus
+        // (ruling sheet.format.conditional-sections; #,##0;#,##0 rule).
+        assert_eq!(fv("[>=100]0;0", CellValue::Number(-5.0)), "5");
+        // The author's own minus is honored exactly once (no doubling).
+        assert_eq!(fv("[>=100]0;-0", CellValue::Number(-5.0)), "-5");
+        // A matched conditional section owns its sign too.
+        assert_eq!(fv("[>100]0;[<0]0;0", CellValue::Number(-5.0)), "5");
     }
 }

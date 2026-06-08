@@ -1,0 +1,13 @@
+# sheet.fn.info.iseven golden corpus (spec §7, §11; ECMA-376 §18.17.7 ISEVEN).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# ISEVEN(number) is TRUE iff the TRUNCATED number is even. The argument coerces
+# through to_number (numeric text like "4" works, TRUE -> 1, blank -> 0), then
+# truncates toward zero before the parity test. Non-numeric text -> #VALUE!; an
+# error argument propagates.
+even-is-true	=ISEVEN(4)		TRUE
+odd-is-false	=ISEVEN(3)		FALSE
+zero-is-even	=ISEVEN(0)		TRUE
+truncates-toward-zero	=ISEVEN(-2.5)		TRUE
+numeric-text-coerces	=ISEVEN("8")		TRUE
+non-numeric-text-is-value	=ISEVEN("x")		#VALUE!
+error-propagates	=ISEVEN(A1)	A1=#REF!	#REF!

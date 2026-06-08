@@ -1,0 +1,10 @@
+# sheet.fn.fin.xirr golden corpus (spec §7, §11 T1; Microsoft XIRR docs).
+# XIRR(values, dates, [guess]) — the rate making XNPV (Actual/365) zero, via
+# Newton/bisection from guess (default 0.1). A date before the first date ->
+# #NUM!; mismatched counts -> #NUM!. id<TAB>formula<TAB>setup<TAB>expected
+xirr-one-year	=XIRR(A1:A2,B1:B2)	A1=-100;A2=110;B1=1;B2=366	0.1
+xirr-two-year	=XIRR(A1:A2,B1:B2)	A1=-100;A2=121;B1=1;B2=731	0.1
+xirr-guess	=XIRR(A1:A2,B1:B2,0.2)	A1=-100;A2=110;B1=1;B2=366	0.1
+xirr-date-before-first	=XIRR(A1:A2,B1:B2)	A1=-100;A2=110;B1=10;B2=5	#NUM!
+xirr-count-mismatch	=XIRR(A1:A3,B1:B2)	A1=-100;A2=50;A3=60;B1=1;B2=366	#NUM!
+xirr-error-prop	=XIRR(A1:A2,B1:B2)	A1=#N/A;A2=110;B1=1;B2=366	#N/A

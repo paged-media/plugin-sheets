@@ -139,15 +139,17 @@ impl Printer<'_> {
     /// against exactly these (the canonical-print contract, like A1 refs).
     fn structured_ref(&self, s: &StructuredRef, out: &mut String) {
         // ThisRow with an empty table name is the in-table `[@Col]` shorthand.
+        // A plain column prints `[@Col]`; a column that needs escaping prints
+        // the bracketed `[@[Col Name]]` form Excel emits (the `@` shorthand
+        // takes a single bracketed column, ECMA-376 §18.17.2.4).
         if s.area == TableArea::ThisRow && s.table.is_empty() {
             out.push_str("[@");
-            // ThisRow always names a column span here (no bare `[@]`).
             if let Some(c) = &s.col_start {
-                out.push_str(c);
+                push_column(out, c);
             }
             if let Some(c) = &s.col_end {
                 out.push(':');
-                out.push_str(c);
+                push_bracketed_col(out, c);
             }
             out.push(']');
             return;
@@ -164,18 +166,19 @@ impl Printer<'_> {
         };
 
         match (area_tok, &s.col_start, &s.col_end) {
-            // No area specifier and a single column: `Table1[Col]`.
+            // No area specifier and a single column: `Table1[Col]` (plain) or
+            // `Table1[[Col Name]]` (the column needs bracket-escaping).
             (None, Some(c), None) => {
                 out.push('[');
-                out.push_str(c);
+                push_column(out, c);
                 out.push(']');
             }
             // No area specifier and a column span: `Table1[[Col1]:[Col2]]`.
             (None, Some(c0), Some(c1)) => {
                 out.push('[');
-                push_bracketed(out, c0);
+                push_bracketed_col(out, c0);
                 out.push(':');
-                push_bracketed(out, c1);
+                push_bracketed_col(out, c1);
                 out.push(']');
             }
             // No area, no column (whole Data body): `Table1[]`.
@@ -194,7 +197,7 @@ impl Printer<'_> {
                 out.push('[');
                 push_bracketed(out, area);
                 out.push(',');
-                push_bracketed(out, c);
+                push_bracketed_col(out, c);
                 out.push(']');
             }
             // An area specifier with a column span:
@@ -203,9 +206,9 @@ impl Printer<'_> {
                 out.push('[');
                 push_bracketed(out, area);
                 out.push(',');
-                push_bracketed(out, c0);
+                push_bracketed_col(out, c0);
                 out.push(':');
-                push_bracketed(out, c1);
+                push_bracketed_col(out, c1);
                 out.push(']');
             }
         }
@@ -342,11 +345,53 @@ impl Printer<'_> {
     }
 }
 
-/// Wrap `inner` in `[ ]` (a structured-ref bracketed token, e.g. `[Col]`).
+/// Wrap `inner` in `[ ]` (a structured-ref bracketed token, e.g. `[#All]` or
+/// `[Col]`). Used for `#`-area keywords (which never need escaping).
 fn push_bracketed(out: &mut String, inner: &str) {
     out.push('[');
     out.push_str(inner);
     out.push(']');
+}
+
+/// Emit a structured-ref COLUMN in the *minimal* canonical form: a plain
+/// simple column `Col` when the name has no characters that would confuse the
+/// bracket grammar, else the bracket-escaped `[Col Name]` form. Caller has
+/// already opened the outer `[`; this writes only the column token.
+fn push_column(out: &mut String, name: &str) {
+    if col_needs_brackets(name) {
+        push_bracketed_col(out, name);
+    } else {
+        out.push_str(name);
+    }
+}
+
+/// Emit a column wrapped in its own `[ ]` with the `'`-escaping ECMA-376
+/// §18.17.2.4 requires (`[`, `]`, `#`, `'`, `@` are each prefixed with `'`).
+/// This is the form used inside item lists / spans, where the column is always
+/// individually bracketed.
+fn push_bracketed_col(out: &mut String, name: &str) {
+    out.push('[');
+    for ch in name.chars() {
+        if matches!(ch, '[' | ']' | '#' | '\'' | '@') {
+            out.push('\'');
+        }
+        out.push(ch);
+    }
+    out.push(']');
+}
+
+/// A column name needs the bracketed form (`[[Col]]` rather than `[Col]`) when
+/// a *simple* (run-to-`]`) token would re-parse differently: it contains a
+/// space or any structural character (`[ ] # ' @ : ,`), is empty, or would be
+/// read as an `#`-area keyword. Excel emits the bracketed form for exactly
+/// these (the parse-print fixpoint then recovers the same AST).
+fn col_needs_brackets(name: &str) -> bool {
+    name.is_empty()
+        || name.starts_with('#')
+        || name.starts_with('@')
+        || name
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '[' | ']' | '#' | '\'' | '@' | ':' | ','))
 }
 
 /// The printing precedence of an expression node.

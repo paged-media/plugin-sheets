@@ -1,7 +1,8 @@
 # sheet.fn.logical.* (M1 additions) — logical family. Schema: see
 # math.yaml. Rust kernels under sheet-fn/src/families/logical2.rs (the M1
-# logical track). All rows status: planned. Provenance: ECMA-376
-# §18.17.7 + public Microsoft function docs.
+# logical track). Provenance: ECMA-376 §18.17.7 + public Microsoft function
+# docs. Family token stays `logical` (the M1 rows extend the same family);
+# the `2` is only the source-file/track suffix.
 
 - id: sheet.fn.logical.ifs
   name: IFS
@@ -10,11 +11,11 @@
   volatility: none
   range_aware: false
   rust: logical2::ifs
-  status: planned
-  provenance: ["Microsoft IFS (public docs) — variadic (condition, value) pairs; min one pair"]
+  status: implemented
+  provenance: ["Microsoft IFS (public docs) — variadic (condition, value) pairs; min one pair; no match -> #N/A; odd arity -> #N/A"]
   tests:
-    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_ifs"]
-    corpus: ["corpus/fn-corpus/logical/ifs.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_logical2.rs::sheet_fn_logical_ifs"]
+    corpus: ["corpus/fn-corpus/logical2/ifs.golden.tsv"]
 
 - id: sheet.fn.logical.switch
   name: SWITCH
@@ -23,11 +24,11 @@
   volatility: none
   range_aware: false
   rust: logical2::switch
-  status: planned
-  provenance: ["Microsoft SWITCH (public docs) — expression, then variadic (value, result) pairs, optional default"]
+  status: implemented
+  provenance: ["Microsoft SWITCH (public docs) — expression, then variadic (value, result) pairs, optional default; cross-type equality via coerce::compare"]
   tests:
-    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_switch"]
-    corpus: ["corpus/fn-corpus/logical/switch.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_logical2.rs::sheet_fn_logical_switch"]
+    corpus: ["corpus/fn-corpus/logical2/switch.golden.tsv"]
 
 - id: sheet.fn.logical.xor
   name: XOR
@@ -36,11 +37,11 @@
   volatility: none
   range_aware: true
   rust: logical2::xor
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (XOR) — variadic logical exclusive-or"]
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (XOR) — variadic logical exclusive-or (TRUE iff an odd count of TRUEs); range-aware like AND/OR"]
   tests:
-    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_xor"]
-    corpus: ["corpus/fn-corpus/logical/xor.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_logical2.rs::sheet_fn_logical_xor"]
+    corpus: ["corpus/fn-corpus/logical2/xor.golden.tsv"]
 
 - id: sheet.fn.logical.ifna
   name: IFNA
@@ -49,8 +50,8 @@
   volatility: none
   range_aware: false
   rust: logical2::ifna
-  status: planned
-  provenance: ["Microsoft IFNA (public docs) — value, value_if_na"]
+  status: implemented
+  provenance: ["Microsoft IFNA (public docs) — value, value_if_na; catches ONLY #N/A"]
   tests:
-    rust: ["sheet-conformance/tests/fn_logical.rs::sheet_fn_logical_ifna"]
-    corpus: ["corpus/fn-corpus/logical/ifna.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_logical2.rs::sheet_fn_logical_ifna"]
+    corpus: ["corpus/fn-corpus/logical2/ifna.golden.tsv"]

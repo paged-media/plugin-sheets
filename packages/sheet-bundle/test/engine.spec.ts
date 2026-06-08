@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import type { LoweredContent } from "@paged-media/sheet-host-model";
+import type { GridScene, LoweredContent } from "@paged-media/sheet-host-model";
 
 import {
   ENGINE_NOT_BUILT,
@@ -24,6 +24,13 @@ function fakeWasm() {
     rows: [{ index: 0, heightPt: 16, cells: [{ col: 0, text: "x", align: "left" }] }],
     rules: { h: [], v: [] },
     merges: [],
+  };
+  const scene: GridScene = {
+    viewport: { firstRow: 0, firstCol: 0, rows: 1, cols: 1, xOffsets: [0, 40], yOffsets: [0, 16] },
+    cells: [{ row: 0, col: 0, text: "x", align: "left", styleKey: 0 }],
+    styles: [],
+    gridlines: { h: [], v: [] },
+    selection: null,
   };
   const wasm: SheetWasmEngine = {
     load_xlsx(bytes) {
@@ -45,6 +52,19 @@ function fakeWasm() {
       calls.push({ method: "get_range_lowered", args: [sheet, range, opts] });
       return lowered;
     },
+    get_grid_scene(sheet, firstRow, firstCol, wPt, hPt, opts) {
+      calls.push({
+        method: "get_grid_scene",
+        args: [sheet, firstRow, firstCol, wPt, hPt, opts],
+      });
+      return scene;
+    },
+    set_grid_selection(sheet, anchorRow, anchorCol, rows, cols) {
+      calls.push({
+        method: "set_grid_selection",
+        args: [sheet, anchorRow, anchorCol, rows, cols],
+      });
+    },
     list_sheets() {
       calls.push({ method: "list_sheets", args: [] });
       return [{ id: 0, name: "Sheet1", rows: 10, cols: 4 }];
@@ -53,12 +73,12 @@ function fakeWasm() {
       calls.push({ method: "free", args: [] });
     },
   };
-  return { wasm, calls, lowered };
+  return { wasm, calls, lowered, scene };
 }
 
 describe("sheet_plugin_engine_boot: facade mapping", () => {
   it("forwards every camelCase method to its snake_case wasm twin", () => {
-    const { wasm, calls, lowered } = fakeWasm();
+    const { wasm, calls, lowered, scene } = fakeWasm();
     const engine = wrapEngine(wasm);
 
     const bytes = new Uint8Array([9]);
@@ -71,6 +91,10 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(engine.getRangeLowered(0, "A1:B2", { includeGridRules: true })).toBe(
       lowered,
     );
+    expect(
+      engine.getGridScene(0, 0, 0, 480, 320, { includeGridlines: true }),
+    ).toBe(scene);
+    engine.setGridSelection(0, 1, 2, 3, 4);
     expect(engine.listSheets()).toEqual([
       { id: 0, name: "Sheet1", rows: 10, cols: 4 },
     ]);
@@ -82,12 +106,16 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "set_cell",
       "get_cell_display",
       "get_range_lowered",
+      "get_grid_scene",
+      "set_grid_selection",
       "list_sheets",
       "free",
     ]);
     // argument fidelity through the facade.
     expect(calls[0].args[0]).toBe(bytes);
     expect(calls[4].args).toEqual([0, "A1:B2", { includeGridRules: true }]);
+    expect(calls[5].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
+    expect(calls[6].args).toEqual([0, 1, 2, 3, 4]);
   });
 
   it("dispose maps to free()", () => {

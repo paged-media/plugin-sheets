@@ -1,0 +1,24 @@
+# sheet.format.fractions — fraction formats # ?/?, # ??/??, # ?/16
+# (spec §9; ECMA-376 §18.8.31 fraction codes). The fitted form (# ?/?,
+# # ??/??) finds the best n/d within the denominator digit budget
+# (1..=10^den_digits-1), preferring the smaller denominator on ties. The
+# fixed form (# ?/16, # ?/8) reduces to the literal denominator.
+# Rulings: an empty integer # slot blanks (leading space); ? numerator/
+# denominator slots space-pad to their width (so # ??/?? of 2/3 renders
+# "  2/ 3", a documented T0 alignment approximation); a numerator that
+# rounds up carries into the integer. The zero-fraction blank-slot case
+# (# ?/? of 4 -> "4    " with trailing spaces) is asserted in the rust test
+# rather than here, to keep goldens free of trailing whitespace.
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+frac-half	# ?/?	0.5	 1/2
+frac-mixed-quarter	# ?/?	2.25	2 1/4
+frac-16ths	# ??/??	0.3125	  5/16
+frac-twothirds-1	# ?/?	0.6666666667	 2/3
+frac-twothirds-2	# ??/??	0.6666666667	  2/ 3
+frac-fixed16	# ?/16	0.5	 8/16
+frac-fixed8	# ?/8	0.5	 4/8
+frac-improper	?/?	0.5	1/2
+frac-carry	# ??/??	2.96	2 24/25
+frac-negative	# ?/?	-2.25	-2 1/4
+frac-seventh	# ??/??	0.142857142857	  1/ 7
+frac-eighth-fit	# ?/?	0.875	 7/8

@@ -6,6 +6,7 @@
 // session bookkeeping + the host write path.
 
 import type { BundleHost } from "@paged-media/plugin-api";
+import type { GridScene, GridSelection } from "@paged-media/sheet-host-model";
 
 import { bootEngine, ENGINE_NOT_BUILT, type SheetEngine } from "./engine";
 import { lowerSelectionToFrame } from "./lower";
@@ -42,6 +43,11 @@ export interface SessionState {
   selectedRange: string | null;
   /** Set when boot failed (e.g. the artifact isn't built — S-10). */
   bootError: string | null;
+  /** The sheets-mode grid selection rectangle (spec §8.1), or null. The
+   *  grid panel sets it on click; [`gridScene`] overlays it on the scene so
+   *  the SVG draws the selection chrome (the engine also gets told via
+   *  `setGridSelection` so the JOINS-phase wasm can carry it natively). */
+  gridSelection: GridSelection | null;
 }
 
 export interface WorkbookSession {
@@ -60,6 +66,30 @@ export interface WorkbookSession {
   /** Lower the active sheet's selected range to a new page frame
    *  (the two-phase flow in lower.ts). Returns the created frame id. */
   lowerSelection(): Promise<string | null>;
+  /** Window the active sheet into a [`GridScene`] for the grid panel (spec
+   *  §8.1). Delegates the windowing to `engine.getGridScene` (Rust) and
+   *  overlays the session's current [`gridSelection`] onto the scene.
+   *  Returns null when there is no engine / active sheet. */
+  gridScene(
+    firstRow: number,
+    firstCol: number,
+    wPt: number,
+    hPt: number,
+  ): GridScene | null;
+  /** Record the grid selection rectangle (spec §8.1): forwards to the
+   *  engine (`setGridSelection`) AND holds it in session state so the next
+   *  `gridScene` paints it. Emits a change so the panel re-renders. */
+  setGridSelection(
+    anchorRow: number,
+    anchorCol: number,
+    rows: number,
+    cols: number,
+  ): void;
+  /** Commit one cell edit (spec §8.1 panel edit contract): `engine.setCell`
+   *  then refresh (emit). All spreadsheet semantics are the engine's; this
+   *  only drives the write + signal. Returns false when there is no engine
+   *  / active sheet or the write throws (never throws). */
+  editCell(sheet: number, row: number, col: number, input: string): boolean;
   /** Tear down: free the engine, drop listeners. */
   dispose(): void;
 }
@@ -92,6 +122,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     activeSheet: null,
     selectedRange: null,
     bootError: null,
+    gridSelection: null,
   };
 
   function defaultRangeForActive(): void {
@@ -123,6 +154,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       try {
         state.engine.loadXlsx(bytes);
         state.fileName = name;
+        state.gridSelection = null;
         const sheets = state.engine.listSheets();
         state.activeSheet = sheets.length > 0 ? sheets[0].id : null;
         defaultRangeForActive();
@@ -137,6 +169,8 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
 
     setActiveSheet(id) {
       state.activeSheet = id;
+      // Selection is sheet-relative — clear it on a sheet switch.
+      state.gridSelection = null;
       defaultRangeForActive();
       emitter.emit();
     },
@@ -157,6 +191,65 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         state.activeSheet,
         state.selectedRange,
       );
+    },
+
+    gridScene(firstRow, firstCol, wPt, hPt) {
+      if (!state.engine || state.activeSheet === null) return null;
+      let scene: GridScene;
+      try {
+        scene = state.engine.getGridScene(
+          state.activeSheet,
+          firstRow,
+          firstCol,
+          wPt,
+          hPt,
+          { includeGridlines: true },
+        );
+      } catch (err) {
+        host.log.warn("gridScene: engine windowing failed", err);
+        return null;
+      }
+      // Overlay the session selection so the SVG draws selection chrome
+      // (until the JOINS-phase wasm carries selection on the scene itself).
+      if (state.gridSelection) scene.selection = state.gridSelection;
+      return scene;
+    },
+
+    setGridSelection(anchorRow, anchorCol, rows, cols) {
+      state.gridSelection = { anchorRow, anchorCol, rows, cols };
+      if (state.engine && state.activeSheet !== null) {
+        try {
+          state.engine.setGridSelection(
+            state.activeSheet,
+            anchorRow,
+            anchorCol,
+            rows,
+            cols,
+          );
+        } catch (err) {
+          // The wasm side lands in JOINS — tolerate its absence; the
+          // session-held selection still drives the overlay.
+          host.log.debug("setGridSelection: engine not ready", err);
+        }
+      }
+      emitter.emit();
+    },
+
+    editCell(sheet, row, col, input) {
+      if (!state.engine || state.activeSheet === null) {
+        host.log.warn("editCell: no workbook / sheet");
+        return false;
+      }
+      try {
+        state.engine.setCell(sheet, row, col, input);
+      } catch (err) {
+        host.log.error("editCell: engine setCell failed", err);
+        return false;
+      }
+      // The dirty cut recomputed in Rust; refresh the panel (it re-requests
+      // the windowed scene on the next render).
+      emitter.emit();
+      return true;
     },
 
     dispose() {

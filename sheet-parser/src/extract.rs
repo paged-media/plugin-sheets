@@ -33,11 +33,18 @@ pub struct RefSet {
     pub ranges: Vec<RangeRef>,
     /// Defined-name ids referenced.
     pub names: Vec<NameId>,
-    /// Structured-reference table names (M1 tables track). A structured ref
-    /// depends on its table by NAME, not by A1 geometry; the dependency
-    /// graph resolves the name to a range when the table model is wired
-    /// (M1 Phase B). Usually 0 or 1 entry, so a `SmallVec<[_; 1]>`.
+    /// Structured-reference table names (M1 tables track). A NAMED structured
+    /// ref (`Table1[Col]`) depends on its table by NAME, not by A1 geometry;
+    /// the dependency graph resolves the name to a range. Usually 0 or 1 entry,
+    /// so a `SmallVec<[_; 1]>`. The bare in-table forms (`[@Col]`) carry an
+    /// EMPTY name and are surfaced via [`RefSet::has_self_table_ref`] instead.
     pub tables: SmallVec<[CompactString; 1]>,
+    /// True if the formula contains a bare in-table structured reference (the
+    /// `[@Col]` / `[[#This Row],…]` empty-table forms): its anchor table is the
+    /// table CONTAINING the formula's own cell, which only the graph can resolve
+    /// (it has the cell + the model). The graph registers a dep on that table's
+    /// box so a write inside the table reflows the in-table formula.
+    pub has_self_table_ref: bool,
     /// True if any called function is registry-`volatile`.
     pub has_volatile: bool,
 }
@@ -75,12 +82,14 @@ fn walk(e: &Expr, set: &mut RefSet) {
                 }
             }
         }
-        // A structured ref depends on its table by name (the ThisRow
-        // `[@Col]` form carries an empty table name — the in-table anchor is
-        // resolved from the formula's own cell in Phase B, so an empty name
-        // is not recorded as a dependency).
+        // A NAMED structured ref depends on its table by name; the bare
+        // in-table form (`[@Col]`, empty table name) anchors to the table
+        // containing the formula's OWN cell — the graph resolves that, so we
+        // only flag its presence here.
         Expr::StructuredRef(s) => {
-            if !s.table.is_empty() {
+            if s.table.is_empty() {
+                set.has_self_table_ref = true;
+            } else {
                 set.tables.push(s.table.clone());
             }
         }

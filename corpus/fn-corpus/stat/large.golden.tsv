@@ -1,0 +1,11 @@
+# sheet.fn.stat.large golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# LARGE(array, k): the k-th largest value (k=1 is the maximum). k truncated to
+# an integer; k<1 or k>count -> #NUM!. Range non-numerics skipped; error cell
+# propagates. Provenance: ECMA-376 §18.17.7 (LARGE).
+largest	=LARGE(A1:A5,1)	A1=3;A2=1;A3=4;A4=1;A5=5	5
+second	=LARGE(A1:A5,2)	A1=3;A2=1;A3=4;A4=1;A5=5	4
+third	=LARGE(A1:A5,3)	A1=3;A2=1;A3=4;A4=1;A5=5	3
+k-truncates	=LARGE(A1:A5,2.9)	A1=3;A2=1;A3=4;A4=1;A5=5	4
+k-too-big-num	=LARGE(A1:A3,4)	A1=3;A2=1;A3=4	#NUM!
+k-zero-num	=LARGE(A1:A3,0)	A1=3;A2=1;A3=4	#NUM!

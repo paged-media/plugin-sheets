@@ -1,0 +1,11 @@
+# sheet.fn.info.type golden corpus (spec §7, §11; ECMA-376 §18.17.7 TYPE).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# TYPE(value) classifies by type code: 1 number, 2 text, 4 logical, 16 error,
+# 64 array (unreachable on the scalar door). TYPE INSPECTS — an error argument
+# is the subject, classified as 16, never returned. A blank cell classifies as
+# a number (1), matching Excel's TYPE over an empty cell.
+number-is-1	=TYPE(42)		1
+text-is-2	=TYPE("hi")		2
+logical-is-4	=TYPE(TRUE)		4
+error-is-16	=TYPE(A1)	A1=#N/A	16
+blank-is-1	=TYPE(A1)	A1=	1

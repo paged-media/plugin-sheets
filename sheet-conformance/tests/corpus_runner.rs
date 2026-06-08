@@ -114,18 +114,19 @@ fn apply_setup(e: &mut Engine, addr: &str, raw: &str, case_id: &str) {
 /// (the engine's en-US dialect), leaving `;` inside quoted strings intact.
 /// String literals in the dialect are double-quoted with `""` escaping.
 fn normalize_separators(formula: &str) -> String {
+    // Iterate CHARS, not bytes: a non-ASCII string literal (e.g. UNICODE("€"))
+    // must reach the engine intact — byte iteration would split the multi-byte
+    // char into Latin-1 fragments. Only the ASCII `"` and `;` are significant.
     let mut out = String::with_capacity(formula.len());
     let mut in_string = false;
-    let bytes = formula.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let ch = bytes[i] as char;
+    let mut chars = formula.chars().peekable();
+    while let Some(ch) = chars.next() {
         if ch == '"' {
             // A doubled quote inside a string is an escaped quote; copy both.
-            if in_string && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+            if in_string && chars.peek() == Some(&'"') {
                 out.push('"');
                 out.push('"');
-                i += 2;
+                chars.next();
                 continue;
             }
             in_string = !in_string;
@@ -135,7 +136,6 @@ fn normalize_separators(formula: &str) -> String {
         } else {
             out.push(ch);
         }
-        i += 1;
     }
     out
 }
@@ -286,6 +286,51 @@ fn sheet_calc_corpus_math() {
 #[test]
 fn sheet_calc_corpus_text() {
     run_family("text");
+}
+
+// ── M1 T1 families — the same end-to-end calc gate over the T1 goldens.
+// Each family's kernels are also direct-dispatch tested in fn_<family>.rs;
+// these replay the goldens through the full parse -> calc -> fn -> format
+// path so the e2e projection is conformance-verified too.
+
+#[test]
+fn sheet_calc_corpus_stat() {
+    run_family("stat");
+}
+
+#[test]
+fn sheet_calc_corpus_fin() {
+    run_family("fin");
+}
+
+#[test]
+fn sheet_calc_corpus_text2() {
+    run_family("text2");
+}
+
+#[test]
+fn sheet_calc_corpus_date2() {
+    run_family("date2");
+}
+
+#[test]
+fn sheet_calc_corpus_math2() {
+    run_family("math2");
+}
+
+#[test]
+fn sheet_calc_corpus_logical2() {
+    run_family("logical2");
+}
+
+#[test]
+fn sheet_calc_corpus_info2() {
+    run_family("info2");
+}
+
+#[test]
+fn sheet_calc_corpus_lookup2() {
+    run_family("lookup2");
 }
 
 #[cfg(test)]

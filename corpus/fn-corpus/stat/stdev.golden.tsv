@@ -1,0 +1,10 @@
+# sheet.fn.stat.stdev golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# Legacy STDEV(number1,…) == STDEV.S (SAMPLE, divide by n-1); needs >=2 numbers
+# else #DIV/0!. Provenance: ECMA-376 §18.17.7 (STDEV) — legacy alias of the
+# sample estimator.
+two-four-six	=STDEV(A1:A3)	A1=2;A2=4;A3=6	2
+one-to-five	=STDEV(A1:A5)	A1=1;A2=2;A3=3;A4=4;A5=5	1.58113883008419
+four-eight	=STDEV(A1:A2)	A1=4;A2=8	2.82842712474619
+single-number-div0	=STDEV(A1:A1)	A1=5	#DIV/0!
+error-propagates	=STDEV(A1:A3)	A1=1;A2=#VALUE!;A3=3	#VALUE!

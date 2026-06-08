@@ -1,0 +1,9 @@
+# ATANH — inverse hyperbolic tangent; domain |x|<1 else #NUM! (ruling).
+# Values are the 15-significant-digit General projection.
+# id	formula	setup	expected
+atanh-zero	=ATANH(0)	-	0
+atanh-half	=ATANH(0.5)	-	0.549306144334055
+atanh-neg-half	=ATANH(-0.5)	-	-0.549306144334055
+atanh-one-boundary	=ATANH(1)	-	#NUM!
+atanh-neg-one	=ATANH(-1)	-	#NUM!
+atanh-above	=ATANH(2)	-	#NUM!

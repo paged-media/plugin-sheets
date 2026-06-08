@@ -1,0 +1,14 @@
+# sheet.fn.date.days360 — DAYS360(start, end, [method]), 1900 system, General.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.4. 30/360 day count: method FALSE/omitted = US (NASD),
+# TRUE = European. Bug-for-bug US rule: a start on EOM-February (or day 31)
+# becomes day 30, then end day 31 collapses only when the adjusted start >= 30.
+# 43861=2020-01-31, 43921=2020-03-31, 44255=2021-02-28, 44286=2021-03-31,
+# 43831=2020-01-01, 44196=2020-12-31.
+days360.us-both-31	=DAYS360(43861,43921)		60
+days360.eu-both-31	=DAYS360(43861,43921,TRUE)		60
+days360.us-feb-eom-start	=DAYS360(44255,44286)		30
+days360.us-full-year	=DAYS360(43831,44196)		360
+days360.eu-full-year	=DAYS360(43831,44196,TRUE)		359
+days360.from-cells	=DAYS360(A1,A2)	A1=43861;A2=43921	60
+days360.error-prop	=DAYS360(1/0,43921)		#DIV/0!

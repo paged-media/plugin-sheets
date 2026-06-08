@@ -17,7 +17,7 @@
 //! its section [`classifies`](crate::sections::SectionKind::DateTime) as
 //! date/time. English (en) locale month/day names ship inline (T0 locale).
 
-use crate::sections::{Section, Token};
+use crate::sections::{ElapsedUnit, Section, Token};
 use crate::serial;
 use sheet_core::DateSystem;
 use std::fmt::Write as _;
@@ -103,6 +103,10 @@ pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> O
         .any(|t| matches!(t, Token::AmPm { .. }));
     let (h12, pm) = to_12h(h);
 
+    // Elapsed-time totals (spec §9, ruling `sheet.format.elapsed-brackets`).
+    // Total accumulators over the WHOLE serial — not the modular wall clock.
+    let elapsed = serial::serial_to_elapsed(serial_val).unwrap_or((0, 0, 0));
+
     let mut out = String::new();
     for t in &section.tokens {
         match t {
@@ -171,7 +175,16 @@ pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> O
                     out.push_str(if pm { "P" } else { "A" });
                 }
             }
-            // Numeric/text tokens are not expected inside a date section; skip.
+            Token::Elapsed { unit, pad } => {
+                let total = match unit {
+                    ElapsedUnit::Hours => elapsed.0,
+                    ElapsedUnit::Minutes => elapsed.1,
+                    ElapsedUnit::Seconds => elapsed.2,
+                };
+                let _ = write!(out, "{total:0pad$}");
+            }
+            Token::Fill(c) => out.push(*c),
+            // Numeric/fraction tokens are not expected inside a date section; skip.
             _ => {}
         }
     }

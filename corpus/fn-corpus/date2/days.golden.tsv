@@ -1,0 +1,11 @@
+# sheet.fn.date.days — DAYS(end_date, start_date), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# Microsoft public docs. Signed count `end - start`; NOTE the argument order
+# (end FIRST). Reversed -> negative. Expected = the day count.
+days.basic	=DAYS(44275,43845)		430
+days.reversed	=DAYS(43845,44275)		-430
+days.same-day	=DAYS(44197,44197)		0
+days.one-day	=DAYS(44198,44197)		1
+days.from-cells	=DAYS(A1,A2)	A1=44275;A2=43845	430
+days.error-prop	=DAYS(NA(),44197)		#N/A
+days.negative-num	=DAYS(44197,-1)		#NUM!

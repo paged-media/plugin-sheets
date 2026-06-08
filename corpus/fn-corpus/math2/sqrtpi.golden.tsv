@@ -1,0 +1,9 @@
+# SQRTPI — sqrt(number * pi) (ECMA-376 §18.17.7); negative -> #NUM!.
+# Values are the 15-significant-digit General projection.
+# id	formula	setup	expected
+sqrtpi-zero	=SQRTPI(0)	-	0
+sqrtpi-one	=SQRTPI(1)	-	1.77245385090552
+sqrtpi-four	=SQRTPI(4)	-	3.54490770181103
+sqrtpi-two	=SQRTPI(2)	-	2.506628274631
+sqrtpi-negative	=SQRTPI(-1)	-	#NUM!
+sqrtpi-error	=SQRTPI(A1)	A1=#VALUE!	#VALUE!

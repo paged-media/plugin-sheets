@@ -1,0 +1,12 @@
+# sheet.fn.stat.rank-eq golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# RANK.EQ(number, ref, [order]): rank of number within ref; default order 0
+# (descending, largest = rank 1), any nonzero order ascending. Ties share the
+# top rank (the next rank is skipped). number absent from ref -> #N/A.
+# Provenance: Microsoft RANK.EQ (public docs).
+descending-top	=RANK.EQ(7,A1:A5)	A1=7;A2=3.5;A3=3.5;A4=1;A5=2	1
+tie-shares-rank	=RANK.EQ(3.5,A1:A5)	A1=7;A2=3.5;A3=3.5;A4=1;A5=2	2
+tie-skips-next	=RANK.EQ(2,A1:A5)	A1=7;A2=3.5;A3=3.5;A4=1;A5=2	4
+ascending-order	=RANK.EQ(1,A1:A4,1)	A1=7;A2=3;A3=1;A4=2	1
+ascending-top	=RANK.EQ(7,A1:A4,1)	A1=7;A2=3;A3=1;A4=2	4
+absent-na	=RANK.EQ(99,A1:A3)	A1=7;A2=3;A3=1	#N/A

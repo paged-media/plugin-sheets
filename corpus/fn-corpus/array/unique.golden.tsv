@@ -1,0 +1,8 @@
+# UNIQUE(range,[by_col],[exactly_once]) — first-seen distinct (M1 spill).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. Text equality is
+# case-insensitive (Excel ruling). The host cell (anchor) holds the first
+# distinct entry's top-left; `expected` projects it.
+uniq-first	=UNIQUE(A1:A4)	A1=1;A2=2;A3=1;A4=3	1
+uniq-text-ci	=UNIQUE(A1:A3)	A1=text:a;A2=text:A;A3=text:b	a
+uniq-once-drops	=UNIQUE(A1:A4,FALSE,TRUE)	A1=1;A2=2;A3=1;A4=3	2
+uniq-all-distinct	=UNIQUE(A1:A2)	A1=5;A2=6	5

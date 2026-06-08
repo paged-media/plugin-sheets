@@ -33,15 +33,16 @@
 //!
 //! The facade boots `new mod.SheetEngine()` (an empty workbook), then calls the
 //! snake_case instance methods `load_xlsx` / `save_xlsx` / `set_cell` /
-//! `get_cell_display` / `get_range_lowered` / `list_sheets` / `free`. The names
-//! and JSON shapes below match that contract exactly; `metadata` / `set_now`
-//! are additive (the panel uses them).
+//! `get_cell_display` / `get_range_lowered` / `get_grid_scene` /
+//! `set_grid_selection` / `list_sheets` / `free`. The names and JSON shapes
+//! below match that contract exactly; `metadata` / `set_now` are additive (the
+//! panel uses them).
 
 pub mod core;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use crate::core::{LowerOptions, SheetSession};
+    use crate::core::{GridSceneOptions, LowerOptions, SheetSession};
     use wasm_bindgen::prelude::*;
 
     /// The wasm class the bundle consumes (`sheet-bundle/src/engine.ts`'s
@@ -115,6 +116,47 @@ mod wasm {
                 .get_range_lowered(sheet, range, opts)
                 .map_err(map_err)?;
             to_js(&lowered)
+        }
+
+        /// Window a sheet into a `GridScene` for the sheets-mode grid surface
+        /// (`{viewport,cells,styles,gridlines,selection}`; spec §8.1). Folds in
+        /// any selection recorded by `set_grid_selection` for the same sheet.
+        pub fn get_grid_scene(
+            &self,
+            sheet: u16,
+            first_row: u32,
+            first_col: u32,
+            w_pt: f64,
+            h_pt: f64,
+            opts: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            // Accept undefined/null/partial — serde defaults fill the rest.
+            let opts: GridSceneOptions = if opts.is_undefined() || opts.is_null() {
+                GridSceneOptions::default()
+            } else {
+                serde_wasm_bindgen::from_value(opts)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let scene = self
+                .session
+                .get_grid_scene(sheet, first_row, first_col, w_pt, h_pt, opts)
+                .map_err(map_err)?;
+            to_js(&scene)
+        }
+
+        /// Record the sheets-mode selection rectangle (consumed by the next
+        /// `get_grid_scene` for the same sheet).
+        pub fn set_grid_selection(
+            &mut self,
+            sheet: u16,
+            anchor_row: u32,
+            anchor_col: u32,
+            rows: u32,
+            cols: u32,
+        ) -> Result<(), JsValue> {
+            self.session
+                .set_grid_selection(sheet, anchor_row, anchor_col, rows, cols)
+                .map_err(map_err)
         }
 
         /// Enumerate the workbook's sheets (`[{id,name,rows,cols}]`).

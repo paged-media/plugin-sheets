@@ -1,0 +1,15 @@
+# sheet.fn.info.error-type golden corpus (spec §7, §11; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# ERROR.TYPE(error_val) maps an error to its 1-based index: 1 #NULL!, 2 #DIV/0!,
+# 3 #VALUE!, 4 #REF!, 5 #NAME?, 6 #NUM!, 7 #N/A. A non-error argument -> #N/A
+# (no error to index). Like TYPE this INSPECTS — the error is the subject, never
+# returned. #SPILL! has no classic 1..7 index and is ruled -> #N/A.
+null-is-1	=ERROR.TYPE(A1)	A1=#NULL!	1
+div0-is-2	=ERROR.TYPE(A1)	A1=#DIV/0!	2
+value-is-3	=ERROR.TYPE(A1)	A1=#VALUE!	3
+ref-is-4	=ERROR.TYPE(A1)	A1=#REF!	4
+name-is-5	=ERROR.TYPE(A1)	A1=#NAME?	5
+num-is-6	=ERROR.TYPE(A1)	A1=#NUM!	6
+na-is-7	=ERROR.TYPE(A1)	A1=#N/A	7
+non-error-is-na	=ERROR.TYPE(5)		#N/A
+spill-is-na	=ERROR.TYPE(A1)	A1=#SPILL!	#N/A

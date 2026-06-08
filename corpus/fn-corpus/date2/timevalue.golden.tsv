@@ -1,0 +1,14 @@
+# sheet.fn.date.timevalue — TIMEVALUE(time_text), General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. T1 accepts hh:mm and hh:mm:ss (24-hour). Returns the
+# fractional day in [0,1). Out-of-range components or any other shape ->
+# #VALUE!. Expecteds are the General (15-sig-digit) projection.
+timevalue.noon	=TIMEVALUE("12:00")		0.5
+timevalue.six-am	=TIMEVALUE("06:00:00")		0.25
+timevalue.evening	=TIMEVALUE("18:30")		0.770833333333333
+timevalue.with-seconds	=TIMEVALUE("08:15:30")		0.344097222222222
+timevalue.midnight	=TIMEVALUE("00:00")		0
+timevalue.from-cell	=TIMEVALUE(A1)	A1=text:12:00	0.5
+timevalue.out-of-range	=TIMEVALUE("25:00")		#VALUE!
+timevalue.unparseable	=TIMEVALUE("noon")		#VALUE!
+timevalue.error-prop	=TIMEVALUE(NA())		#N/A

@@ -1,0 +1,11 @@
+# sheet.fn.stat.small golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# SMALL(array, k): the k-th smallest value (k=1 is the minimum). k truncated to
+# an integer; k<1 or k>count -> #NUM!. Range non-numerics skipped; error cell
+# propagates. Provenance: ECMA-376 §18.17.7 (SMALL).
+smallest	=SMALL(A1:A5,1)	A1=3;A2=1;A3=4;A4=1;A5=5	1
+second	=SMALL(A1:A5,2)	A1=3;A2=1;A3=4;A4=1;A5=5	1
+third	=SMALL(A1:A5,3)	A1=3;A2=1;A3=4;A4=1;A5=5	3
+k-truncates	=SMALL(A1:A5,3.9)	A1=3;A2=1;A3=4;A4=1;A5=5	3
+k-too-big-num	=SMALL(A1:A3,10)	A1=3;A2=1;A3=4	#NUM!
+k-zero-num	=SMALL(A1:A3,0)	A1=3;A2=1;A3=4	#NUM!

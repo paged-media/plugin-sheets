@@ -1,7 +1,10 @@
-# sheet.fn.date.* (M1 additions) — date/time family. Schema: see
+# sheet.fn.date.* (M1 additions) — date/time arithmetic family. Schema: see
 # math.yaml. Rust kernels under sheet-fn/src/families/date2.rs (the M1
-# date track). All rows status: planned. Provenance: ECMA-376 §18.17.7 +
-# public Microsoft function docs.
+# date track). Provenance: ECMA-376 §18.17.7 + public Microsoft function
+# docs. Conformance: sheet-conformance/tests/fn_date2.rs +
+# corpus/fn-corpus/date2/. Excel-compat rulings (DAYS360 US end-of-month,
+# DATEDIF reversed-range #NUM!, YEARFRAC actual/actual denominator) are
+# documented bug-for-bug in the date2.rs module docs.
 
 - id: sheet.fn.date.edate
   name: EDATE
@@ -10,11 +13,11 @@
   volatility: none
   range_aware: false
   rust: date2::edate
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (EDATE) — start_date, months"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_edate"]
-    corpus: ["corpus/fn-corpus/date/edate.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_edate"]
+    corpus: ["corpus/fn-corpus/date2/edate.golden.tsv"]
 
 - id: sheet.fn.date.eomonth
   name: EOMONTH
@@ -23,11 +26,11 @@
   volatility: none
   range_aware: false
   rust: date2::eomonth
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (EOMONTH) — end of month n months from start"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_eomonth"]
-    corpus: ["corpus/fn-corpus/date/eomonth.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_eomonth"]
+    corpus: ["corpus/fn-corpus/date2/eomonth.golden.tsv"]
 
 - id: sheet.fn.date.datedif
   name: DATEDIF
@@ -36,11 +39,11 @@
   volatility: none
   range_aware: false
   rust: date2::datedif
-  status: planned
+  status: implemented
   provenance: ["Microsoft DATEDIF (public docs) — start_date, end_date, unit"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_datedif"]
-    corpus: ["corpus/fn-corpus/date/datedif.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_datedif"]
+    corpus: ["corpus/fn-corpus/date2/datedif.golden.tsv"]
 
 - id: sheet.fn.date.days
   name: DAYS
@@ -49,11 +52,11 @@
   volatility: none
   range_aware: false
   rust: date2::days
-  status: planned
+  status: implemented
   provenance: ["Microsoft DAYS (public docs) — end_date, start_date"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_days"]
-    corpus: ["corpus/fn-corpus/date/days.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_days"]
+    corpus: ["corpus/fn-corpus/date2/days.golden.tsv"]
 
 - id: sheet.fn.date.days360
   name: DAYS360
@@ -62,11 +65,11 @@
   volatility: none
   range_aware: false
   rust: date2::days360
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DAYS360) — start_date, end_date, [method]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_days360"]
-    corpus: ["corpus/fn-corpus/date/days360.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_days360"]
+    corpus: ["corpus/fn-corpus/date2/days360.golden.tsv"]
 
 - id: sheet.fn.date.networkdays
   name: NETWORKDAYS
@@ -75,11 +78,11 @@
   volatility: none
   range_aware: true
   rust: date2::networkdays
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (NETWORKDAYS) — start, end, [holidays]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_networkdays"]
-    corpus: ["corpus/fn-corpus/date/networkdays.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_networkdays"]
+    corpus: ["corpus/fn-corpus/date2/networkdays.golden.tsv"]
 
 - id: sheet.fn.date.workday
   name: WORKDAY
@@ -88,11 +91,11 @@
   volatility: none
   range_aware: true
   rust: date2::workday
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (WORKDAY) — start_date, days, [holidays]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_workday"]
-    corpus: ["corpus/fn-corpus/date/workday.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_workday"]
+    corpus: ["corpus/fn-corpus/date2/workday.golden.tsv"]
 
 - id: sheet.fn.date.yearfrac
   name: YEARFRAC
@@ -101,11 +104,11 @@
   volatility: none
   range_aware: false
   rust: date2::yearfrac
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (YEARFRAC) — start_date, end_date, [basis]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_yearfrac"]
-    corpus: ["corpus/fn-corpus/date/yearfrac.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_yearfrac"]
+    corpus: ["corpus/fn-corpus/date2/yearfrac.golden.tsv"]
 
 - id: sheet.fn.date.datevalue
   name: DATEVALUE
@@ -114,11 +117,11 @@
   volatility: none
   range_aware: false
   rust: date2::datevalue
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DATEVALUE) — parse a date string to a serial"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_datevalue"]
-    corpus: ["corpus/fn-corpus/date/datevalue.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_datevalue"]
+    corpus: ["corpus/fn-corpus/date2/datevalue.golden.tsv"]
 
 - id: sheet.fn.date.timevalue
   name: TIMEVALUE
@@ -127,11 +130,11 @@
   volatility: none
   range_aware: false
   rust: date2::timevalue
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TIMEVALUE) — parse a time string to a fraction"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_timevalue"]
-    corpus: ["corpus/fn-corpus/date/timevalue.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_timevalue"]
+    corpus: ["corpus/fn-corpus/date2/timevalue.golden.tsv"]
 
 - id: sheet.fn.date.weeknum
   name: WEEKNUM
@@ -140,11 +143,11 @@
   volatility: none
   range_aware: false
   rust: date2::weeknum
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (WEEKNUM) — serial_number, [return_type]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_weeknum"]
-    corpus: ["corpus/fn-corpus/date/weeknum.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_weeknum"]
+    corpus: ["corpus/fn-corpus/date2/weeknum.golden.tsv"]
 
 - id: sheet.fn.date.isoweeknum
   name: ISOWEEKNUM
@@ -153,8 +156,8 @@
   volatility: none
   range_aware: false
   rust: date2::isoweeknum
-  status: planned
+  status: implemented
   provenance: ["Microsoft ISOWEEKNUM (public docs) — ISO-8601 week number"]
   tests:
-    rust: ["sheet-conformance/tests/fn_date.rs::sheet_fn_date_isoweeknum"]
-    corpus: ["corpus/fn-corpus/date/isoweeknum.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_isoweeknum"]
+    corpus: ["corpus/fn-corpus/date2/isoweeknum.golden.tsv"]

@@ -61,6 +61,10 @@ pub enum TokKind {
     /// An identifier: a defined-name or a function name. The parser decides
     /// which by peeking for a following `(`.
     Ident(String),
+    /// A whole structured (table) reference (spec §6.4): the bracket grammar is
+    /// self-contained, so the lexer consumes `Table1[Col]`, `[[#Headers],[Col]]`,
+    /// `[@Col]`, etc. into one token built by [`crate::structured`].
+    Structured(sheet_core::ast::StructuredRef),
     LParen,
     RParen,
     LBrace,
@@ -145,6 +149,10 @@ impl Lexer<'_> {
             b')' => self.one(TokKind::RParen),
             b'{' => self.one(TokKind::LBrace),
             b'}' => self.one(TokKind::RBrace),
+            // A leading `[` begins a no-table structured reference (`[@Col]`,
+            // `[[#Headers],[Col]]`, `[Col]`) — anchored to the formula's own
+            // table in eval (spec §6.4).
+            b'[' => self.lex_bare_structured(),
             b',' => self.one(TokKind::Comma),
             b';' => self.one(TokKind::Semicolon),
             b':' => self.one(TokKind::Colon),
@@ -373,6 +381,16 @@ impl Lexer<'_> {
         let tok = &self.src[self.pos..k];
         self.pos = k;
 
+        // A table name immediately followed by `[` (no whitespace) is a
+        // structured (table) reference: `Table1[Col]`, `Table1[[#All]]`, …
+        // The whole bracket spec lexes into one `Structured` token (spec §6.4).
+        // A leading `$` cannot start a table name, so guard it out.
+        if self.peek() == Some(b'[') && !tok.contains('$') && !tok.is_empty() {
+            let (kind, end) = crate::structured::lex_structured(self.src, start, tok, self.pos)?;
+            self.pos = end;
+            return Ok(kind);
+        }
+
         // TRUE / FALSE keywords (only when not a function call — the parser
         // re-routes `TRUE(` to a function by re-reading the ident; but a bare
         // `TRUE` followed by `(` cannot happen because `(` ends this run).
@@ -408,6 +426,16 @@ impl Lexer<'_> {
             ));
         }
         Ok(TokKind::Ident(tok.to_string()))
+    }
+
+    /// A no-table structured reference whose body starts at the current `[`
+    /// (the `[@Col]` / `[[#Headers],[Col]]` / `[Col]` forms). The table is
+    /// resolved from the formula's own cell in eval (empty table name here).
+    fn lex_bare_structured(&mut self) -> Result<TokKind, ParseError> {
+        let start = self.pos;
+        let (kind, end) = crate::structured::lex_structured(self.src, start, "", self.pos)?;
+        self.pos = end;
+        Ok(kind)
     }
 }
 

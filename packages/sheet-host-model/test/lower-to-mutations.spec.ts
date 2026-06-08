@@ -8,8 +8,11 @@ import {
   joinText,
   lowerToMutations,
   makeBinding,
+  styleEmissions,
+  styleProps,
   type Binding,
   type LoweredContent,
+  type LoweredStyle,
   type LowerPlacement,
 } from "../src";
 
@@ -181,5 +184,138 @@ describe("sheet_plugin_lower_mutations: phase-2 text join", () => {
       "insertTextFrame",
       "setPluginMetadata",
     ]);
+  });
+});
+
+// sheet.style.applystyle-pour — the IR-v2 style table (spec §8.3) lowers
+// into host character-level property overrides; fill/border facets the S-03
+// text-frame degradation cannot place are REPORTED (not faked).
+describe("sheet_style_applystyle_pour: style emission", () => {
+  const defaultStyle: LoweredStyle = {
+    key: 0,
+    bold: false,
+    italic: false,
+    fontSizePt: null,
+    fontName: null,
+    fillRgb: null,
+    textRgb: null,
+    borderTop: false,
+    borderRight: false,
+    borderBottom: false,
+    borderLeft: false,
+  };
+  const mk = (over: Partial<LoweredStyle>): LoweredStyle => ({
+    ...defaultStyle,
+    ...over,
+  });
+
+  it("bold collapses to one characterFontStyle face token", () => {
+    expect(styleProps(mk({ key: 1, bold: true }))).toEqual([
+      { path: "characterFontStyle", value: { type: "text", value: "Bold" } },
+    ]);
+    expect(styleProps(mk({ key: 1, bold: true, italic: true }))).toEqual([
+      {
+        path: "characterFontStyle",
+        value: { type: "text", value: "Bold Italic" },
+      },
+    ]);
+    expect(styleProps(mk({ key: 1, italic: true }))).toEqual([
+      { path: "characterFontStyle", value: { type: "text", value: "Italic" } },
+    ]);
+  });
+
+  it("font size/name and TEXT colour map to character-level props", () => {
+    const props = styleProps(
+      mk({ key: 1, fontSizePt: 18, fontName: "Cambria", textRgb: "#FF0000" }),
+    );
+    expect(props).toEqual([
+      { path: "characterFontFamily", value: { type: "text", value: "Cambria" } },
+      { path: "characterFontSize", value: { type: "length", value: 18 } },
+      {
+        path: "characterFillColor",
+        value: { type: "colorRef", value: "#FF0000" },
+      },
+    ]);
+  });
+
+  it("the default style emits no props", () => {
+    expect(styleProps(defaultStyle)).toEqual([]);
+  });
+
+  it("styleEmissions skips key 0 and visually-default keys", () => {
+    const content: LoweredContent = {
+      cols: [],
+      rows: [],
+      rules: { h: [], v: [] },
+      merges: [],
+      styles: [
+        defaultStyle, // key 0 — never emitted
+        mk({ key: 1, bold: true }),
+        mk({ key: 2, fillRgb: "#FFFF00" }),
+      ],
+    };
+    const ems = styleEmissions(content);
+    expect(ems.map((e) => e.styleKey)).toEqual([1, 2]);
+    // key 1: a character override, nothing blocked.
+    expect(ems[0].props).toEqual([
+      { path: "characterFontStyle", value: { type: "text", value: "Bold" } },
+    ]);
+    expect(ems[0].blocked).toEqual([]);
+  });
+
+  it("fill background + borders are REPORTED as blocked (S-03), not faked", () => {
+    const content: LoweredContent = {
+      cols: [],
+      rows: [],
+      rules: { h: [], v: [] },
+      merges: [],
+      styles: [
+        defaultStyle,
+        mk({ key: 1, fillRgb: "#FFFF00", borderTop: true, borderBottom: true }),
+      ],
+    };
+    const [emission] = styleEmissions(content);
+    expect(emission.styleKey).toBe(1);
+    // No character-level props (fill/border are cell facets), and BOTH are
+    // reported blocked — the honest S-03 boundary (no real table cell).
+    expect(emission.props).toEqual([]);
+    expect(emission.blocked).toEqual(["fillBackground", "border"]);
+  });
+
+  it("a cell with text colour AND a blocked fill emits the char prop and the block", () => {
+    const content: LoweredContent = {
+      cols: [],
+      rows: [],
+      rules: { h: [], v: [] },
+      merges: [],
+      styles: [defaultStyle, mk({ key: 1, textRgb: "#0000FF", fillRgb: "#FFFF00" })],
+    };
+    const [emission] = styleEmissions(content);
+    expect(emission.props).toEqual([
+      {
+        path: "characterFillColor",
+        value: { type: "colorRef", value: "#0000FF" },
+      },
+    ]);
+    expect(emission.blocked).toEqual(["fillBackground"]);
+  });
+
+  it("lowerToMutations surfaces the prepared style emissions", () => {
+    const content = fixture();
+    content.styles = [defaultStyle, mk({ key: 1, bold: true })];
+    // Point one cell at the styled key so the table is meaningful.
+    content.rows[0].cells[0].styleKey = 1;
+    const { styles, batch } = lowerToMutations(content, placement, binding);
+    expect(styles).toHaveLength(1);
+    expect(styles[0].styleKey).toBe(1);
+    // The phase-1 batch is UNCHANGED — styles ride alongside, the honest S-03
+    // degradation (frame + rules + binding) does not gain a fake style op.
+    const ops = (batch as { args: { ops: Array<{ op: string }> } }).args.ops;
+    expect(ops.every((o) => o.op !== "setStyleProperty")).toBe(true);
+  });
+
+  it("an unstyled region surfaces an empty styles list", () => {
+    const content = fixture(); // no `styles` field
+    expect(lowerToMutations(content, placement, binding).styles).toEqual([]);
   });
 });

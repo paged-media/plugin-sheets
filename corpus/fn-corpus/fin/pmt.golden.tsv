@@ -1,0 +1,10 @@
+# sheet.fn.fin.pmt golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# PMT(rate, nper, pv, [fv], [type]) — level payment; OUTFLOWS come back
+# negative (Excel sign convention). r=0 is the linear -(pv+fv)/nper.
+# id<TAB>formula<TAB>setup<TAB>expected   ('-' = no setup; '#NUM!' etc literal).
+pmt-loan	=PMT(0.08/12,10,10000)	-	-1037.03208935916
+pmt-savings	=PMT(0.1,5,0,1000)	-	-163.797480794745
+pmt-zero-rate	=PMT(0,10,1000)	-	-100
+pmt-zero-rate-fv	=PMT(0,5,0,1000)	-	-200
+pmt-coerce-text	=PMT("0",10,1000)	-	-100
+pmt-error-prop	=PMT(0,10,1/0)	-	#DIV/0!

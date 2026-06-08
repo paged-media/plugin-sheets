@@ -31,6 +31,9 @@ pub const REL_WORKSHEET: &str = "/worksheet";
 pub const REL_SHARED_STRINGS: &str = "/sharedStrings";
 pub const REL_STYLES: &str = "/styles";
 pub const REL_CALC_CHAIN: &str = "/calcChain";
+/// A worksheet → table-part relationship (`xl/tables/tableN.xml`, the
+/// `ListObject` definition; ECMA-376 §18.5). One per `<tablePart>` on a sheet.
+pub const REL_TABLE: &str = "/table";
 
 /// One `<Relationship>` row.
 #[derive(Debug, Clone)]
@@ -97,6 +100,12 @@ impl Relationships {
     /// The first relationship whose type ends with `suffix`.
     pub fn by_type(&self, suffix: &str) -> Option<&Relationship> {
         self.rels.iter().find(|r| r.is_type(suffix))
+    }
+
+    /// Every relationship whose type ends with `suffix`, in document order (a
+    /// worksheet may carry MANY `/table` relationships).
+    pub fn all_of_type<'a>(&'a self, suffix: &'a str) -> impl Iterator<Item = &'a Relationship> {
+        self.rels.iter().filter(move |r| r.is_type(suffix))
     }
 }
 

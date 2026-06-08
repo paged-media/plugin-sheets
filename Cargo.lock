@@ -673,6 +673,7 @@ dependencies = [
  "sheet-core",
  "sheet-fn",
  "sheet-format",
+ "sheet-grid",
  "sheet-lower",
  "sheet-parser",
  "sheet-xlsx",
@@ -708,6 +709,7 @@ dependencies = [
  "compact_str",
  "quick-xml",
  "sheet-core",
+ "sheet-lower",
  "thiserror",
  "zip",
 ]

@@ -1,0 +1,13 @@
+# sheet.fn.date.networkdays — NETWORKDAYS(start, end, [holidays]), 1900 system.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Whole working days in [start,end] inclusive, excluding
+# weekends and any holidays. Order-insensitive: end<start negates the count.
+# 44197=2021-01-01(Fri), 44200=2021-01-04(Mon), 44204=2021-01-08(Fri),
+# 44207=2021-01-11(Mon), 44202=2021-01-06(Wed), 44227=2021-01-31.
+networkdays.full-week	=NETWORKDAYS(44200,44204)		5
+networkdays.spans-weekend	=NETWORKDAYS(44200,44207)		6
+networkdays.scalar-holiday	=NETWORKDAYS(44200,44204,44202)		4
+networkdays.range-holidays	=NETWORKDAYS(44200,44204,A1:A2)	A1=44201;A2=44202	3
+networkdays.reversed-negates	=NETWORKDAYS(44204,44200)		-5
+networkdays.january-2021	=NETWORKDAYS(44197,44227)		21
+networkdays.error-prop	=NETWORKDAYS(1/0,44204)		#DIV/0!

@@ -1,0 +1,8 @@
+# ASINH — inverse hyperbolic sine (total over the reals). Values are the
+# 15-significant-digit General projection.
+# id	formula	setup	expected
+asinh-zero	=ASINH(0)	-	0
+asinh-one	=ASINH(1)	-	0.881373587019543
+asinh-neg-two	=ASINH(-2)	-	-1.44363547517881
+asinh-coerce-text	=ASINH("0")	-	0
+asinh-error	=ASINH(A1)	A1=#VALUE!	#VALUE!

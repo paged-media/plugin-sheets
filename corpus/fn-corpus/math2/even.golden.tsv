@@ -1,0 +1,10 @@
+# EVEN — round AWAY from zero to the nearest even integer (ECMA-376
+# §18.17.7). EVEN(0) == 0.
+# id	formula	setup	expected
+even-up	=EVEN(3)	-	4
+even-already	=EVEN(2)	-	2
+even-neg	=EVEN(-1)	-	-2
+even-frac	=EVEN(1.5)	-	2
+even-zero	=EVEN(0)	-	0
+even-coerce-bool	=EVEN(TRUE)	-	2
+even-error	=EVEN(A1)	A1=#DIV/0!	#DIV/0!

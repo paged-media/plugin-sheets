@@ -1,0 +1,11 @@
+# sheet.fn.stat.var-p golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# VAR.P(number1,…): POPULATION variance (divide by n); needs >=1 number else
+# #DIV/0!. Range non-numerics skipped; error cell propagates. Provenance:
+# Microsoft VAR.P (public docs).
+two-four-six	=VAR.P(A1:A3)	A1=2;A2=4;A3=6	2.66666666666667
+one-to-five	=VAR.P(A1:A5)	A1=1;A2=2;A3=3;A4=4;A5=5	2
+four-eight	=VAR.P(A1:A2)	A1=4;A2=8	4
+single-number-ok	=VAR.P(A1:A1)	A1=5	0
+empty-div0	=VAR.P(A1:A2)	A1=a;A2=	#DIV/0!
+error-propagates	=VAR.P(A1:A3)	A1=1;A2=#NUM!;A3=3	#NUM!

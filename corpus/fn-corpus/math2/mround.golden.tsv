@@ -1,0 +1,12 @@
+# MROUND — round to nearest multiple, ties half AWAY from zero (ECMA-376
+# §18.17.7). Zero multiple -> 0; sign(number) != sign(multiple) (number
+# non-zero) -> #NUM! (ruling).
+# id	formula	setup	expected
+mround-nearest	=MROUND(10,3)	-	9
+mround-frac	=MROUND(1.3,0.2)	-	1.4
+mround-tie-away	=MROUND(1.5,1)	-	2
+mround-neg-both	=MROUND(-10,-3)	-	-9
+mround-already	=MROUND(12,3)	-	12
+mround-zero-mult	=MROUND(0,5)	-	0
+mround-sign-mismatch	=MROUND(5,-2)	-	#NUM!
+mround-error	=MROUND(A1,3)	A1=#N/A	#N/A

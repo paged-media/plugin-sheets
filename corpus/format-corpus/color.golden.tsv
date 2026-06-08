@@ -1,0 +1,23 @@
+# sheet.format.color-brackets — [Red] [Blue] [Green] [Black] [White] [Cyan]
+# [Magenta] [Yellow] color brackets (spec §9; ECMA-376 §18.8.31 color codes).
+# Ruling sheet.format.color-brackets: a color bracket NEVER changes the
+# rendered glyphs — it recolors the cell — so the string here is identical to
+# the no-color code. The color is a SIDECAR exposed by format_value_styled
+# (which section's color is picked follows section selection, so a code like
+# [Red]0.0;[Blue]0.0 colors negatives blue, positives red). This corpus
+# checks the STRING column only (the sidecar color is asserted in the rust
+# test). Indexed [ColorN] palette entries are dropped (only the 8 named
+# colors model).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+color-red-2dp	[Red]0.00	5	5.00
+color-blue-int	[Blue]0	3	3
+color-green-group	[Green]#,##0	1234	1,234
+color-black	[Black]0	7	7
+color-cyan	[Cyan]0.0	2.5	2.5
+color-magenta	[Magenta]0	9	9
+color-yellow	[Yellow]0	1	1
+color-white	[White]0	4	4
+color-neg-section	[Red]0.0;[Blue]0.0	-5	5.0
+color-pos-section	[Red]0.0;[Blue]0.0	5	5.0
+color-indexed-dropped	[Color12]0	8	8
+color-red-general	[Red]General	1.5	1.5

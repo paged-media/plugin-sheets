@@ -1,40 +1,54 @@
 # sheet.style.* — visual style mapping into the IR-v2 style table (M1
-# style-map track, spec §8.3). IR v2 ships the LoweredStyle table + per-cell
-# styleKey in Phase A (T0 emits only the default key 0); these rows populate
-# REAL styles in Phase B. All rows status: planned — the Phase-B style-map
-# track creates the conformance files these point at.
+# style-map track, spec §8.3, "the most important property of the whole
+# plugin"). IR v2 ships the LoweredStyle table + per-cell styleKey; the
+# Phase-B style-map track parses REAL visual attributes from XLSX
+# (sheet-xlsx VisualStyles), resolves them into the LoweredContent.styles
+# table (sheet-lower StyleResolver), and the SAME resolver feeds the grid
+# scene (cross-surface parity). The TS translator (lower-to-mutations.ts)
+# prepares the character-level overrides; fill/border + run application stay
+# honest about the S-03/S-04 SDK gaps. doc-style-group remains PLANNED
+# (S-04: the style-management capability is an SDK gap).
 
 - id: sheet.style.xlsx-visual-parse
   title: Parse xlsx font/fill/border/alignment (styles.xml xf records) into visual cell styles
-  status: planned
-  provenance: ["ECMA-376 §18.8 (styles part)"]
+  status: implemented
+  provenance:
+    ["ECMA-376 §18.8 (styles part)", "sheet-xlsx/src/parts/styles.rs::VisualStyles"]
   tests:
     rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_xlsx_visual_parse"]
+    corpus: ["corpus/xlsx-corpus/03-styles.xlsx"]
 
 - id: sheet.style.ir-styles-table
   title: Emit a deduped LoweredStyle table with per-cell styleKey indices (IR v2)
-  status: planned
-  provenance: ["spec §8.3", "sheet-lower IR v2 (LoweredStyle/styleKey)"]
+  status: implemented
+  provenance:
+    ["spec §8.3", "sheet-lower IR v2 (LoweredStyle/styleKey)", "sheet-lower/src/style.rs::StyleResolver"]
   tests:
     rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_ir_styles_table"]
 
 - id: sheet.style.doc-style-group
   title: Map a LoweredStyle to a document style group on the host surface
   status: planned
-  provenance: ["spec §8.3 — style group mapping"]
+  # BLOCKED on S-04 (the style-management capability — createCharacterStyle /
+  # createParagraphStyle "new style from selection"). The translator PREPARES
+  # the overrides (sheet.style.applystyle-pour); wiring them through a named
+  # document style is the doc-style-group path, future. See BREAKAGE_LOG S-04.
+  provenance: ["spec §8.3 — style group mapping", "S-04 style-management capability"]
   tests:
     rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_doc_style_group"]
 
 - id: sheet.style.applystyle-pour
-  title: Apply-style pour — a cell's resolved style flows into the lowered/poured content
-  status: planned
-  provenance: ["spec §8.3 — style application on pour"]
+  title: Apply-style pour — a cell's resolved style flows into the lowered/poured content as host overrides
+  status: implemented
+  provenance:
+    ["spec §8.3 — style application on pour", "lower-to-mutations.ts::styleEmissions (honest S-03/S-04 boundary)"]
   tests:
-    rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_applystyle_pour"]
+    vitest: ["packages/sheet-host-model/test/lower-to-mutations.spec.ts"]
 
 - id: sheet.style.cross-surface-parity
-  title: A cell's visual style is identical on the page lowering and the grid scene (one style table)
-  status: planned
-  provenance: ["spec §8.1/§8.3 — shared LoweredStyle wire shape"]
+  title: A cell's visual style is identical on the page lowering and the grid scene (one style resolver)
+  status: implemented
+  provenance:
+    ["spec §8.1/§8.3 — shared LoweredStyle wire shape", "sheet-lower StyleResolver feeds both surfaces"]
   tests:
     rust: ["sheet-conformance/tests/stylemap.rs::sheet_style_cross_surface_parity"]

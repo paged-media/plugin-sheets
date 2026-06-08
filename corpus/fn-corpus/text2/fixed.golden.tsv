@@ -1,0 +1,11 @@
+# sheet.fn.text.fixed golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# FIXED(number, [decimals], [no_commas]): decimals default 2; thousands group
+# unless no_commas TRUE; negative decimals round left of the point. Negative
+# number uses the simple leading-minus form (T0 ruling, see text2.rs).
+fixed-default	=FIXED(1234.567)	-	1,234.57
+fixed-one-decimal	=FIXED(1234.567,1)	-	1,234.6
+fixed-zero-decimals	=FIXED(1234.567,0)	-	1,235
+fixed-no-commas	=FIXED(1234.567,2,TRUE)	-	1234.57
+fixed-negative-decimals	=FIXED(1234.567,-1)	-	1,230
+fixed-negative-number	=FIXED(-1234.5,0)	-	-1,235

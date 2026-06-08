@@ -1,0 +1,10 @@
+# sheet.fn.stat.varp golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# Legacy VARP(number1,…) == VAR.P (POPULATION variance, divide by n); needs >=1
+# number else #DIV/0!. Provenance: ECMA-376 §18.17.7 (VARP) — legacy alias of
+# the population variance.
+two-four-six	=VARP(A1:A3)	A1=2;A2=4;A3=6	2.66666666666667
+one-to-five	=VARP(A1:A5)	A1=1;A2=2;A3=3;A4=4;A5=5	2
+four-eight	=VARP(A1:A2)	A1=4;A2=8	4
+single-number-ok	=VARP(A1:A1)	A1=5	0
+empty-div0	=VARP(A1:A2)	A1=a;A2=	#DIV/0!

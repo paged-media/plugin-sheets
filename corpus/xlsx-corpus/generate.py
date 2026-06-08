@@ -32,12 +32,14 @@ CT_CALCCHAIN = "application/vnd.openxmlformats-officedocument.spreadsheetml.calc
 CT_RELS = "application/vnd.openxmlformats-package.relationships+xml"
 CT_XML = "application/xml"
 CT_VML = "application/vnd.openxmlformats-officedocument.vmlDrawing"
+CT_TABLE = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"
 
 RT_OFFICE_DOC = NS_R + "/officeDocument"
 RT_WORKSHEET = NS_R + "/worksheet"
 RT_SHARED = NS_R + "/sharedStrings"
 RT_STYLES = NS_R + "/styles"
 RT_CALCCHAIN = NS_R + "/calcChain"
+RT_TABLE = NS_R + "/table"
 
 
 def write_zip(path, members):
@@ -378,6 +380,72 @@ def gen_06_multisheet_1904():
     write_zip("06-multisheet-1904.xlsx", members)
 
 
+def gen_07_tables():
+    """07: a real Excel structured table (ListObject). Sheet1!A1:C4 is the
+    `Sales` table — header row (Region/Units/Total) + 3 data rows. E1 carries a
+    structured-reference formula `=SUM(Sales[Units])` with a cached value (60).
+    The worksheet lists the table via <tableParts>, its .rels points at
+    xl/tables/table1.xml, and that part defines name/ref/columns. Exercises:
+    table-part parse, the worksheet→table relationship, structured-ref formula
+    text capture, and round-trip preservation of the table part."""
+    rows = (
+        '<row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>Region</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>Units</t></is></c>'
+        '<c r="C1" t="inlineStr"><is><t>Total</t></is></c>'
+        '<c r="E1" t="n"><f>SUM(Sales[Units])</f><v>60</v></c>'
+        "</row>"
+        '<row r="2">'
+        '<c r="A2" t="inlineStr"><is><t>North</t></is></c>'
+        '<c r="B2" t="n"><v>10</v></c><c r="C2" t="n"><v>100</v></c></row>'
+        '<row r="3">'
+        '<c r="A3" t="inlineStr"><is><t>South</t></is></c>'
+        '<c r="B3" t="n"><v>20</v></c><c r="C3" t="n"><v>200</v></c></row>'
+        '<row r="4">'
+        '<c r="A4" t="inlineStr"><is><t>East</t></is></c>'
+        '<c r="B4" t="n"><v>30</v></c><c r="C4" t="n"><v>300</v></c></row>'
+    )
+    # The worksheet references its table parts; <tableParts> is an unknown
+    # child to sheet-xlsx (captured verbatim) so it survives round-trip.
+    table_parts = '<tableParts count="1"><tablePart r:id="rId1"/></tableParts>'
+    sheet1 = ws("A1:E4", rows, extras_after=table_parts)
+
+    table1 = (
+        XML_DECL
+        + f'<table xmlns="{NS_MAIN}" id="1" name="Sales" displayName="Sales" '
+        'ref="A1:C4" totalsRowShown="0">'
+        '<autoFilter ref="A1:C4"/>'
+        '<tableColumns count="3">'
+        '<tableColumn id="1" name="Region"/>'
+        '<tableColumn id="2" name="Units"/>'
+        '<tableColumn id="3" name="Total"/>'
+        "</tableColumns>"
+        '<tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" '
+        'showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>'
+        "</table>"
+    )
+    sheet1_rels = workbook_rels([
+        ("rId1", RT_TABLE, "../tables/table1.xml"),
+    ])
+
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+            ("/xl/tables/table1.xml", CT_TABLE),
+        ])),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook([("Sheet1", 1, "rId1")])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+        ])),
+        ("xl/worksheets/sheet1.xml", sheet1),
+        ("xl/worksheets/_rels/sheet1.xml.rels", sheet1_rels),
+        ("xl/tables/table1.xml", table1),
+    ]
+    write_zip("07-tables.xlsx", members)
+
+
 def main():
     gen_01_minimal()
     gen_02_formulas()
@@ -385,6 +453,7 @@ def main():
     gen_04_unknown_parts()
     gen_05_unknown_subtrees()
     gen_06_multisheet_1904()
+    gen_07_tables()
 
 
 if __name__ == "__main__":

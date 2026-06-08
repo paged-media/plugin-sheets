@@ -1,0 +1,11 @@
+# sheet.fn.fin.rate golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# RATE(nper, pmt, pv, [fv], [type], [guess]) — periodic rate via Newton
+# (default guess 0.1, <=40 iterations, |f|<1e-7). Non-convergence -> #NUM!.
+# id<TAB>formula<TAB>setup<TAB>expected
+rate-one-period	=RATE(1,0,-100,110)	-	0.1
+rate-two-period	=RATE(2,0,-100,121)	-	0.1
+rate-loan	=RATE(48,-200,8000)	-	0.007701472488233
+rate-coerce-text	=RATE(1,0,"-100",110)	-	0.1
+rate-non-convergence	=RATE(10,100,100,0)	-	#NUM!
+rate-error-prop	=RATE(1,0,1/0,110)	-	#DIV/0!
+rate-arity	=RATE(1,0)	-	#VALUE!

@@ -1,0 +1,9 @@
+# sheet.fn.text.unicode golden corpus (spec §7, §11 M1; Microsoft UNICODE).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# UNICODE(text): full-Unicode code point of the first character; empty -> #VALUE!.
+unicode-upper-a	=UNICODE("A")	-	65
+unicode-euro	=UNICODE("€")	-	8364
+unicode-first-char-only	=UNICODE("Ant")	-	65
+unicode-empty-is-value	=UNICODE("")	-	#VALUE!
+unicode-cell	=UNICODE(A1)	A1=text:zebra	122
+unicode-error-propagates	=UNICODE(A1)	A1=#DIV/0!	#DIV/0!

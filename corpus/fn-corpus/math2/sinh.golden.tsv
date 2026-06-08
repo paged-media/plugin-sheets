@@ -1,0 +1,8 @@
+# SINH — hyperbolic sine. Total over the reals; overflow -> #NUM!. Values
+# are the 15-significant-digit General projection.
+# id	formula	setup	expected
+sinh-zero	=SINH(0)	-	0
+sinh-one	=SINH(1)	-	1.1752011936438
+sinh-two	=SINH(2)	-	3.62686040784702
+sinh-coerce-bool	=SINH(TRUE)	-	1.1752011936438
+sinh-error	=SINH(A1)	A1=#N/A	#N/A

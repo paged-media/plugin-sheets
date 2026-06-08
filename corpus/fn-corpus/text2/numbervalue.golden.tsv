@@ -1,0 +1,11 @@
+# sheet.fn.text.numbervalue golden corpus (spec §7, §11 M1; Microsoft
+# NUMBERVALUE). Format: id<TAB>formula<TAB>setup<TAB>expected
+# NUMBERVALUE(text, [decimal_sep], [group_sep]): defaults "." and ",". The
+# group separator is stripped, the decimal re-pointed, then parsed; a trailing
+# run of '%' divides by 100 each. Expected = the General projection.
+numbervalue-grouped	=NUMBERVALUE("1,234.5")	-	1234.5
+numbervalue-plain	=NUMBERVALUE("2.5")	-	2.5
+numbervalue-euro-separators	=NUMBERVALUE("1.234,5",",",".")	-	1234.5
+numbervalue-percent	=NUMBERVALUE("50%")	-	0.5
+numbervalue-double-percent	=NUMBERVALUE("100%%")	-	0.01
+numbervalue-unparseable-is-value	=NUMBERVALUE("abc")	-	#VALUE!

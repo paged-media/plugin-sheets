@@ -1,0 +1,10 @@
+# sheet.fn.text.proper golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# PROPER(text): title case — first letter of each word up, rest down. A word
+# starts after any non-letter (space, digit, punctuation incl. apostrophe).
+proper-words	=PROPER("hello world")	-	Hello World
+proper-mixed-case	=PROPER("tHE qUICK")	-	The Quick
+proper-apostrophe	=PROPER("o'brien")	-	O'Brien
+proper-digits-delimit	=PROPER("2-cent's worth")	-	2-Cent'S Worth
+proper-cell	=PROPER(A1)	A1=text:jane austen	Jane Austen
+proper-error-propagates	=PROPER(A1)	A1=#VALUE!	#VALUE!

@@ -51,15 +51,18 @@ pub mod argview;
 pub mod dirty;
 pub mod eval;
 pub mod graph;
+pub mod spill;
 pub mod topo;
 pub mod volatile;
 
 use sheet_core::ast::Formula;
 use sheet_core::{Cell, CellError, CellRef, CellValue, NameId, SheetId, SheetModel};
+use sheet_fn::FnResult;
 use sheet_parser::{Edit, ParseCtx};
 
 use crate::dirty::Dirty;
 use crate::graph::DepGraph;
+use crate::spill::{SpillRect, SpillState};
 
 /// Per-engine configuration. `now_serial` feeds `NOW`/`TODAY`; `rng_seed`
 /// seeds the deterministic volatile RNG. Defaults: `0.0` / `0x5EED`.
@@ -110,6 +113,10 @@ pub struct Engine {
     /// Monotonic recalc-pass counter (mixed into the volatile RNG seed so
     /// `RAND` changes each pass but stays deterministic under a fixed seed).
     pass: u64,
+    /// The dynamic-array spill ledger (spec §6.4, M1 spill track): anchor →
+    /// owned region + every owned cell → its anchor. Off-model bookkeeping; the
+    /// spilled cells themselves are plain value cells in [`Engine::model`].
+    spills: SpillState,
 }
 
 impl Engine {
@@ -129,7 +136,14 @@ impl Engine {
             dirty,
             config,
             pass: 0,
+            spills: SpillState::new(),
         }
+    }
+
+    /// Read-only access to the spill ledger (test/introspection seam — the
+    /// `sheet-js` surface reports spill regions through this).
+    pub fn spills(&self) -> &SpillState {
+        &self.spills
     }
 
     /// Read-only access to the underlying model.
@@ -207,6 +221,19 @@ impl Engine {
         };
         self.ensure_sheet(sheet);
 
+        // Spill bookkeeping (spec §6.4). If this cell IS a live spill anchor,
+        // release its region first (a user edit replaces the anchor entirely;
+        // a clear must not leave the old spilled cells behind). If this cell is
+        // an interior (non-anchor) spilled cell, dirty its owning anchor so the
+        // anchor re-evaluates and surfaces `#SPILL!` for the now-blocked region.
+        if self.spills.region_of(cref).is_some() {
+            let mut sink: Vec<CellRef> = Vec::new();
+            self.clear_spill_region(cref, &mut sink);
+        } else if let Some(anchor) = self.spills.owner_of(cref) {
+            self.dirty.mark(anchor);
+            self.dirty.propagate_from(anchor, &self.graph);
+        }
+
         // Drop any prior formula registration for this cell.
         self.graph.unregister(cref);
         self.dirty.forget(cref);
@@ -257,6 +284,17 @@ impl Engine {
         // A write at this cell dirties its transitive dependents.
         self.dirty.propagate_from(cref, &self.graph);
 
+        // Any blocked spill anchor re-evaluates: removing/altering a cell may
+        // free its rectangle so it can finally spill (`sheet.calc.spill.collision`).
+        for blocked in self.spills.blocked_sorted() {
+            if self.graph.is_formula(blocked) {
+                self.dirty.mark(blocked);
+            } else {
+                // No longer a formula — drop it from the blocked set.
+                self.spills.unmark_blocked(blocked);
+            }
+        }
+
         self.recalc_dirty()
     }
 
@@ -268,44 +306,79 @@ impl Engine {
 
     /// Recalculate the current dirty cut (volatiles reseeded). The heart of
     /// the engine.
+    ///
+    /// ## Spill re-passes (spec §6.4)
+    ///
+    /// Materializing a spill writes engine-owned cells into the model and dirties
+    /// their dependents (a formula reading the spill range/`A1#` must reflow).
+    /// Those dependents were not in the pass's initial topo order, so after the
+    /// main drain we re-run while new cells remain dirty — a bounded fixpoint
+    /// (capped so a pathological spill chain cannot loop forever). Cycle
+    /// reporting from the FIRST pass is the authoritative `circular` set.
     pub fn recalc_dirty(&mut self) -> RecalcResult {
-        self.pass = self.pass.wrapping_add(1);
-
-        let cut = self.dirty.take_pass_seed();
-        if cut.is_empty() {
-            self.dirty.clear();
-            return RecalcResult::default();
-        }
-
-        let to = topo::order(&cut, &self.graph);
-
         let mut changed: Vec<CellRef> = Vec::new();
+        let mut circular: Vec<CellRef> = Vec::new();
 
-        // Evaluate the orderable cells in dependency order; each write is
-        // immediately visible to later cells (topo guarantees freshness).
-        for cref in &to.order {
-            let new_value = self.evaluate_cell(*cref);
-            if self.commit_value(*cref, new_value) {
-                changed.push(*cref);
+        // Volatile cells reseed ONCE per recalc (not per spill sub-pass — that
+        // would keep the fixpoint alive forever whenever any volatile exists).
+        self.dirty.reseed_volatile();
+
+        // Bounded fixpoint: each iteration drains the current dirty cut; spill
+        // materialization writes engine-owned cells and dirties their
+        // dependents, which the next iteration drains. Capped so a pathological
+        // spill chain cannot loop forever.
+        const MAX_PASSES: u32 = 64;
+        for pass_n in 0..MAX_PASSES {
+            let cut = self.dirty.drain_set();
+            if cut.is_empty() {
+                break;
             }
-        }
+            self.pass = self.pass.wrapping_add(1);
 
-        // Cycle members: store #REF! (the wire encoding of the Circular
-        // diagnostic) and report them on `circular`.
-        for cref in &to.cycle {
-            let ref_err = CellValue::Error(CellError::Ref);
-            if self.commit_value(*cref, ref_err) {
-                changed.push(*cref);
+            let to = topo::order(&cut, &self.graph);
+
+            // Evaluate the orderable cells in dependency order; each write is
+            // immediately visible to later cells (topo guarantees freshness).
+            // A cell whose formula ROOT spills (a `returns_array` call or an
+            // array literal) takes the spill path: clear its prior region,
+            // evaluate rich, materialize the 2-D block (or `#SPILL!` on
+            // collision). Every other cell stays on the scalar path.
+            for cref in &to.order {
+                if self.cell_spills(*cref) {
+                    self.recompute_spill_anchor(*cref, &mut changed);
+                } else {
+                    // A non-spilling formula that USED to be a spill anchor must
+                    // release its old region (e.g. edited from SEQUENCE to a
+                    // scalar formula).
+                    self.clear_spill_region(*cref, &mut changed);
+                    let new_value = self.evaluate_cell(*cref);
+                    if self.commit_value(*cref, new_value) {
+                        changed.push(*cref);
+                    }
+                }
+            }
+
+            // Cycle members: store #REF! (the wire encoding of the Circular
+            // diagnostic) and report them. The first pass's cycle set is the
+            // authoritative one (later passes only chase spill reflow).
+            for cref in &to.cycle {
+                let ref_err = CellValue::Error(CellError::Ref);
+                if self.commit_value(*cref, ref_err) {
+                    changed.push(*cref);
+                }
+            }
+            if pass_n == 0 {
+                circular = to.cycle;
             }
         }
 
         self.dirty.clear();
 
+        // Dedup + stabilize the changed set (a cell may be touched across
+        // passes — clear then refill, or anchor then reflow).
         changed.sort();
-        RecalcResult {
-            changed,
-            circular: to.cycle,
-        }
+        changed.dedup();
+        RecalcResult { changed, circular }
     }
 
     /// Apply a structural edit (insert/delete rows or cols): physically shift
@@ -313,6 +386,16 @@ impl Engine {
     /// formula's references (`sheet_parser::rewrite`, `#REF!` for deleted
     /// spans); rebuild the dependency graph; then recalc everything.
     pub fn apply_edit(&mut self, edit: &Edit) -> RecalcResult {
+        // Spill ledger (spec §6.4): clear every live spill region from the model
+        // BEFORE the structural shift, so no stale engine-owned spilled cells get
+        // physically moved (they would become spurious blockers). The anchors are
+        // formulas — they survive the edit and re-materialize on the recalc below.
+        let mut sink: Vec<CellRef> = Vec::new();
+        for anchor in self.spills.anchors_sorted() {
+            self.clear_spill_region(anchor, &mut sink);
+        }
+        self.spills.clear();
+
         self.apply_edit_structural(edit);
         self.rewrite_all_formulas(edit);
         // Rebuild the graph + dirty set from the mutated model.
@@ -343,7 +426,207 @@ impl Engine {
         };
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
-        eval::eval_expr(&self.model, &f.root.clone(), &ctx)
+        eval::eval_expr(&self.model, &f.root.clone(), &ctx, &self.spills)
+    }
+
+    /// Whether the formula at `cref` has a *spilling* root (a `returns_array`
+    /// function call or an array literal — the T1 ruling
+    /// `sheet.calc.spill.materialize`). A literal/non-formula cell never spills.
+    fn cell_spills(&self, cref: CellRef) -> bool {
+        let Some(ws) = self.model.sheet(cref.sheet) else {
+            return false;
+        };
+        let Some(cell) = ws.cell(cref.row, cref.col) else {
+            return false;
+        };
+        let Some(fid) = cell.formula else {
+            return false;
+        };
+        self.model
+            .formula(fid)
+            .map(|f| eval::expr_spills(&f.root))
+            .unwrap_or(false)
+    }
+
+    /// Recompute a spill anchor (spec §6.4): clear its prior region, evaluate
+    /// the formula through the rich (array) door, then materialize the result.
+    /// A `FnResult::Scalar` (the kernel grounded to an error, or a 1×1 array)
+    /// commits a single value; a `FnResult::Array` materializes the rectangle
+    /// (or stores `#SPILL!` and claims no region on a collision). Cells whose
+    /// stored value changes are pushed onto `changed`.
+    fn recompute_spill_anchor(&mut self, anchor: CellRef, changed: &mut Vec<CellRef>) {
+        // 1. Release the prior region so a shrinking array leaves no stale cells.
+        self.clear_spill_region(anchor, changed);
+
+        // 2. Evaluate through the rich door.
+        let result = self.evaluate_cell_rich(anchor);
+        match result {
+            FnResult::Scalar(v) => {
+                if self.commit_value(anchor, v) {
+                    changed.push(anchor);
+                }
+            }
+            FnResult::Array(grid) => {
+                self.materialize_spill(anchor, grid, changed);
+            }
+        }
+    }
+
+    /// Evaluate a formula cell through the rich (array) door, returning the
+    /// [`FnResult`]. Mirrors [`Engine::evaluate_cell`] but keeps array blocks.
+    fn evaluate_cell_rich(&self, cref: CellRef) -> FnResult {
+        let Some(ws) = self.model.sheet(cref.sheet) else {
+            return FnResult::Scalar(CellValue::Empty);
+        };
+        let Some(cell) = ws.cell(cref.row, cref.col) else {
+            return FnResult::Scalar(CellValue::Empty);
+        };
+        let Some(fid) = cell.formula else {
+            return FnResult::Scalar(cell.value.clone());
+        };
+        let Some(f) = self.model.formula(fid) else {
+            return FnResult::Scalar(CellValue::Error(CellError::Ref));
+        };
+        let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
+        let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
+        eval::eval_expr_rich(&self.model, &f.root.clone(), &ctx, &self.spills)
+    }
+
+    /// Materialize a `rows × cols` array block anchored at `anchor` (spec §6.4).
+    /// Tests the target rectangle for a collision first: every non-anchor cell
+    /// must be blank OR already owned by THIS anchor. A blocker → store
+    /// `#SPILL!` at the anchor and claim no region (`sheet.calc.spill.collision`).
+    /// Otherwise write the top-left into the anchor and the rest as engine-owned
+    /// spilled value cells, and record the region in the ledger.
+    fn materialize_spill(
+        &mut self,
+        anchor: CellRef,
+        grid: Vec<Vec<CellValue>>,
+        changed: &mut Vec<CellRef>,
+    ) {
+        let rows = grid.len() as u32;
+        let cols = grid.first().map(|r| r.len()).unwrap_or(0) as u32;
+        // A degenerate (empty) grid should not arise — kernels ground to a
+        // scalar error — but stay total: treat it as a single blank.
+        if rows == 0 || cols == 0 {
+            if self.commit_value(anchor, CellValue::Empty) {
+                changed.push(anchor);
+            }
+            return;
+        }
+        let rect = SpillRect::for_array(anchor, rows, cols);
+
+        // Collision test: every cell of the rect EXCEPT the anchor must be free
+        // (blank or already owned by this anchor — the latter cannot happen now
+        // since we cleared the region, but stays defensive).
+        for c in rect.cells() {
+            if c == anchor {
+                continue;
+            }
+            if self.cell_is_blocker(c, anchor) {
+                // Blocked — store #SPILL! at the anchor, claim no region, and
+                // remember it so removing the blocker re-triggers the spill.
+                self.spills.mark_blocked(anchor);
+                if self.commit_value(anchor, CellValue::Error(CellError::Spill)) {
+                    changed.push(anchor);
+                }
+                return;
+            }
+        }
+
+        // Free — this anchor is no longer blocked.
+        self.spills.unmark_blocked(anchor);
+
+        // Free — write the block. The anchor keeps its formula; the spilled
+        // cells are plain value cells (engine-owned, recorded in the ledger).
+        for (r, row) in grid.into_iter().enumerate() {
+            for (c, value) in row.into_iter().enumerate() {
+                let cell = CellRef {
+                    sheet: anchor.sheet,
+                    row: anchor.row + r as u32,
+                    col: anchor.col + c as u32,
+                    row_abs: false,
+                    col_abs: false,
+                };
+                if cell == anchor {
+                    if self.commit_value(anchor, value) {
+                        changed.push(anchor);
+                    }
+                } else {
+                    self.write_spilled_cell(cell, value, changed);
+                }
+            }
+        }
+
+        // Record the region and dirty any dependents of the freshly written
+        // spilled cells (a formula reading the spill range reflows).
+        self.spills.insert(rect);
+        for c in rect.cells() {
+            self.dirty.propagate_from(c, &self.graph);
+        }
+    }
+
+    /// Whether `cell` blocks a spill anchored at `anchor`: it holds a non-empty
+    /// value or a formula AND is not already owned by `anchor`. A blank cell, or
+    /// a cell this anchor owns, is not a blocker.
+    fn cell_is_blocker(&self, cell: CellRef, anchor: CellRef) -> bool {
+        if self.spills.owner_of(cell) == Some(anchor) {
+            return false;
+        }
+        match self
+            .model
+            .sheet(cell.sheet)
+            .and_then(|ws| ws.cell(cell.row, cell.col))
+        {
+            Some(c) => c.formula.is_some() || c.value != CellValue::Empty,
+            None => false,
+        }
+    }
+
+    /// Write an engine-owned spilled value cell (no formula, preserving any
+    /// existing style). Pushes onto `changed` if the stored value changed.
+    fn write_spilled_cell(&mut self, cell: CellRef, value: CellValue, changed: &mut Vec<CellRef>) {
+        let style = self.style_of(cell);
+        let Some(ws) = self.model.sheet_mut(cell.sheet) else {
+            return;
+        };
+        let prior = ws.cell(cell.row, cell.col).map(|c| c.value.clone());
+        if prior.as_ref() == Some(&value) {
+            return;
+        }
+        ws.set_cell(
+            cell.row,
+            cell.col,
+            Cell {
+                value,
+                formula: None,
+                style,
+            },
+        );
+        changed.push(cell);
+    }
+
+    /// Clear `anchor`'s spill region from the model + ledger (if it owns one):
+    /// every spilled NON-anchor cell becomes blank, and dependents of those
+    /// cleared cells are dirtied so they recompute. The anchor cell itself is
+    /// left for the recompute to overwrite. No-op if `anchor` owns no region.
+    fn clear_spill_region(&mut self, anchor: CellRef, changed: &mut Vec<CellRef>) {
+        let Some(rect) = self.spills.remove(anchor) else {
+            return;
+        };
+        for c in rect.cells() {
+            if c == anchor {
+                continue;
+            }
+            if let Some(ws) = self.model.sheet_mut(c.sheet) {
+                if ws.cell(c.row, c.col).is_some() {
+                    ws.remove_cell(c.row, c.col);
+                    changed.push(c);
+                }
+            }
+            // Anything that read the now-blank cell must recompute.
+            self.dirty.propagate_from(c, &self.graph);
+        }
     }
 
     /// Write a computed value into the cell, returning whether it changed.

@@ -1,0 +1,18 @@
+# sheet.format.elapsed-brackets — elapsed-time accumulators [h] [m] [s]
+# (spec §9; ECMA-376 §18.8.31 elapsed-time codes). These are TOTAL elapsed
+# counts over the whole serial, NOT the modular wall-clock component:
+# [h] over a 1.5-day serial renders 36, not 12. Modular tokens inside the
+# same code (the :mm after [h]) keep their wall-clock value.
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+elapsed-h-1.5day	[h]	1.5	36
+elapsed-h-halfday	[h]	0.5	12
+elapsed-h-2day	[h]	2	48
+elapsed-h-mm	[h]:mm	1.5	36:00
+elapsed-h-mm-partial	[h]:mm	0.5208333333	12:30
+elapsed-hh-mm-ss	[hh]:mm:ss	1.5	36:00:00
+elapsed-h-mm-ss	[h]:mm:ss	2.041666666	49:00:00
+elapsed-m-1day	[m]	1	1440
+elapsed-m-halfday	[m]	0.5	720
+elapsed-mm-pad	[mm]	0.0006944444	01
+elapsed-s-100	[s]	0.0011574074	100
+elapsed-ss-100	[ss]	0.0011574074	100

@@ -13,7 +13,7 @@
   range_aware: false
   returns_array: true
   rust: array::sequence
-  status: planned
+  status: implemented
   provenance: ["Microsoft SEQUENCE (public docs) — rows, [columns], [start], [step]"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_sequence"]
@@ -27,7 +27,7 @@
   range_aware: true
   returns_array: true
   rust: array::transpose
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (TRANSPOSE) — transpose an array/range"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_transpose"]
@@ -41,7 +41,7 @@
   range_aware: true
   returns_array: true
   rust: array::unique
-  status: planned
+  status: implemented
   provenance: ["Microsoft UNIQUE (public docs) — array, [by_col], [exactly_once]"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_unique"]
@@ -55,7 +55,7 @@
   range_aware: true
   returns_array: true
   rust: array::sort
-  status: planned
+  status: implemented
   provenance: ["Microsoft SORT (public docs) — array, [sort_index], [sort_order], [by_col]"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_sort"]
@@ -69,7 +69,7 @@
   range_aware: true
   returns_array: true
   rust: array::sortby
-  status: planned
+  status: implemented
   provenance: ["Microsoft SORTBY (public docs) — array, then variadic (by_array, [sort_order]) pairs"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_sortby"]
@@ -83,7 +83,7 @@
   range_aware: true
   returns_array: true
   rust: array::filter
-  status: planned
+  status: implemented
   provenance: ["Microsoft FILTER (public docs) — array, include, [if_empty]"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_filter"]
@@ -97,7 +97,7 @@
   range_aware: false
   returns_array: true
   rust: array::textsplit
-  status: planned
+  status: implemented
   provenance: ["Microsoft TEXTSPLIT (public docs) — text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with]"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_textsplit"]
@@ -111,7 +111,7 @@
   range_aware: false
   returns_array: true
   rust: array::randarray
-  status: planned
+  status: implemented
   provenance: ["Microsoft RANDARRAY (public docs) — [rows], [columns], [min], [max], [integer]"]
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_randarray"]

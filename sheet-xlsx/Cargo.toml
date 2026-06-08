@@ -12,6 +12,15 @@ workspace = true
 
 [dependencies]
 sheet-core = { path = "../sheet-core" }
+# DOCUMENTED DEVIATION from the spec §4 dependency table (which lists xlsx ->
+# core only). The M1 style-map track (spec §8.3) has `VisualStyles` implement
+# `sheet_lower::VisualStyleSource` so the page lowering + grid scene resolve
+# the parsed visual styles through ONE trait — the cross-surface-parity
+# contract. `sheet-lower` is a PURE leaf IR crate (model -> IR, no SDK), so
+# this is leaf-IR reuse, not a render-surface dependency (the same rationale
+# as sheet-grid's documented sheet-lower dep). No cycle: lower deps =
+# core+format; adding it here makes xlsx -> lower -> (core, format).
+sheet-lower = { path = "../sheet-lower" }
 zip.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true

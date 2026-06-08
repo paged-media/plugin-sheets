@@ -1,0 +1,11 @@
+# sheet.fn.fin.irr golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# IRR(values, [guess]) — the rate making NPV (first flow UNDISCOUNTED) zero,
+# via Newton from guess (default 0.1) with a bisection fallback. The series
+# needs at least one sign change; no root -> #NUM!.
+# id<TAB>formula<TAB>setup<TAB>expected
+irr-simple	=IRR(A1:A2)	A1=-100;A2=110	0.1
+irr-two-period	=IRR(A1:A3)	A1=-100;A2=0;A3=121	0.1
+irr-doc-neg	=IRR(A1:A5)	A1=-70000;A2=12000;A3=15000;A4=18000;A5=21000	-0.021244848273411
+irr-doc-pos	=IRR(A1:A6)	A1=-70000;A2=12000;A3=15000;A4=18000;A5=21000;A6=26000	0.086630948036252
+irr-all-positive	=IRR(A1:A2)	A1=100;A2=110	#NUM!
+irr-single	=IRR(A1:A1)	A1=-100	#NUM!

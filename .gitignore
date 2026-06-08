@@ -17,3 +17,4 @@ packages/sheet-bundle/bin/*.d.ts
 
 # oracle venv (LibreOffice harness tooling, if ever local)
 .venv/
+.wf/

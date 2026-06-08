@@ -1,0 +1,12 @@
+# sheet.fn.text.textjoin golden corpus (spec §7, §11 M1; Microsoft TEXTJOIN).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+#   setup  ';'-separated CELL=value; value is a typed literal — bare number,
+#          text:<s>, bool:TRUE|bool:FALSE, or 'empty' for a blank cell.
+# TEXTJOIN(delimiter, ignore_empty, text1, ...): join with delimiter; with
+# ignore_empty TRUE, blank cells AND empty strings are skipped.
+textjoin-literals	=TEXTJOIN("-",TRUE,"a","b","c")	-	a-b-c
+textjoin-numbers	=TEXTJOIN(", ",TRUE,1,2,3)	-	1, 2, 3
+textjoin-range-ignore-empty	=TEXTJOIN("-",TRUE,A1:D1)	A1=text:a;B1=empty;C1=text:b;D1=text:	a-b
+textjoin-range-keep-empty	=TEXTJOIN("-",FALSE,A1:D1)	A1=text:a;B1=empty;C1=text:b;D1=text:	a--b-
+textjoin-range-walk	=TEXTJOIN("|",TRUE,A1:C1)	A1=text:x;B1=text:y;C1=text:z	x|y|z
+textjoin-error-in-range	=TEXTJOIN("|",TRUE,A1:C1)	A1=text:x;B1=#DIV/0!;C1=text:z	#DIV/0!

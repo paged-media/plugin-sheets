@@ -1,0 +1,13 @@
+# sheet.fn.logical.ifna golden corpus (spec §7, §11; Microsoft IFNA docs).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# IFNA(value, value_if_na) returns value unless it IS the #N/A error, in which
+# case it returns value_if_na. The narrow sibling of IFERROR: it catches ONLY
+# #N/A — every other error (#DIV/0!, #VALUE!, …) passes straight through. Any
+# non-error value is returned verbatim.
+# Args use ';' as the separator (the family decoder splits on ';').
+na-uses-fallback	=IFNA(A1;"fallback")	A1=#N/A	fallback
+clean-passes-through	=IFNA(42;"fallback")		42
+text-passes-through	=IFNA("ok";"fb")		ok
+other-error-passes-through	=IFNA(A1;"fb")	A1=#DIV/0!	#DIV/0!
+value-error-passes-through	=IFNA(A1;0)	A1=#VALUE!	#VALUE!
+ref-clean-passes	=IFNA(A1;7)	A1=5	5

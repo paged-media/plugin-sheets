@@ -1,0 +1,7 @@
+# SORTBY(range, by_range, [order]...) — sort by parallel keys (M1 spill).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. Each by_range must match the
+# range's sort length or -> #VALUE!. The host cell holds the first sorted
+# entry's top-left; `expected` projects it.
+sortby-key	=SORTBY(A1:A3,B1:B3)	A1=text:c;A2=text:a;A3=text:b;B1=3;B2=1;B3=2	a
+sortby-desc	=SORTBY(A1:A3,B1:B3,-1)	A1=text:c;A2=text:a;A3=text:b;B1=3;B2=1;B3=2	c
+sortby-bad-len	=SORTBY(A1:A3,B1:B2)	A1=1;A2=2;A3=3;B1=1;B2=2	#VALUE!

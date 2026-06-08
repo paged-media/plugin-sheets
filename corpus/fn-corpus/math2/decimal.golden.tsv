@@ -1,0 +1,13 @@
+# DECIMAL — parse text written in radix (2..=36) back to a number
+# (Microsoft docs). Case-insensitive; ASCII whitespace trimmed.
+# Out-of-range radix / invalid digit / empty string -> #NUM!.
+# id	formula	setup	expected
+decimal-binary	=DECIMAL("111",2)	-	7
+decimal-hex	=DECIMAL("FF",16)	-	255
+decimal-lower	=DECIMAL("ff",16)	-	255
+decimal-base36	=DECIMAL("Z",36)	-	35
+decimal-roundtrip	=DECIMAL("00000111",2)	-	7
+decimal-radix-low	=DECIMAL("10",1)	-	#NUM!
+decimal-bad-digit	=DECIMAL("2",2)	-	#NUM!
+decimal-empty	=DECIMAL("",16)	-	#NUM!
+decimal-error	=DECIMAL(A1,16)	A1=#N/A	#N/A

@@ -1,0 +1,11 @@
+# sheet.fn.stat.percentile-inc golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# PERCENTILE.INC(array, k): inclusive percentile with LINEAR INTERPOLATION
+# between the two bracketing ranks (rank = k*(n-1)); k in 0..1 inclusive, out of
+# range -> #NUM!; no numbers -> #NUM!. Provenance: Microsoft PERCENTILE.INC.
+quarter-interp	=PERCENTILE.INC(A1:A4,0.25)	A1=1;A2=2;A3=3;A4=4	1.75
+three-quarter	=PERCENTILE.INC(A1:A4,0.75)	A1=1;A2=2;A3=3;A4=4	3.25
+endpoint-min	=PERCENTILE.INC(A1:A4,0)	A1=1;A2=2;A3=3;A4=4	1
+endpoint-max	=PERCENTILE.INC(A1:A4,1)	A1=1;A2=2;A3=3;A4=4	4
+ninety	=PERCENTILE.INC(A1:A5,0.9)	A1=15;A2=20;A3=35;A4=40;A5=50	46
+k-out-of-range-num	=PERCENTILE.INC(A1:A4,1.5)	A1=1;A2=2;A3=3;A4=4	#NUM!

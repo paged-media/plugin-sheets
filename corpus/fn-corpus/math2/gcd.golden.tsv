@@ -1,0 +1,13 @@
+# GCD — greatest common divisor of the truncated, non-negative integer
+# operands (ECMA-376 §18.17.7). Variadic and range-aware: text/blank in a
+# range skip; an error cell propagates; a scalar coerces. GCD(0,0) == 0;
+# negative operand -> #NUM!.
+# id	formula	setup	expected
+gcd-pair	=GCD(24,36)	-	12
+gcd-triple	=GCD(24,36,48)	-	12
+gcd-zero-zero	=GCD(0,0)	-	0
+gcd-zero-n	=GCD(0,7)	-	7
+gcd-trunc	=GCD(12.9,8)	-	4
+gcd-range-skip-text	=GCD(A1:A4)	A1=12;A2=hi;A3=18;A4=30	6
+gcd-negative	=GCD(-4,6)	-	#NUM!
+gcd-range-error	=GCD(A1:A2)	A1=12;A2=#N/A	#N/A

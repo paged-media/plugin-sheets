@@ -1,0 +1,22 @@
+# sheet.format.conditional-sections — comparison brackets [<100] [>=0] etc.
+# gate which section renders (spec §9; ECMA-376 §18.8.31 conditional codes).
+# Selection: the first conditioned section whose test passes (against the
+# RAW signed value) wins; otherwise the first UNCONDITIONED section is the
+# "otherwise" default. Ruling sheet.format.conditional-sections: NO selected
+# section auto-prefixes a minus — a matched conditional section owns its
+# sign, AND the unconditioned fallthrough behaves like the negative section
+# (the #,##0;#,##0 minus-suppression rule), so [>=100]0;0 of -5 is "5",
+# [>=100]0;-0 of -5 is "-5" (the author's own minus, not doubled).
+# Columns: id<TAB>format_code<TAB>value<TAB>expected
+cond-ge-match	[>=100]0"+";0	150	150+
+cond-ge-default	[>=100]0"+";0	50	50
+cond-lt-match	[<100]0;0	50	50
+cond-default-no-minus	[>=100]0;0	-5	5
+cond-author-minus	[>=100]0;-0	-5	-5
+cond-two-conds-neg	[>100]0;[<0]0;0	-5	5
+cond-lt0-default	[<0]0;0	-5	5
+cond-text-neg	[>=0]"pos";"neg"	-5	neg
+cond-text-pos	[>=0]"pos";"neg"	5	pos
+cond-text-lo	[<=50]"lo";[>50]"hi"	30	lo
+cond-text-hi	[<=50]"lo";[>50]"hi"	80	hi
+cond-scale-k	[>=1000]0,"K";0	2500	3K

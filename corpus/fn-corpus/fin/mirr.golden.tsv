@@ -1,0 +1,11 @@
+# sheet.fn.fin.mirr golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# MIRR(values, finance_rate, reinvest_rate) — positives compounded forward at
+# reinvest_rate, negatives discounted back at finance_rate; the period-root of
+# their ratio less one. Needs both an inflow AND an outflow (else #DIV/0!).
+# id<TAB>formula<TAB>setup<TAB>expected
+mirr-clean	=MIRR(A1:A3,0.1,0.1)	A1=-100;A2=0;A3=121	0.1
+mirr-doc	=MIRR(A1:A6,0.1,0.12)	A1=-120000;A2=39000;A3=30000;A4=21000;A5=37000;A6=46000	0.126094130365905
+mirr-doc-fin5	=MIRR(A1:A6,0.1,0.1)	A1=-120000;A2=39000;A3=30000;A4=21000;A5=37000;A6=46000	0.117509258684928
+mirr-all-positive	=MIRR(A1:A3,0.1,0.1)	A1=100;A2=50;A3=121	#DIV/0!
+mirr-error-prop	=MIRR(A1:A2,0.1,0.1)	A1=-100;A2=#N/A	#N/A
+mirr-single	=MIRR(A1:A1,0.1,0.1)	A1=-100	#DIV/0!

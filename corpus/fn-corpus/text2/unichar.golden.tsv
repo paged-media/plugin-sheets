@@ -1,0 +1,11 @@
+# sheet.fn.text.unichar golden corpus (spec §7, §11 M1; Microsoft UNICHAR).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# UNICHAR(number): Unicode code point to character. 0/negative/surrogate/
+# >0x10FFFF -> #VALUE!. (Note: BMP characters in the expected column are the
+# literal glyph; the runner compares the raw UTF-8 string.)
+unichar-upper-a	=UNICHAR(65)	-	A
+unichar-euro	=UNICHAR(8364)	-	€
+unichar-zero-is-value	=UNICHAR(0)	-	#VALUE!
+unichar-negative-is-value	=UNICHAR(-3)	-	#VALUE!
+unichar-surrogate-is-value	=UNICHAR(55296)	-	#VALUE!
+unichar-error-propagates	=UNICHAR(A1)	A1=#VALUE!	#VALUE!

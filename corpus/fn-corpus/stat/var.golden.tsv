@@ -1,0 +1,10 @@
+# sheet.fn.stat.var golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# Legacy VAR(number1,…) == VAR.S (SAMPLE variance, divide by n-1); needs >=2
+# numbers else #DIV/0!. Provenance: ECMA-376 §18.17.7 (VAR) — legacy VAR is the
+# sample variance.
+two-four-six	=VAR(A1:A3)	A1=2;A2=4;A3=6	4
+one-to-five	=VAR(A1:A5)	A1=1;A2=2;A3=3;A4=4;A5=5	2.5
+four-eight	=VAR(A1:A2)	A1=4;A2=8	8
+single-number-div0	=VAR(A1:A1)	A1=5	#DIV/0!
+error-propagates	=VAR(A1:A3)	A1=1;A2=#N/A;A3=3	#N/A

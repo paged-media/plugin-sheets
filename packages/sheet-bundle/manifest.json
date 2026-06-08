@@ -22,10 +22,14 @@
     ]
   },
   "contributes": {
-    "panels": ["media.paged.sheet.panel.workbook"],
+    "panels": [
+      "media.paged.sheet.panel.workbook",
+      "media.paged.sheet.panel.grid"
+    ],
     "commands": [
       "media.paged.sheet.command.importXlsx",
-      "media.paged.sheet.command.lowerToFrame"
+      "media.paged.sheet.command.lowerToFrame",
+      "media.paged.sheet.command.openGrid"
     ]
   }
 }

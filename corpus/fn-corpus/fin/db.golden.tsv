@@ -1,0 +1,13 @@
+# sheet.fn.fin.db golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# DB(cost, salvage, life, period, [month]) — fixed-declining-balance.
+# EXCEL RULING: rate = ROUND(1 - (salvage/cost)^(1/life), 3) (3-decimal
+# rounding — the documented quirk). Period 1 pro-rated by month/12; the
+# (life+1)-th by (12-month)/12. month defaults to 12. Domain: cost>0,
+# salvage>=0, life>0, 1<=period<=life+1, 1<=month<=12.
+# id<TAB>formula<TAB>setup<TAB>expected
+db-doc-year1	=DB(1000000,100000,6,1,7)	-	186083.333333333
+db-doc-year2	=DB(1000000,100000,6,2,7)	-	259639.416666667
+db-doc-year7	=DB(1000000,100000,6,7,7)	-	15845.0984738481
+db-default-month-year1	=DB(1000000,100000,6,1)	-	319000
+db-period-too-big	=DB(1000000,100000,6,8,7)	-	#NUM!
+db-bad-month	=DB(1000000,100000,6,1,13)	-	#NUM!

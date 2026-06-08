@@ -1,0 +1,12 @@
+# sheet.fn.stat.quartile-inc golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# QUARTILE.INC(array, quart): quart truncated to an integer in 0..4; equals
+# PERCENTILE.INC(array, quart/4). Out of range -> #NUM!; no numbers -> #NUM!.
+# Provenance: Microsoft QUARTILE.INC (public docs).
+q0-min	=QUARTILE.INC(A1:A5,0)	A1=15;A2=20;A3=35;A4=40;A5=50	15
+q1	=QUARTILE.INC(A1:A5,1)	A1=15;A2=20;A3=35;A4=40;A5=50	20
+q2-median	=QUARTILE.INC(A1:A5,2)	A1=15;A2=20;A3=35;A4=40;A5=50	35
+q3	=QUARTILE.INC(A1:A5,3)	A1=15;A2=20;A3=35;A4=40;A5=50	40
+q4-max	=QUARTILE.INC(A1:A5,4)	A1=15;A2=20;A3=35;A4=40;A5=50	50
+quart-truncates	=QUARTILE.INC(A1:A5,1.9)	A1=15;A2=20;A3=35;A4=40;A5=50	20
+quart-out-of-range-num	=QUARTILE.INC(A1:A5,5)	A1=15;A2=20;A3=35;A4=40;A5=50	#NUM!

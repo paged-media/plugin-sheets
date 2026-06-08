@@ -1,0 +1,10 @@
+# COMBIN — unordered k-combinations n!/(k!(n-k)!) (ECMA-376 §18.17.7).
+# Both args truncate toward zero; negative or k>n -> #NUM!.
+# id	formula	setup	expected
+combin-basic	=COMBIN(5,2)	-	10
+combin-k0	=COMBIN(5,0)	-	1
+combin-kn	=COMBIN(5,5)	-	1
+combin-large	=COMBIN(10,3)	-	120
+combin-trunc	=COMBIN(5.9,2.9)	-	10
+combin-kgtn	=COMBIN(2,5)	-	#NUM!
+combin-negative	=COMBIN(-1,0)	-	#NUM!

@@ -1,0 +1,16 @@
+# sheet.fn.date.yearfrac — YEARFRAC(start, end, [basis]), 1900 system, General.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. Year fraction on basis 0 US 30/360 (default), 1
+# actual/actual, 2 actual/360, 3 actual/365, 4 EU 30/360. Order-insensitive;
+# out-of-range basis -> #NUM!. Expecteds are the General (15-sig-digit)
+# projection (bug-for-bug: basis-1 same-year denominator = that year's length,
+# 366 in leap 2020). 43831=2020-01-01, 44013=2020-07-01 (182 actual days).
+yearfrac.basis0-us360	=YEARFRAC(43831,44013,0)		0.5
+yearfrac.basis4-eu360	=YEARFRAC(43831,44013,4)		0.5
+yearfrac.basis2-act360	=YEARFRAC(43831,44013,2)		0.505555555555556
+yearfrac.basis3-act365	=YEARFRAC(43831,44013,3)		0.498630136986301
+yearfrac.basis1-actact-leap	=YEARFRAC(43831,44013,1)		0.497267759562842
+yearfrac.default-basis	=YEARFRAC(43831,44013)		0.5
+yearfrac.reversed-same	=YEARFRAC(44013,43831,0)		0.5
+yearfrac.bad-basis-num	=YEARFRAC(43831,44013,9)		#NUM!
+yearfrac.error-prop	=YEARFRAC(1/0,44013)		#DIV/0!

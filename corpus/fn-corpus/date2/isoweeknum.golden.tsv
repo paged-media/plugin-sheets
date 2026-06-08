@@ -1,0 +1,13 @@
+# sheet.fn.date.isoweeknum — ISOWEEKNUM(serial), 1900 system, General format.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# Microsoft public docs. ISO-8601 week: weeks start Monday; week 1 is the week
+# containing the year's first Thursday. A date in early January can belong to
+# week 52/53 of the previous ISO year. 44197=2021-01-01(Fri, ISO 2020-W53),
+# 44200=2021-01-04(Mon, W1), 44561=2021-12-31(Fri, W52), 46023=2026-01-01.
+isoweeknum.first-jan-prev-year	=ISOWEEKNUM(44197)		53
+isoweeknum.first-monday	=ISOWEEKNUM(44200)		1
+isoweeknum.year-end	=ISOWEEKNUM(44561)		52
+isoweeknum.next-year-jan	=ISOWEEKNUM(46023)		1
+isoweeknum.from-cell	=ISOWEEKNUM(A1)	A1=44200	1
+isoweeknum.error-prop	=ISOWEEKNUM(NA())		#N/A
+isoweeknum.negative-num	=ISOWEEKNUM(-1)		#NUM!

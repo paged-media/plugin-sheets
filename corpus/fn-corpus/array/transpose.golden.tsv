@@ -1,0 +1,8 @@
+# TRANSPOSE(range) — out[c][r] = in[r][c] (ECMA-376 §18.17.7, M1 spill).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. The spill anchor (host cell)
+# holds the top-left of the transposed block; `expected` projects that cell.
+trans-row	=TRANSPOSE(A1:C1)	A1=1;B1=2;C1=3	1
+trans-col	=TRANSPOSE(A1:A3)	A1=7;A2=8;A3=9	7
+trans-2x2	=TRANSPOSE(A1:B2)	A1=1;B1=2;A2=3;B2=4	1
+trans-scalar	=TRANSPOSE(A1)	A1=5	5
+trans-text	=TRANSPOSE(A1:B1)	A1=text:x;B1=text:y	x

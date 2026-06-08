@@ -17,7 +17,7 @@
 // Until the artifact exists the dynamic import REJECTS — bootEngine
 // surfaces that honestly so the panel can say "engine wasm not built".
 
-import type { LoweredContent } from "@paged-media/sheet-host-model";
+import type { GridScene, LoweredContent } from "@paged-media/sheet-host-model";
 
 // ------------------------------------------------------------ facade
 
@@ -46,6 +46,12 @@ export interface LowerOptions {
   headerRows?: number;
 }
 
+/** Options the grid-scene windowing honours (forwarded verbatim to wasm —
+ *  the engine windows in Rust, spec §8.1). */
+export interface GridSceneOptions {
+  includeGridlines?: boolean;
+}
+
 /** The stable engine contract the bundle codes against. Every method is
  *  a forward to the wasm surface; the facade only renames + shapes. */
 export interface SheetEngine {
@@ -71,6 +77,31 @@ export interface SheetEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  /** Window a sheet into a [`GridScene`] for the sheets-mode grid surface
+   *  (spec §8.1, S-02). The engine windows from the `(firstRow, firstCol)`
+   *  scroll origin bounded by `(wPt, hPt)` and materializes only visible
+   *  populated cells in Rust; the panel only paints the result. The wasm
+   *  side (`get_grid_scene`) lands in the JOINS phase; the facade maps it
+   *  now so the panel codes against a stable contract. */
+  getGridScene(
+    sheet: number,
+    firstRow: number,
+    firstCol: number,
+    wPt: number,
+    hPt: number,
+    opts?: GridSceneOptions,
+  ): GridScene;
+  /** Record the sheets-mode selection rectangle in the engine model so the
+   *  next [`getGridScene`] carries it (spec §8.1 — selection is engine
+   *  state, the panel only requests it). `setGridSelection` forwards to
+   *  wasm; the wasm side lands in JOINS. */
+  setGridSelection(
+    sheet: number,
+    anchorRow: number,
+    anchorCol: number,
+    rows: number,
+    cols: number,
+  ): void;
   /** Enumerate the workbook's sheets (id, name, used extent). */
   listSheets(): SheetInfo[];
   /** Release the wasm-held model. */
@@ -97,6 +128,21 @@ export interface SheetWasmEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  get_grid_scene(
+    sheet: number,
+    first_row: number,
+    first_col: number,
+    w_pt: number,
+    h_pt: number,
+    opts?: GridSceneOptions,
+  ): GridScene;
+  set_grid_selection(
+    sheet: number,
+    anchor_row: number,
+    anchor_col: number,
+    rows: number,
+    cols: number,
+  ): void;
   list_sheets(): SheetInfo[];
   free(): void;
 }
@@ -125,6 +171,10 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.get_cell_display(sheet, row, col),
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
+    getGridScene: (sheet, firstRow, firstCol, wPt, hPt, opts) =>
+      wasm.get_grid_scene(sheet, firstRow, firstCol, wPt, hPt, opts),
+    setGridSelection: (sheet, anchorRow, anchorCol, rows, cols) =>
+      wasm.set_grid_selection(sheet, anchorRow, anchorCol, rows, cols),
     listSheets: () => wasm.list_sheets(),
     dispose: () => wasm.free(),
   };

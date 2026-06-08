@@ -208,6 +208,8 @@ impl Parser<'_> {
             }
             TokKind::SheetQual(name) => self.parse_qualified(&name, tok.span),
             TokKind::Ident(name) => self.parse_ident(&name, tok.span),
+            // A structured (table) reference — the lexer already built it.
+            TokKind::Structured(s) => Ok(Expr::StructuredRef(s)),
             TokKind::LParen => {
                 // Parenthesized group: a `,` here is a reference UNION.
                 let saved = self.in_paren;
@@ -456,6 +458,7 @@ fn is_operand_start(kind: &TokKind) -> bool {
             | TokKind::Cell { .. }
             | TokKind::SheetQual(_)
             | TokKind::Ident(_)
+            | TokKind::Structured(_)
             | TokKind::LParen
             | TokKind::LBrace
     )

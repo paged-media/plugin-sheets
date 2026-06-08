@@ -19,8 +19,10 @@ import manifest from "../manifest.json";
 import { importXlsx } from "./import-xlsx";
 import { createWorkbookSession } from "./session";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
+import { makeGridPanel } from "./panels/grid-panel";
 
 const PANEL_ID = "media.paged.sheet.panel.workbook";
+const GRID_PANEL_ID = "media.paged.sheet.panel.grid";
 
 export function activate(host: BundleHost): BundleHandle {
   const session = createWorkbookSession(host);
@@ -30,6 +32,16 @@ export function activate(host: BundleHost): BundleHandle {
     title: "Workbook",
     icon: "panel-canvas",
     component: makeWorkbookPanel(host, session),
+    defaultDock: "right",
+  });
+
+  // The interim sheets-mode grid panel (spec §8.1, S-02 — NOT the in-frame
+  // surface, which is still SDK-blocked). It shares the in-memory session.
+  contributePanel(host, {
+    id: GRID_PANEL_ID,
+    title: "Grid",
+    icon: "panel-canvas",
+    component: makeGridPanel(host, session),
     defaultDock: "right",
   });
 
@@ -45,6 +57,12 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => session.lowerSelection(),
   });
+  host.contribute.command({
+    id: "media.paged.sheet.command.openGrid",
+    title: "Open sheet grid",
+    category: "Sheet",
+    handler: () => host.shell.openPanel(GRID_PANEL_ID),
+  });
 
   host.log.info(`activated (apiVersion ${manifest.apiVersion})`);
 
@@ -55,4 +73,4 @@ export function activate(host: BundleHost): BundleHandle {
   };
 }
 
-export { manifest, PANEL_ID };
+export { manifest, PANEL_ID, GRID_PANEL_ID };

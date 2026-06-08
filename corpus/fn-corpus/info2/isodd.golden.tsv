@@ -1,0 +1,13 @@
+# sheet.fn.info.isodd golden corpus (spec §7, §11; ECMA-376 §18.17.7 ISODD).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# ISODD(number) is TRUE iff the TRUNCATED number is odd — the exact complement
+# of ISEVEN: same coercion (numeric text works, TRUE -> 1, blank -> 0), same
+# truncation toward zero, same error rules. Non-numeric text -> #VALUE!; an error
+# argument propagates.
+odd-is-true	=ISODD(3)		TRUE
+even-is-false	=ISODD(4)		FALSE
+zero-is-not-odd	=ISODD(0)		FALSE
+truncates-toward-zero	=ISODD(3.9)		TRUE
+true-coerces-to-one-odd	=ISODD(TRUE)		TRUE
+non-numeric-text-is-value	=ISODD("x")		#VALUE!
+error-propagates	=ISODD(A1)	A1=#NUM!	#NUM!

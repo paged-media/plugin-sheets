@@ -1,0 +1,9 @@
+# sheet.fn.lookup.columns golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see ../lookup/vlookup.golden.tsv header).
+# COLUMNS(range) -> the column count of the reference/array. A scalar reference
+# is 1. Cross-checked against lookup2::columns.
+multi-col	=COLUMNS(A1:C2)	A1=1;B1=2;C1=3;A2=4;B2=5;C2=6	3
+single-row	=COLUMNS(A1:D1)	A1=1;B1=2;C1=3;D1=4	4
+single-col	=COLUMNS(A1:A4)	A1=1;A2=2;A3=3;A4=4	1
+one-cell	=COLUMNS(A1)	A1=7	1
+two-by-two	=COLUMNS(B2:C3)	B2=1;C2=2;B3=3;C3=4	2

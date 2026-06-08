@@ -38,6 +38,26 @@ export {
 export {
   joinText,
   lowerToMutations,
+  styleEmissions,
+  styleProps,
+  type BlockedFacet,
   type LowerPlacement,
   type LowerResult,
+  type StyleEmission,
+  type StyleProp,
 } from "./lower-to-mutations";
+
+export {
+  DEFAULT_GRID_SVG_OPTIONS,
+  cellEditorRect,
+  gridSceneToSvg,
+  hitCell,
+  selectionRect,
+  viewportHeightPt,
+  viewportWidthPt,
+  type GridCell,
+  type GridScene,
+  type GridSelection,
+  type GridSvgOptions,
+  type GridViewport,
+} from "./grid";

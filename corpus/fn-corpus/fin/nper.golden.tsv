@@ -1,0 +1,11 @@
+# sheet.fn.fin.nper golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# NPER(rate, pmt, pv, [fv], [type]) — number of periods. r=0 is the linear
+# -(pv+fv)/pmt; otherwise a logarithm (non-positive arg -> #NUM!).
+# id<TAB>formula<TAB>setup<TAB>expected
+nper-zero-rate	=NPER(0,-100,-1000,2000)	-	10
+nper-loan	=NPER(0.12/12,-100,-1000,10000,1)	-	59.6738656742946
+nper-coerce-text	=NPER(0,"-100",-1000,2000)	-	10
+nper-zero-pmt-zero-rate	=NPER(0,0,-1000,2000)	-	#NUM!
+nper-never-amortizes	=NPER(0.1,-50,1000)	-	#NUM!
+nper-error-prop	=NPER(1/0,-100,-1000)	-	#DIV/0!
+nper-arity	=NPER(0.1,-100)	-	#VALUE!

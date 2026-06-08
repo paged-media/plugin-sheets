@@ -1,0 +1,10 @@
+# SUMSQ — sum of squares of the numeric operands (ECMA-376 §18.17.7).
+# Range-aware with the SUM range-vs-scalar asymmetry: range text/bool/blank
+# skip; a scalar coerces; an error cell propagates.
+# id	formula	setup	expected
+sumsq-pair	=SUMSQ(3,4)	-	25
+sumsq-neg	=SUMSQ(-3,4)	-	25
+sumsq-scalar-coerce	=SUMSQ("3",TRUE)	-	10
+sumsq-scalar-bad	=SUMSQ(1,"x")	-	#VALUE!
+sumsq-range-skip	=SUMSQ(A1:A5)	A1=3;A2=hi;A3=4;A4=12;A5=0	169
+sumsq-range-error	=SUMSQ(A1:A2)	A1=2;A2=#N/A	#N/A

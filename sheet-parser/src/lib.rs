@@ -43,6 +43,7 @@ mod pratt;
 mod print;
 mod refs;
 mod rewrite;
+mod structured;
 
 pub use error::ParseError;
 pub use extract::{extract_refs, RefSet};

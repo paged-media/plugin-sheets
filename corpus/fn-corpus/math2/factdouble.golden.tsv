@@ -1,0 +1,9 @@
+# FACTDOUBLE — double factorial n*(n-2)*(n-4)*… of trunc(number)
+# (ECMA-376 §18.17.7). FACTDOUBLE(0) == 1; negative -> #NUM!.
+# id	formula	setup	expected
+factdouble-zero	=FACTDOUBLE(0)	-	1
+factdouble-one	=FACTDOUBLE(1)	-	1
+factdouble-odd	=FACTDOUBLE(7)	-	105
+factdouble-even	=FACTDOUBLE(8)	-	384
+factdouble-trunc	=FACTDOUBLE(7.5)	-	105
+factdouble-negative	=FACTDOUBLE(-2)	-	#NUM!

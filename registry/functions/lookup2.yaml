@@ -1,12 +1,21 @@
-# sheet.fn.lookup.* (M1 additions) — lookup/reference family. Schema: see
-# math.yaml. Rust kernels under sheet-fn/src/families/lookup2.rs (the M1
-# lookup track). All rows status: planned.
+# sheet.fn.lookup.* (M1/T1 additions) — lookup/reference family. Schema: see
+# math.yaml. Rust kernels under sheet-fn/src/families/lookup2.rs (the M1/T1
+# lookup track, spec §11 T1 "full lookup incl. XLOOKUP/INDEX/MATCH").
 #
-# T1 ruling (OFFSET/INDIRECT): in T0/T1 these do NOT return a first-class
-# reference object — they return the VALUE (a 1x1) or a materialized
-# range-view of the addressed region. The kernel resolves the address and
-# reads the already-computed cells (ref_args lets the convention hand the
-# anchor reference in). Recorded per-row.
+# Implemented (T1, pure — no model access): XLOOKUP, XMATCH, ADDRESS, ROWS,
+# COLUMNS.
+#
+# DEFERRED (status: planned) — OFFSET / INDIRECT / FORMULATEXT. These need to
+# read arbitrary cells (or a cell's formula source) that are NOT among the
+# kernel's `Arg` values — the offset target lies OUTSIDE the materialized base
+# RangeView, INDIRECT parses an address at runtime, FORMULATEXT needs the
+# formula string (never a CellValue). The pure-kernel signature and `EvalCtx`
+# are FROZEN (CLAUDE.md §"Interface freeze"); unblocking these requires giving
+# EvalCtx a `cell_reader`/`formula_reader` closure, which forces a lifetime on
+# EvalCtx and ripples through every family kernel + sheet-calc — a versioned
+# orchestrator amendment, not a drive-by edit. They stay planned (→ #NAME?,
+# uncallable by construction) with the limitation documented in the kernel
+# module header and the implementation report. Nothing is faked.
 
 - id: sheet.fn.lookup.xlookup
   name: XLOOKUP
@@ -15,11 +24,11 @@
   volatility: none
   range_aware: true
   rust: lookup2::xlookup
-  status: planned
+  status: implemented
   provenance: ["Microsoft XLOOKUP (public docs) — lookup, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_xlookup"]
-    corpus: ["corpus/fn-corpus/lookup/xlookup.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_xlookup"]
+    corpus: ["corpus/fn-corpus/lookup2/xlookup.golden.tsv"]
 
 - id: sheet.fn.lookup.xmatch
   name: XMATCH
@@ -28,11 +37,11 @@
   volatility: none
   range_aware: true
   rust: lookup2::xmatch
-  status: planned
+  status: implemented
   provenance: ["Microsoft XMATCH (public docs) — lookup, lookup_array, [match_mode], [search_mode]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_xmatch"]
-    corpus: ["corpus/fn-corpus/lookup/xmatch.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_xmatch"]
+    corpus: ["corpus/fn-corpus/lookup2/xmatch.golden.tsv"]
 
 - id: sheet.fn.lookup.offset
   name: OFFSET
@@ -43,9 +52,9 @@
   ref_args: true
   rust: lookup2::offset
   status: planned
-  provenance: ["ECMA-376 §18.17.7 (OFFSET) — reference, rows, cols, [height], [width]. T1 ruling: returns the VALUE/range view, not a first-class reference object"]
+  provenance: ["ECMA-376 §18.17.7 (OFFSET) — reference, rows, cols, [height], [width]. DEFERRED: the offset target is a cell OUTSIDE the materialized base RangeView; the FROZEN pure kernel cannot read it. Needs an EvalCtx cell_reader amendment (see module header / report)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_offset"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_offset"]
     corpus: []
 
 - id: sheet.fn.lookup.indirect
@@ -57,9 +66,9 @@
   ref_args: true
   rust: lookup2::indirect
   status: planned
-  provenance: ["ECMA-376 §18.17.7 (INDIRECT) — ref_text, [a1]. T1 ruling: returns the VALUE/range view of the parsed address, not a first-class reference object"]
+  provenance: ["ECMA-376 §18.17.7 (INDIRECT) — ref_text, [a1]. DEFERRED: parses an A1 address at runtime and reads that cell — never an Arg value. Needs an EvalCtx cell_reader amendment (see module header / report)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_indirect"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_indirect"]
     corpus: []
 
 - id: sheet.fn.lookup.address
@@ -69,11 +78,11 @@
   volatility: none
   range_aware: false
   rust: lookup2::address
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ADDRESS) — row_num, col_num, [abs_num], [a1], [sheet_text]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_address"]
-    corpus: ["corpus/fn-corpus/lookup/address.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_address"]
+    corpus: ["corpus/fn-corpus/lookup2/address.golden.tsv"]
 
 - id: sheet.fn.lookup.rows
   name: ROWS
@@ -83,11 +92,11 @@
   range_aware: true
   ref_args: true
   rust: lookup2::rows
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (ROWS) — row count of a reference/array"]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_rows"]
-    corpus: ["corpus/fn-corpus/lookup/rows.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_rows"]
+    corpus: ["corpus/fn-corpus/lookup2/rows.golden.tsv"]
 
 - id: sheet.fn.lookup.columns
   name: COLUMNS
@@ -97,11 +106,11 @@
   range_aware: true
   ref_args: true
   rust: lookup2::columns
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (COLUMNS) — column count of a reference/array"]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_columns"]
-    corpus: ["corpus/fn-corpus/lookup/columns.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_columns"]
+    corpus: ["corpus/fn-corpus/lookup2/columns.golden.tsv"]
 
 - id: sheet.fn.lookup.formulatext
   name: FORMULATEXT
@@ -112,7 +121,7 @@
   ref_args: true
   rust: lookup2::formulatext
   status: planned
-  provenance: ["Microsoft FORMULATEXT (public docs) — the formula text of a reference"]
+  provenance: ["Microsoft FORMULATEXT (public docs) — the formula text of a reference. DEFERRED: needs the referenced cell's FORMULA SOURCE, which is not a CellValue and never crosses the Arg boundary. Needs an EvalCtx formula_reader amendment (see module header / report)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_formulatext"]
-    corpus: ["corpus/fn-corpus/lookup/formulatext.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_formulatext"]
+    corpus: ["corpus/fn-corpus/lookup2/formulatext.golden.tsv"]

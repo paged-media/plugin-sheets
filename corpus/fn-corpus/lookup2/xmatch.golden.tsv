@@ -1,0 +1,11 @@
+# sheet.fn.lookup.xmatch golden corpus (spec §7, §11 T1; Microsoft public docs).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see ../lookup/vlookup.golden.tsv header).
+# XMATCH(lookup_value, lookup_array, [match_mode], [search_mode]) — 1-based
+# position; modes as XLOOKUP. Not-found #N/A. Cross-checked against lookup2::xmatch.
+exact-default	=XMATCH(20,A1:A3)	A1=10;A2=20;A3=30	2
+exact-text-ci	=XMATCH("BETA",A1:A3,0)	A1=alpha;A2=beta;A3=gamma	2
+approx-smaller	=XMATCH(25,A1:A3,-1)	A1=10;A2=20;A3=30	2
+approx-larger	=XMATCH(25,A1:A3,1)	A1=10;A2=20;A3=30	3
+wildcard	=XMATCH("g*",A1:A3,2)	A1=alpha;A2=beta;A3=gamma	3
+not-found-na	=XMATCH("zzz",A1:A3,0)	A1=alpha;A2=beta;A3=gamma	#N/A
+last-to-first	=XMATCH("x",A1:A3,0,-1)	A1=x;A2=y;A3=x	3

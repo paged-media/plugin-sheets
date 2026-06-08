@@ -45,21 +45,56 @@
 //! special form — see the `sheet_fn::families::logical` module docs; the
 //! corpus runner confirms the value-correctness of the eager path.
 
-use sheet_core::ast::{BinOp, Expr, FuncId, UnOp};
+use sheet_core::ast::{BinOp, Expr, FuncId, StructuredRef, UnOp};
 use sheet_core::names::NameTarget;
-use sheet_core::{CellError, CellRef, CellValue, RangeRef, SheetModel};
-use sheet_fn::{coerce, Arg, EvalCtx};
+use sheet_core::{CellError, CellRef, CellValue, RangeRef, SheetModel, Table};
+use sheet_fn::{coerce, Arg, EvalCtx, FnResult};
 
 use crate::argview::{self, RangeBuf};
+use crate::spill::SpillState;
 
 /// Evaluate a formula root `expr` for the cell at `current`, with the given
 /// clock/seed context. Reads dependency values straight out of `model` (fresh
-/// by topo order).
-pub fn eval_expr(model: &SheetModel, expr: &Expr, ctx: &EvalCtx) -> CellValue {
-    eval(model, expr, ctx)
+/// by topo order). Spill references resolve against `spills` (a `SpillRef` in
+/// scalar position yields the anchor value; the spill region is only meaningful
+/// as a range argument — see [`eval_spill_ref`]).
+pub fn eval_expr(model: &SheetModel, expr: &Expr, ctx: &EvalCtx, spills: &SpillState) -> CellValue {
+    eval(model, expr, ctx, spills)
 }
 
-fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx) -> CellValue {
+/// Evaluate a formula ROOT through the rich (array) door (spec §6.4, M1 spill
+/// track). Returns [`FnResult::Array`] when the root is a `returns_array`
+/// function call or an array literal that produces a 2-D block; otherwise the
+/// scalar value wrapped in [`FnResult::Scalar`]. The engine uses this for
+/// cells whose formula is detected as *spilling* ([`expr_spills`]); every
+/// other cell stays on the scalar [`eval_expr`] path.
+pub fn eval_expr_rich(
+    model: &SheetModel,
+    expr: &Expr,
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> FnResult {
+    match expr {
+        Expr::Func(fid, args) => eval_func_rich(model, *fid, args, ctx, spills),
+        Expr::Array(rows) => eval_array_literal(model, rows, ctx, spills),
+        // Not a spilling root — fall back to the scalar evaluation.
+        other => FnResult::Scalar(eval(model, other, ctx, spills)),
+    }
+}
+
+/// Whether a formula ROOT spills (T1 ruling, `sheet.calc.spill.materialize`): a
+/// `returns_array` function call, or an array literal. The engine consults this
+/// to choose the rich vs scalar evaluation path; only these roots can ever
+/// produce a `FnResult::Array`.
+pub fn expr_spills(expr: &Expr) -> bool {
+    match expr {
+        Expr::Func(fid, _) => sheet_core::funcs::meta(*fid).returns_array,
+        Expr::Array(_) => true,
+        _ => false,
+    }
+}
+
+fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillState) -> CellValue {
     match e {
         Expr::Lit(lit) => lit_to_value(lit),
         Expr::Ref(r) => argview::cell_value(model, *r),
@@ -67,14 +102,221 @@ fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx) -> CellValue {
         // (T0 ruling: ranges are only meaningful as function arguments).
         Expr::Range(_) | Expr::Array(_) => CellValue::Error(CellError::Value),
         Expr::Name(nid) => eval_name(model, *nid),
-        Expr::Unary(op, inner) => eval_unary(model, *op, inner, ctx),
-        Expr::Binary(op, a, b) => eval_binary(model, *op, a, b, ctx),
-        Expr::Func(fid, args) => eval_func(model, *fid, args, ctx),
-        // M1 Phase B (spill/tables tracks) wires these. Until then a
-        // structured or spill reference evaluates to #NAME? (it is parsed
-        // but not yet resolvable).
-        Expr::StructuredRef(_) | Expr::SpillRef(_) => CellValue::Error(CellError::Name),
+        Expr::Unary(op, inner) => eval_unary(model, *op, inner, ctx, spills),
+        Expr::Binary(op, a, b) => eval_binary(model, *op, a, b, ctx, spills),
+        Expr::Func(fid, args) => eval_func(model, *fid, args, ctx, spills),
+        // A structured (table) reference in SCALAR position (spec §6.4, M1
+        // tables track). It resolves to a concrete range; a multi-cell range
+        // in a scalar slot is `#VALUE!` (the same ruling as `Expr::Range`),
+        // EXCEPT the `ThisRow`/`[@Col]` form, which implicit-intersects with
+        // the formula's own row to a single cell.
+        Expr::StructuredRef(s) => eval_structured_ref_scalar(model, s, ctx),
+        // A spill reference `A1#` in SCALAR position yields the anchor's value
+        // (`sheet.calc.spill.ref-operator`); its real use is as a range
+        // argument, materialized in `eval_func`.
+        Expr::SpillRef(inner) => eval_spill_ref_scalar(model, inner, ctx, spills),
     }
+}
+
+/// A `SpillRef` in scalar position: it denotes the anchor's whole spill region,
+/// which is a RANGE, not a scalar. Excel yields `#VALUE!` for a spill-range
+/// reference used where a single value is expected, EXCEPT that the bare anchor
+/// READ is the anchor's stored value. We resolve the inner expression's anchor
+/// cell: if it is a live spill anchor whose region is more than 1×1, scalar use
+/// is `#VALUE!`; a 1×1 (or non-anchor) read yields the cell's value.
+fn eval_spill_ref_scalar(
+    model: &SheetModel,
+    inner: &Expr,
+    _ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
+    let Some(anchor) = spill_anchor_of(inner) else {
+        return CellValue::Error(CellError::Ref);
+    };
+    match spills.region_of(anchor) {
+        Some(rect) if !rect.is_single() => CellValue::Error(CellError::Value),
+        // A 1×1 spill (or no live region) reads the anchor cell's value.
+        _ => argview::cell_value(model, anchor),
+    }
+}
+
+/// The anchor cell a `SpillRef`'s inner expression denotes (only a bare cell
+/// reference is a valid spill anchor in T1).
+fn spill_anchor_of(inner: &Expr) -> Option<CellRef> {
+    match inner {
+        Expr::Ref(r) => Some(*r),
+        _ => None,
+    }
+}
+
+/// A structured (table) reference in SCALAR position (spec §6.4 / ECMA-376
+/// §18.17.2.4). The reference resolves to a concrete range; a single-cell
+/// resolution reads that cell, while a multi-cell resolution is `#VALUE!` —
+/// the same scalar-position ruling as a plain `Expr::Range`. The `ThisRow`
+/// (`[@Col]`) form is the one that legitimately yields a single cell: it
+/// intersects the table's data rows with the formula's own row.
+fn eval_structured_ref_scalar(model: &SheetModel, s: &StructuredRef, ctx: &EvalCtx) -> CellValue {
+    match resolve_structured_ref(model, s, ctx) {
+        Ok(r) => {
+            let n = r.normalized();
+            if n.rows() == 1 && n.cols() == 1 {
+                argview::cell_value(model, n.start)
+            } else {
+                // A multi-cell area in a scalar slot — only meaningful as a
+                // function argument (no implicit intersection in T0).
+                CellValue::Error(CellError::Value)
+            }
+        }
+        Err(e) => CellValue::Error(e),
+    }
+}
+
+/// Resolve a [`StructuredRef`] against the workbook's table model to a concrete
+/// [`RangeRef`] (spec §6.4). Errors map to the Excel rulings:
+///
+/// - unknown table (and not the in-table `[@…]` form whose table is resolved
+///   from the formula cell) → `#NAME?`;
+/// - unknown column name → `#REF!` (ECMA-376: a structured reference to a
+///   missing column is a `#REF!`);
+/// - the `ThisRow` form when the formula's own row is outside the table's data
+///   body → `#VALUE!`.
+///
+/// Area semantics (over the table's FULL [`Table::range`], which includes the
+/// header row when [`Table::header_row`] and the totals row when
+/// [`Table::totals_row`]):
+///
+/// - `Data` — the body: the range minus the header/totals edge rows;
+/// - `All` — the whole extent;
+/// - `Headers` / `Totals` — the single edge row (`#REF!` if absent);
+/// - `ThisRow` — the body row aligned with `ctx.current.row`.
+///
+/// The column span (`col_start`/`col_end`, both `None` = every column) clips the
+/// horizontal extent; column offsets come from [`Table::column_index`].
+fn resolve_structured_ref(
+    model: &SheetModel,
+    s: &StructuredRef,
+    ctx: &EvalCtx,
+) -> Result<RangeRef, CellError> {
+    use sheet_core::ast::TableArea;
+
+    // Resolve the table. The bare `[@Col]` / `[[#…],[Col]]` forms carry an
+    // empty table name: anchor them to the table containing the formula's row.
+    // When the formula is in no table at all, the ThisRow form is "current row
+    // outside the table" → `#VALUE!` (the prompt's ruling); any other bare area
+    // form is `#REF!`.
+    let (sheet, table) = if s.table.is_empty() {
+        match table_containing(model, ctx.current) {
+            Some(pair) => pair,
+            None if s.area == TableArea::ThisRow => return Err(CellError::Value),
+            None => return Err(CellError::Ref),
+        }
+    } else {
+        let (sid, t) = model.resolve_table(&s.table).ok_or(CellError::Name)?;
+        (sid, t)
+    };
+
+    let full = table.range.normalized();
+    // Edge-row offsets within `full` (header is the first row, totals the last).
+    let header_rows = u32::from(table.header_row);
+    let totals_rows = u32::from(table.totals_row);
+
+    // Vertical extent for the requested area, as inclusive absolute rows.
+    let (row0, row1) = match s.area {
+        TableArea::All => (full.start.row, full.end.row),
+        TableArea::Headers => {
+            if !table.header_row {
+                return Err(CellError::Ref);
+            }
+            (full.start.row, full.start.row)
+        }
+        TableArea::Totals => {
+            if !table.totals_row {
+                return Err(CellError::Ref);
+            }
+            (full.end.row, full.end.row)
+        }
+        TableArea::Data => data_body_rows(&full, header_rows, totals_rows)?,
+        TableArea::ThisRow => {
+            let (d0, d1) = data_body_rows(&full, header_rows, totals_rows)?;
+            let cur = ctx.current.row;
+            if ctx.current.sheet != sheet || cur < d0 || cur > d1 {
+                // The formula's own row is outside this table's data body.
+                return Err(CellError::Value);
+            }
+            (cur, cur)
+        }
+    };
+
+    // Horizontal extent from the column span (offsets relative to `full`'s
+    // left edge); both `None` selects every column.
+    let (col0, col1) = match (&s.col_start, &s.col_end) {
+        (None, _) => (full.start.col, full.end.col),
+        (Some(c0), None) => {
+            let off = table.column_index(c0).ok_or(CellError::Ref)?;
+            let abs = full.start.col + off;
+            (abs, abs)
+        }
+        (Some(c0), Some(c1)) => {
+            let o0 = table.column_index(c0).ok_or(CellError::Ref)?;
+            let o1 = table.column_index(c1).ok_or(CellError::Ref)?;
+            let (lo, hi) = if o0 <= o1 { (o0, o1) } else { (o1, o0) };
+            (full.start.col + lo, full.start.col + hi)
+        }
+    };
+
+    Ok(RangeRef {
+        start: CellRef {
+            sheet,
+            row: row0,
+            col: col0,
+            row_abs: false,
+            col_abs: false,
+        },
+        end: CellRef {
+            sheet,
+            row: row1,
+            col: col1,
+            row_abs: false,
+            col_abs: false,
+        },
+    })
+}
+
+/// The inclusive absolute row span of a table's DATA body: the full extent
+/// minus the header row (if any) and totals row (if any). A table with no body
+/// rows (header/totals consume the whole extent) is `#REF!`.
+fn data_body_rows(
+    full: &RangeRef,
+    header_rows: u32,
+    totals_rows: u32,
+) -> Result<(u32, u32), CellError> {
+    let top = full.start.row + header_rows;
+    // Saturating: a totals row at/over the top collapses the body.
+    let bottom = full
+        .end
+        .row
+        .checked_sub(totals_rows)
+        .ok_or(CellError::Ref)?;
+    if top > bottom {
+        return Err(CellError::Ref);
+    }
+    Ok((top, bottom))
+}
+
+/// The table the in-table `[@Col]` (ThisRow) form anchors to. ECMA-376 ties the
+/// bare form to the table CONTAINING the formula, but Excel also resolves it for
+/// a formula in a column just OUTSIDE the table's columns yet ROW-aligned with
+/// it (the common "helper column next to the table" case). We therefore anchor
+/// by ROW span: the first table on the formula's sheet whose full extent rows
+/// include the current row. The column intersection then happens in
+/// [`resolve_structured_ref`]. `None` if the row is in no table (eval → `#REF!`).
+fn table_containing(model: &SheetModel, cell: CellRef) -> Option<(sheet_core::SheetId, &Table)> {
+    let ws = model.sheet(cell.sheet)?;
+    let t = ws.tables.iter().find(|t| {
+        let n = t.range.normalized();
+        n.start.sheet == cell.sheet && cell.row >= n.start.row && cell.row <= n.end.row
+    })?;
+    Some((cell.sheet, t))
 }
 
 /// Map a literal AST value to a stored [`CellValue`].
@@ -100,8 +342,14 @@ fn eval_name(model: &SheetModel, nid: sheet_core::ast::NameId) -> CellValue {
     }
 }
 
-fn eval_unary(model: &SheetModel, op: UnOp, inner: &Expr, ctx: &EvalCtx) -> CellValue {
-    let v = eval(model, inner, ctx);
+fn eval_unary(
+    model: &SheetModel,
+    op: UnOp,
+    inner: &Expr,
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
+    let v = eval(model, inner, ctx, spills);
     if let CellValue::Error(e) = v {
         return CellValue::Error(e);
     }
@@ -121,9 +369,16 @@ fn eval_unary(model: &SheetModel, op: UnOp, inner: &Expr, ctx: &EvalCtx) -> Cell
     }
 }
 
-fn eval_binary(model: &SheetModel, op: BinOp, a: &Expr, b: &Expr, ctx: &EvalCtx) -> CellValue {
-    let lhs = eval(model, a, ctx);
-    let rhs = eval(model, b, ctx);
+fn eval_binary(
+    model: &SheetModel,
+    op: BinOp,
+    a: &Expr,
+    b: &Expr,
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
+    let lhs = eval(model, a, ctx, spills);
+    let rhs = eval(model, b, ctx, spills);
 
     // Error propagation: left operand first.
     if let CellValue::Error(e) = lhs {
@@ -230,56 +485,164 @@ fn excel_ordering(lhs: &CellValue, rhs: &CellValue) -> std::cmp::Ordering {
     ord
 }
 
-/// Evaluate a function call: materialize each argument, then dispatch through
-/// the frozen `sheet_fn` table. Arity is enforced inside `dispatch`.
-fn eval_func(model: &SheetModel, fid: FuncId, args: &[Expr], ctx: &EvalCtx) -> CellValue {
-    let meta = sheet_core::funcs::meta(fid);
+/// How one function argument materializes: a ready scalar value, or an index
+/// into the owned [`RangeBuf`] backing list (a range view is lent from it only
+/// once the buffers are allocated, so borrows do not overlap allocation).
+enum ArgPlan {
+    Scalar(CellValue),
+    BufAt(usize),
+}
 
-    // Owned backing for any range args (the borrowing `Arg::Range` view needs
-    // a buffer that outlives the dispatch call).
+/// Materialize a call's arguments into the owned [`RangeBuf`] backings plus a
+/// parallel [`ArgPlan`] list. Shared by [`eval_func`] and [`eval_func_rich`] so
+/// the scalar and array doors build their `&[Arg]` slice identically. The caller
+/// lends views from `bufs` in a second pass (so `bufs` outlives every `Arg`).
+fn plan_args(
+    model: &SheetModel,
+    fid: FuncId,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> (Vec<RangeBuf>, Vec<ArgPlan>) {
+    let meta = sheet_core::funcs::meta(fid);
     let mut bufs: Vec<RangeBuf> = Vec::new();
-    // A parallel plan describing how each arg materializes, so we can build the
-    // `&[Arg]` slice in one pass after the buffers are allocated.
-    enum Plan {
-        Scalar(CellValue),
-        BufAt(usize),
-    }
-    let mut plans: Vec<Plan> = Vec::with_capacity(args.len());
+    let mut plans: Vec<ArgPlan> = Vec::with_capacity(args.len());
 
     for arg in args {
         match arg {
             Expr::Range(r) => {
                 let resolved = resolve_range_for_arg(model, *r);
                 bufs.push(argview::materialize_range(model, resolved));
-                plans.push(Plan::BufAt(bufs.len() - 1));
+                plans.push(ArgPlan::BufAt(bufs.len() - 1));
             }
             // A defined-name that targets a range materializes as a range arg.
             Expr::Name(nid) => match name_range_target(model, *nid) {
                 Some(r) => {
                     bufs.push(argview::materialize_range(model, r));
-                    plans.push(Plan::BufAt(bufs.len() - 1));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
                 }
-                None => plans.push(Plan::Scalar(eval(model, arg, ctx))),
+                None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
+            },
+            // A spill reference `A1#` materializes the WHOLE live spill region
+            // as a range argument (`sheet.calc.spill.ref-operator`). With no
+            // live region the anchor read degrades to its scalar value.
+            Expr::SpillRef(inner) => match spill_ref_range(spills, inner) {
+                Some(rect) => {
+                    bufs.push(argview::materialize_range(model, spill_rect_to_range(rect)));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                }
+                None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
+            },
+            // A structured (table) reference materializes its resolved area as a
+            // range argument (spec §6.4): `SUM(Table1[Amount])` resolves the
+            // column's data range and aggregates it. An unresolvable table /
+            // column degrades to the scalar `#REF!`/`#NAME?` the eval path emits.
+            Expr::StructuredRef(s) => match resolve_structured_ref(model, s, ctx) {
+                Ok(r) => {
+                    bufs.push(argview::materialize_range(model, r));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                }
+                Err(e) => plans.push(ArgPlan::Scalar(CellValue::Error(e))),
             },
             // For ref_args functions, a bare cell ref becomes a 1x1 range
             // carrying its origin (ROW/COLUMN need the reference).
             Expr::Ref(r) if meta.ref_args => {
                 bufs.push(argview::materialize_ref_1x1(model, *r));
-                plans.push(Plan::BufAt(bufs.len() - 1));
+                plans.push(ArgPlan::BufAt(bufs.len() - 1));
             }
-            _ => plans.push(Plan::Scalar(eval(model, arg, ctx))),
+            _ => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
         }
     }
+    (bufs, plans)
+}
 
-    let built: Vec<Arg> = plans
+/// Lend the borrowing `&[Arg]` slice from `bufs`/`plans` (the second pass — see
+/// [`plan_args`]). `bufs` MUST outlive the returned `Vec<Arg>`.
+fn build_args<'a>(bufs: &'a [RangeBuf], plans: &[ArgPlan]) -> Vec<Arg<'a>> {
+    plans
         .iter()
         .map(|p| match p {
-            Plan::Scalar(v) => Arg::Scalar(v.clone()),
-            Plan::BufAt(i) => Arg::Range(bufs[*i].view()),
+            ArgPlan::Scalar(v) => Arg::Scalar(v.clone()),
+            ArgPlan::BufAt(i) => Arg::Range(bufs[*i].view()),
         })
-        .collect();
+        .collect()
+}
 
+/// Evaluate a function call: materialize each argument, then dispatch through
+/// the frozen `sheet_fn` table. Arity is enforced inside `dispatch`.
+fn eval_func(
+    model: &SheetModel,
+    fid: FuncId,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
+    let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
+    let built = build_args(&bufs, &plans);
     sheet_fn::dispatch(fid, &built, ctx)
+}
+
+/// Evaluate a function call through the RICH (array) door (spec §6.4). Same
+/// argument materialization as [`eval_func`], but the result is a [`FnResult`]
+/// (so a `returns_array` kernel's 2-D block survives to the spill engine).
+fn eval_func_rich(
+    model: &SheetModel,
+    fid: FuncId,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> FnResult {
+    let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
+    let built = build_args(&bufs, &plans);
+    sheet_fn::dispatch_rich(fid, &built, ctx)
+}
+
+/// The live spill region a `SpillRef`'s inner anchor owns, if any (only a bare
+/// cell ref is a valid anchor in T1).
+fn spill_ref_range(spills: &SpillState, inner: &Expr) -> Option<crate::spill::SpillRect> {
+    let anchor = spill_anchor_of(inner)?;
+    spills.region_of(anchor)
+}
+
+/// A [`crate::spill::SpillRect`] as a [`RangeRef`] for argument materialization.
+fn spill_rect_to_range(rect: crate::spill::SpillRect) -> RangeRef {
+    RangeRef {
+        start: CellRef {
+            sheet: rect.sheet,
+            row: rect.row0,
+            col: rect.col0,
+            row_abs: false,
+            col_abs: false,
+        },
+        end: CellRef {
+            sheet: rect.sheet,
+            row: rect.row1,
+            col: rect.col1,
+            row_abs: false,
+            col_abs: false,
+        },
+    }
+}
+
+/// Evaluate an array literal `{1,2;3,4}` (or a legacy CSE array formula that
+/// parsed to one) into a [`FnResult::Array`] (spec §6.4,
+/// `sheet.calc.spill.cse-parse`). Each element is evaluated in scalar position;
+/// ragged rows are NOT padded (the parser produces rectangular literals). An
+/// empty literal degrades to `#VALUE!`.
+fn eval_array_literal(
+    model: &SheetModel,
+    rows: &[Vec<Expr>],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> FnResult {
+    if rows.is_empty() || rows.iter().all(|r| r.is_empty()) {
+        return FnResult::Scalar(CellValue::Error(CellError::Value));
+    }
+    let grid: Vec<Vec<CellValue>> = rows
+        .iter()
+        .map(|row| row.iter().map(|e| eval(model, e, ctx, spills)).collect())
+        .collect();
+    FnResult::Array(grid)
 }
 
 /// Resolve a `RangeRef` for argument materialization. A range whose start
@@ -344,6 +707,11 @@ mod tests {
         EvalCtx::new(sheet_core::DateSystem::Date1900, cr(0, 0), 0.0, 1)
     }
 
+    /// An empty spill ledger — the resting state for non-spilling eval tests.
+    fn spills() -> SpillState {
+        SpillState::new()
+    }
+
     fn num(n: f64) -> Expr {
         Expr::Lit(LitValue::Number(OrderedF64::new(n)))
     }
@@ -351,11 +719,12 @@ mod tests {
     #[test]
     fn arithmetic_and_div0() {
         let m = model();
+        let s = spills();
         let add = Expr::Binary(BinOp::Add, Box::new(num(2.0)), Box::new(num(3.0)));
-        assert_eq!(eval_expr(&m, &add, &ctx()), CellValue::Number(5.0));
+        assert_eq!(eval_expr(&m, &add, &ctx(), &s), CellValue::Number(5.0));
         let div = Expr::Binary(BinOp::Div, Box::new(num(1.0)), Box::new(num(0.0)));
         assert_eq!(
-            eval_expr(&m, &div, &ctx()),
+            eval_expr(&m, &div, &ctx(), &s),
             CellValue::Error(CellError::Div0)
         );
     }
@@ -363,64 +732,72 @@ mod tests {
     #[test]
     fn pow_domain_rulings() {
         let m = model();
+        let s = spills();
         let zz = Expr::Binary(BinOp::Pow, Box::new(num(0.0)), Box::new(num(0.0)));
-        assert_eq!(eval_expr(&m, &zz, &ctx()), CellValue::Error(CellError::Num));
+        assert_eq!(
+            eval_expr(&m, &zz, &ctx(), &s),
+            CellValue::Error(CellError::Num)
+        );
         let neg_frac = Expr::Binary(BinOp::Pow, Box::new(num(-2.0)), Box::new(num(0.5)));
         assert_eq!(
-            eval_expr(&m, &neg_frac, &ctx()),
+            eval_expr(&m, &neg_frac, &ctx(), &s),
             CellValue::Error(CellError::Num)
         );
         let ok = Expr::Binary(BinOp::Pow, Box::new(num(2.0)), Box::new(num(10.0)));
-        assert_eq!(eval_expr(&m, &ok, &ctx()), CellValue::Number(1024.0));
+        assert_eq!(eval_expr(&m, &ok, &ctx(), &s), CellValue::Number(1024.0));
     }
 
     #[test]
     fn ref_reads_current_value_and_empty_is_zero() {
         let mut m = model();
+        let s = spills();
         set(&mut m, 0, 0, CellValue::Number(7.0));
         let refa1 = Expr::Ref(cr(0, 0));
-        assert_eq!(eval_expr(&m, &refa1, &ctx()), CellValue::Number(7.0));
+        assert_eq!(eval_expr(&m, &refa1, &ctx(), &s), CellValue::Number(7.0));
         // Empty ref in arithmetic coerces to 0.
         let add = Expr::Binary(
             BinOp::Add,
             Box::new(Expr::Ref(cr(5, 5))),
             Box::new(num(1.0)),
         );
-        assert_eq!(eval_expr(&m, &add, &ctx()), CellValue::Number(1.0));
+        assert_eq!(eval_expr(&m, &add, &ctx(), &s), CellValue::Number(1.0));
     }
 
     #[test]
     fn comparison_excel_text_equality() {
         let m = model();
+        let s = spills();
         let eq = Expr::Binary(
             BinOp::Eq,
             Box::new(Expr::Lit(LitValue::Text("ABC".into()))),
             Box::new(Expr::Lit(LitValue::Text("abc".into()))),
         );
         // Text equality is case-insensitive in Excel.
-        assert_eq!(eval_expr(&m, &eq, &ctx()), CellValue::Bool(true));
+        assert_eq!(eval_expr(&m, &eq, &ctx(), &s), CellValue::Bool(true));
     }
 
     #[test]
     fn concat_coerces_to_text() {
         let m = model();
+        let s = spills();
         let cat = Expr::Binary(
             BinOp::Concat,
             Box::new(num(1.0)),
             Box::new(Expr::Lit(LitValue::Text("x".into()))),
         );
-        assert_eq!(eval_expr(&m, &cat, &ctx()), CellValue::from("1x"));
+        assert_eq!(eval_expr(&m, &cat, &ctx(), &s), CellValue::from("1x"));
     }
 
     #[test]
     fn range_in_scalar_position_is_value_error() {
         let m = model();
+        let s = spills();
         let rng = Expr::Range(RangeRef {
             start: cr(0, 0),
             end: cr(2, 0),
         });
         assert_eq!(
-            eval_expr(&m, &rng, &ctx()),
+            eval_expr(&m, &rng, &ctx(), &s),
             CellValue::Error(CellError::Value)
         );
     }
@@ -428,6 +805,7 @@ mod tests {
     #[test]
     fn func_sum_over_range() {
         let mut m = model();
+        let s = spills();
         set(&mut m, 0, 0, CellValue::Number(1.0));
         set(&mut m, 1, 0, CellValue::Number(2.0));
         set(&mut m, 2, 0, CellValue::Number(3.0));
@@ -439,12 +817,13 @@ mod tests {
                 end: cr(2, 0),
             })],
         );
-        assert_eq!(eval_expr(&m, &call, &ctx()), CellValue::Number(6.0));
+        assert_eq!(eval_expr(&m, &call, &ctx(), &s), CellValue::Number(6.0));
     }
 
     #[test]
     fn error_propagation_left_first() {
         let mut m = model();
+        let s = spills();
         set(&mut m, 0, 0, CellValue::Error(CellError::Div0));
         set(&mut m, 0, 1, CellValue::Error(CellError::Na));
         let add = Expr::Binary(
@@ -453,8 +832,186 @@ mod tests {
             Box::new(Expr::Ref(cr(0, 1))),
         );
         assert_eq!(
-            eval_expr(&m, &add, &ctx()),
+            eval_expr(&m, &add, &ctx(), &s),
             CellValue::Error(CellError::Div0)
         );
+    }
+
+    #[test]
+    fn array_literal_evaluates_to_array() {
+        // `{1,2;3,4}` evaluates element-wise to a 2x2 FnResult::Array
+        // (sheet.calc.spill.cse-parse — legacy CSE arrays use this path too).
+        let m = model();
+        let s = spills();
+        let lit = Expr::Array(vec![vec![num(1.0), num(2.0)], vec![num(3.0), num(4.0)]]);
+        assert!(expr_spills(&lit));
+        match eval_expr_rich(&m, &lit, &ctx(), &s) {
+            FnResult::Array(grid) => {
+                assert_eq!(grid.len(), 2);
+                assert_eq!(
+                    grid[0],
+                    vec![CellValue::Number(1.0), CellValue::Number(2.0)]
+                );
+                assert_eq!(
+                    grid[1],
+                    vec![CellValue::Number(3.0), CellValue::Number(4.0)]
+                );
+            }
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn expr_spills_detects_array_roots_only() {
+        // A returns_array function root spills; a scalar function root does not.
+        let seq = sheet_core::funcs::lookup_func("SEQUENCE").unwrap();
+        let sum = sheet_core::funcs::lookup_func("SUM").unwrap();
+        assert!(expr_spills(&Expr::Func(seq, vec![])));
+        assert!(!expr_spills(&Expr::Func(sum, vec![])));
+        assert!(!expr_spills(&num(1.0)));
+    }
+
+    // ---- Structured (table) references (spec §6.4, tables track) ----
+
+    use sheet_core::ast::TableArea;
+    use sheet_core::Table;
+
+    /// A model with `Sales` on sheet 0: header row at row 0, data rows 1..=3,
+    /// columns [Region, Units, Total] in cols A..C. Cells seeded with numbers.
+    fn table_model() -> SheetModel {
+        let mut m = model();
+        // Header labels (row 0) + data (rows 1..3).
+        set(&mut m, 0, 0, CellValue::from("Region"));
+        set(&mut m, 0, 1, CellValue::from("Units"));
+        set(&mut m, 0, 2, CellValue::from("Total"));
+        for (i, (u, t)) in [(10.0, 100.0), (20.0, 200.0), (30.0, 300.0)]
+            .iter()
+            .enumerate()
+        {
+            let r = 1 + i as u32;
+            set(&mut m, r, 0, CellValue::from("R"));
+            set(&mut m, r, 1, CellValue::Number(*u));
+            set(&mut m, r, 2, CellValue::Number(*t));
+        }
+        let table = Table {
+            name: "Sales".into(),
+            range: RangeRef {
+                start: cr(0, 0),
+                end: cr(3, 2),
+            }, // A1:C4 (header + 3 data rows)
+            columns: vec!["Region".into(), "Units".into(), "Total".into()],
+            header_row: true,
+            totals_row: false,
+            style_name: None,
+        };
+        m.sheet_mut(0).unwrap().tables.push(table);
+        m
+    }
+
+    fn sref(table: &str, area: TableArea, col: Option<&str>) -> Expr {
+        Expr::StructuredRef(StructuredRef {
+            table: table.into(),
+            area,
+            col_start: col.map(Into::into),
+            col_end: None,
+        })
+    }
+
+    #[test]
+    fn structured_ref_column_sum() {
+        // SUM(Sales[Units]) over the data body (rows 1..=3) = 60.
+        let m = table_model();
+        let s = spills();
+        let fid = sheet_core::funcs::lookup_func("SUM").unwrap();
+        let call = Expr::Func(fid, vec![sref("Sales", TableArea::Data, Some("Units"))]);
+        assert_eq!(eval_expr(&m, &call, &ctx(), &s), CellValue::Number(60.0));
+        // The Total column sums to 600.
+        let call2 = Expr::Func(fid, vec![sref("Sales", TableArea::Data, Some("Total"))]);
+        assert_eq!(eval_expr(&m, &call2, &ctx(), &s), CellValue::Number(600.0));
+    }
+
+    #[test]
+    fn structured_ref_data_excludes_header() {
+        // The Data area excludes the header row: COUNT(Sales[Units]) counts only
+        // the 3 numeric data cells (the header "Units" text is not counted).
+        let m = table_model();
+        let s = spills();
+        let fid = sheet_core::funcs::lookup_func("COUNT").unwrap();
+        let call = Expr::Func(fid, vec![sref("Sales", TableArea::Data, Some("Units"))]);
+        assert_eq!(eval_expr(&m, &call, &ctx(), &s), CellValue::Number(3.0));
+    }
+
+    #[test]
+    fn structured_ref_thisrow_intersects_current_row() {
+        // `[@Units]` evaluated at row 2 reads the single data cell (row 2, col 1)
+        // = 20. The empty table name is resolved from the formula's own cell.
+        let m = table_model();
+        let s = spills();
+        let ctx_row2 = EvalCtx::new(sheet_core::DateSystem::Date1900, cr(2, 5), 0.0, 1);
+        let e = sref("", TableArea::ThisRow, Some("Units"));
+        assert_eq!(eval_expr(&m, &e, &ctx_row2, &s), CellValue::Number(20.0));
+    }
+
+    #[test]
+    fn structured_ref_thisrow_outside_table_is_value_error() {
+        // `[@Units]` evaluated at a row OUTSIDE the table data body → #VALUE!.
+        let m = table_model();
+        let s = spills();
+        // Row 0 is the header (not data); row 9 is below the table.
+        let e = sref("", TableArea::ThisRow, Some("Units"));
+        let ctx_hdr = EvalCtx::new(sheet_core::DateSystem::Date1900, cr(0, 5), 0.0, 1);
+        assert_eq!(
+            eval_expr(&m, &e, &ctx_hdr, &s),
+            CellValue::Error(CellError::Value)
+        );
+        let ctx_below = EvalCtx::new(sheet_core::DateSystem::Date1900, cr(9, 5), 0.0, 1);
+        assert_eq!(
+            eval_expr(&m, &e, &ctx_below, &s),
+            CellValue::Error(CellError::Value)
+        );
+    }
+
+    #[test]
+    fn structured_ref_multicell_in_scalar_is_value_error() {
+        // A multi-row column in a SCALAR slot is #VALUE! (range-in-scalar ruling).
+        let m = table_model();
+        let s = spills();
+        let e = sref("Sales", TableArea::Data, Some("Units"));
+        assert_eq!(
+            eval_expr(&m, &e, &ctx(), &s),
+            CellValue::Error(CellError::Value)
+        );
+    }
+
+    #[test]
+    fn structured_ref_unknown_table_is_name_error() {
+        let m = table_model();
+        let s = spills();
+        let e = sref("Nope", TableArea::Data, Some("Units"));
+        assert_eq!(
+            eval_expr(&m, &e, &ctx(), &s),
+            CellValue::Error(CellError::Name)
+        );
+    }
+
+    #[test]
+    fn structured_ref_unknown_column_is_ref_error() {
+        let m = table_model();
+        let s = spills();
+        let fid = sheet_core::funcs::lookup_func("SUM").unwrap();
+        let call = Expr::Func(fid, vec![sref("Sales", TableArea::Data, Some("Missing"))]);
+        assert_eq!(
+            eval_expr(&m, &call, &ctx(), &s),
+            CellValue::Error(CellError::Ref)
+        );
+    }
+
+    #[test]
+    fn structured_ref_headers_area_reads_header_cell() {
+        // Sales[[#Headers],[Units]] is the single header cell (row 0, col 1).
+        let m = table_model();
+        let s = spills();
+        let e = sref("Sales", TableArea::Headers, Some("Units"));
+        assert_eq!(eval_expr(&m, &e, &ctx(), &s), CellValue::from("Units"));
     }
 }

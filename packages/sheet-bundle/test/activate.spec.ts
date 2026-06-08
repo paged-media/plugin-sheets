@@ -59,23 +59,35 @@ function fakeHost() {
 }
 
 describe("sheet_plugin_bundle_activate", () => {
-  it("registers the workbook panel under its declared id", () => {
+  it("registers the workbook + grid panels under their declared ids", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     expect(fake.panels.map((p) => p.id)).toEqual([
       "media.paged.sheet.panel.workbook",
+      "media.paged.sheet.panel.grid",
     ]);
     expect(fake.panels[0].title).toBe("Workbook");
     expect(fake.panels[0].defaultDock).toBe("right");
+    expect(fake.panels[1].title).toBe("Grid");
+    expect(fake.panels[1].defaultDock).toBe("right");
   });
 
-  it("registers the two commands under their declared ids", () => {
+  it("registers the three commands under their declared ids", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     expect(fake.commands.map((c) => c.id)).toEqual([
       "media.paged.sheet.command.importXlsx",
       "media.paged.sheet.command.lowerToFrame",
+      "media.paged.sheet.command.openGrid",
     ]);
+  });
+
+  it("openGrid command opens the grid panel", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    const openCmd = fake.commands.find((c) => c.id.endsWith("openGrid"));
+    openCmd?.handler(undefined);
+    expect(fake.openedPanels).toEqual(["media.paged.sheet.panel.grid"]);
   });
 
   it("registered ids match the manifest's contributes declaration", () => {

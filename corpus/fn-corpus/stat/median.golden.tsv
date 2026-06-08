@@ -1,0 +1,15 @@
+# sheet.fn.stat.median golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id        the case id (free text; unique within the file).
+#   formula   the formula text as typed in a cell (e.g. =MEDIAN(A1:A3)).
+#   setup     cell preloads, ';'-separated (A1=1;A2=2); '-' means no setup.
+#   expected  the General-formatted result, or an error literal (#NUM!, #VALUE!, …).
+# MEDIAN(number1,…): middle of the sorted numbers; mean of the two middles for
+# an even count. Range non-numerics are skipped; an error cell propagates; no
+# numbers at all -> #NUM!. Provenance: ECMA-376 §18.17.7 (MEDIAN).
+odd-count	=MEDIAN(A1:A3)	A1=3;A2=1;A3=2	2
+even-count	=MEDIAN(A1:A4)	A1=1;A2=2;A3=3;A4=4	2.5
+skip-nonnumeric	=MEDIAN(A1:A5)	A1=10;A2=x;A3=30;A4=;A5=20	20
+scalar-coercion	=MEDIAN(TRUE,"3",2)	-	2
+error-propagates	=MEDIAN(A1:A3)	A1=1;A2=#DIV/0!;A3=3	#DIV/0!
+no-numbers-num	=MEDIAN(A1:A2)	A1=a;A2=	#NUM!

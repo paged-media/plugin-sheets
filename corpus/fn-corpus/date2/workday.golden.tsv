@@ -1,0 +1,14 @@
+# sheet.fn.date.workday — WORKDAY(start_date, days, [holidays]), 1900 system.
+# Columns: id<TAB>formula<TAB>setup<TAB>expected
+# ECMA-376 §18.17.7. The serial `days` working days from start (positive =
+# forward, negative = backward), skipping weekends and holidays; the start day
+# itself is never counted. WORKDAY(start,0) = start. Expected = serial.
+# 44197=2021-01-01(Fri), 44200=2021-01-04(Mon), 44204=2021-01-08(Fri),
+# 44207=2021-01-11(Mon), 44208=2021-01-12(Tue).
+workday.skip-weekend	=WORKDAY(44204,1)		44207
+workday.five-forward	=WORKDAY(44200,5)		44207
+workday.backward	=WORKDAY(44200,-1)		44197
+workday.zero-days	=WORKDAY(44204,0)		44204
+workday.scalar-holiday	=WORKDAY(44204,1,44207)		44208
+workday.range-holiday	=WORKDAY(44204,1,A1:A1)	A1=44207	44208
+workday.error-prop	=WORKDAY(NA(),1)		#N/A

@@ -1,0 +1,11 @@
+# sheet.fn.fin.ipmt golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# IPMT(rate, per, nper, pv, [fv], [type]) — interest portion of the per-th
+# payment. End-of-period: interest on the balance after (per-1) payments.
+# `per` outside 1..=nper -> #NUM!. type=1 first period accrues no interest.
+# id<TAB>formula<TAB>setup<TAB>expected
+ipmt-first	=IPMT(0.1,1,3,8000)	-	-800
+ipmt-second	=IPMT(0.1,2,3,8000)	-	-558.308157099698
+ipmt-annual	=IPMT(0.1,3,3,8000)	-	-292.447129909366
+ipmt-type1-first	=IPMT(0.1,1,3,8000,0,1)	-	0
+ipmt-per-too-big	=IPMT(0.1,4,3,8000)	-	#NUM!
+ipmt-per-zero	=IPMT(0.1,0,3,8000)	-	#NUM!

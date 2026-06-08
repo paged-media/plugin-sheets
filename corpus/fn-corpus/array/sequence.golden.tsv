@@ -1,0 +1,10 @@
+# SEQUENCE(rows,[cols],[start],[step]) — dynamic-array fill (spec §6.4, M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected. SEQUENCE spills; the formula's
+# host cell (the anchor) holds the TOP-LEFT value, which is what `expected`
+# projects. A non-positive shape grounds Excel's #CALC! to #VALUE!.
+seq-3	=SEQUENCE(3)		1
+seq-2x3	=SEQUENCE(2,3)		1
+seq-start	=SEQUENCE(2,2,10,5)		10
+seq-step-neg	=SEQUENCE(3,1,0,-2)		0
+seq-zero-shape	=SEQUENCE(0)		#VALUE!
+seq-neg-shape	=SEQUENCE(-2)		#VALUE!

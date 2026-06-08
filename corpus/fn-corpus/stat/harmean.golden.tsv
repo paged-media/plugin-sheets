@@ -1,0 +1,10 @@
+# sheet.fn.stat.harmean golden corpus (spec §7, §13 M1).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+# HARMEAN(number1,…): harmonic mean n/Σ(1/xᵢ); every value must be strictly
+# positive (<=0 -> #NUM!); no numbers -> #NUM!. Range non-numerics skipped;
+# error cell propagates. Provenance: ECMA-376 §18.17.7 (HARMEAN).
+basic	=HARMEAN(A1:A3)	A1=1;A2=2;A3=4	1.71428571428571
+nice-three	=HARMEAN(A1:A3)	A1=2;A2=3;A3=6	3
+repeated	=HARMEAN(A1:A3)	A1=1;A2=4;A3=4	2
+zero-num	=HARMEAN(A1:A2)	A1=1;A2=0	#NUM!
+negative-num	=HARMEAN(A1:A2)	A1=1;A2=-1	#NUM!

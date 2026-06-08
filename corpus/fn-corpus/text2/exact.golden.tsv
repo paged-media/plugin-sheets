@@ -1,0 +1,9 @@
+# sheet.fn.text.exact golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# EXACT(text1, text2): case-sensitive equality (TRUE/FALSE).
+exact-equal	=EXACT("abc","abc")	-	TRUE
+exact-case-differs	=EXACT("a","A")	-	FALSE
+exact-number-vs-text	=EXACT(12,"12")	-	TRUE
+exact-cells	=EXACT(A1,B1)	A1=text:Hello;B1=text:Hello	TRUE
+exact-cells-case	=EXACT(A1,B1)	A1=text:Hello;B1=text:hello	FALSE
+exact-error-propagates	=EXACT(A1,"x")	A1=#N/A	#N/A

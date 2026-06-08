@@ -1,0 +1,10 @@
+# FACT — factorial of trunc(number) (ECMA-376 §18.17.7). FACT(0) == 1;
+# non-integer truncates toward zero; negative -> #NUM!.
+# id	formula	setup	expected
+fact-zero	=FACT(0)	-	1
+fact-one	=FACT(1)	-	1
+fact-five	=FACT(5)	-	120
+fact-trunc	=FACT(5.9)	-	120
+fact-coerce-text	=FACT("4")	-	24
+fact-negative	=FACT(-1)	-	#NUM!
+fact-error	=FACT(A1)	A1=#REF!	#REF!

@@ -1,0 +1,11 @@
+# sheet.fn.text.textbefore golden corpus (spec §7, §11 M1; Microsoft
+# TEXTBEFORE, T1 subset). Format: id<TAB>formula<TAB>setup<TAB>expected
+# TEXTBEFORE(text, delimiter, [instance]): substring before the instance-th
+# delimiter; instance defaults 1, negative counts from the end;
+# case-insensitive by default; not-found -> #N/A; empty delimiter -> "".
+textbefore-first	=TEXTBEFORE("a-b-c","-")	-	a
+textbefore-second	=TEXTBEFORE("a-b-c","-",2)	-	a-b
+textbefore-from-end	=TEXTBEFORE("a-b-c","-",-1)	-	a-b
+textbefore-case-insensitive	=TEXTBEFORE("aXbXc","x")	-	a
+textbefore-not-found	=TEXTBEFORE("abc","-")	-	#N/A
+textbefore-cell	=TEXTBEFORE(A1,"@")	A1=text:user@example.com	user

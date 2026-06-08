@@ -1,0 +1,10 @@
+# sheet.fn.fin.sln golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# SLN(cost, salvage, life) — straight-line depreciation per period
+# (cost-salvage)/life. life=0 -> #DIV/0!.
+# id<TAB>formula<TAB>setup<TAB>expected
+sln-doc	=SLN(30000,7500,10)	-	2250
+sln-no-salvage	=SLN(1000,0,4)	-	250
+sln-coerce-text	=SLN("30000",7500,10)	-	2250
+sln-zero-life	=SLN(1000,100,0)	-	#DIV/0!
+sln-error-prop	=SLN(1/0,100,5)	-	#DIV/0!
+sln-arity	=SLN(1000,100)	-	#VALUE!

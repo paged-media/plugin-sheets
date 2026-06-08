@@ -23,11 +23,17 @@
 // region's own top-left, spec §8.5); we add the frame's page-local
 // bounds origin so rules land on the page.
 
-import type { ElementId, Mutation, PageId } from "@paged-media/plugin-api";
+import type {
+  ElementId,
+  Mutation,
+  PropertyPath,
+  Value,
+} from "@paged-media/plugin-api";
+import type { PageId } from "@paged-media/plugin-api";
 
 import { BINDING_KEY, type Binding } from "./binding";
 import type { Bounds } from "./placement";
-import type { LoweredContent } from "./lowered";
+import type { LoweredContent, LoweredStyle } from "./lowered";
 
 /** The page + bounds the frame is placed at (from placement.ts). */
 export interface LowerPlacement {
@@ -43,6 +49,11 @@ export interface LowerResult {
   /** The cells joined tab-within-row, newline-between-rows — the
    *  phase-2 `insertText` payload. */
   text: string;
+  /** The non-default styles' prepared host overrides (IR-v2 style-map
+   *  track, spec §8.3). Character-level props are ready to apply once a run
+   *  span is known (the S-04 doc-style-group path); `blocked` facets need a
+   *  real table cell (S-03). Empty for an unstyled region. */
+  styles: StyleEmission[];
 }
 
 /** The protocol-v34 batch-created sentinel: an `insertTextFrame` mints a
@@ -68,6 +79,128 @@ export function joinText(content: LoweredContent): string {
     return colOrder.map((ci) => byCol.get(ci) ?? "").join("\t");
   });
   return lines.join("\n");
+}
+
+// ── Style emission (IR v2, M1 style-map track; spec §8.3) ──────────────────
+//
+// "Document-coherent styling is the most important property of the whole
+// plugin" (spec §8.3). The engine has resolved each cell's visual style into
+// the `content.styles` table (deduped LoweredStyles, indexed by a cell's
+// `styleKey`). This turns the NON-DEFAULT styles into the host's character-
+// level property overrides — the same `{ path, value }` shape a
+// `setStyleProperty` carries to DEFINE a character style (the doc-style-group
+// path), so a caller can apply them as the §8.3 "constrained local override"
+// once the run offsets are known.
+//
+// THE HONEST WIRE BOUNDARY (constitution: "never fake reserved seams"):
+//
+//  - Character emphasis / size / face / TEXT colour ARE expressible at the
+//    character level (`characterFontStyle`/`characterFontSize`/
+//    `characterFontFamily`/`characterFillColor`) — emitted here.
+//  - FILL background + per-edge BORDERS need a real table CELL to attach to;
+//    the S-03 degradation pours tab-aligned text into ONE text frame (no
+//    `insertTable` op), so there is no cell to carry `cellFillColor` /
+//    `cell*EdgeStroke*`. They are reported as BLOCKED, never silently dropped
+//    or faked onto the frame.
+//  - APPLYING an override to a poured run needs either a named character
+//    style (`createCharacterStyle` + `applyStyle`) or run-offset addressing —
+//    both the S-04 doc-style-group path (the style-management capability is an
+//    SDK gap). So this function PREPARES the overrides; wiring them through
+//    `applyStyle` is future (documented in the registry `doc-style-group`
+//    row, status: planned).
+//
+// Pure: data in, descriptors out (no host calls).
+
+/** One host property override derived from a `LoweredStyle` — the
+ *  `{ path, value }` pair a `setStyleProperty`/`applyStyle` flow carries. */
+export interface StyleProp {
+  path: PropertyPath;
+  value: Value;
+}
+
+/** A facet of a cell style the S-03 tab-text degradation cannot place
+ *  (no real table cell to attach a fill/border to). Reported, never faked. */
+export type BlockedFacet = "fillBackground" | "border";
+
+/** The emittable overrides for ONE non-default style key, plus the facets
+ *  the current degradation cannot express (so a caller/panel can flag them
+ *  as off-style — the publishing affordance of spec §8.3). */
+export interface StyleEmission {
+  /** Index into `content.styles` (a cell's `styleKey` selects this). */
+  styleKey: number;
+  /** Character-level overrides expressible TODAY (font style/size/face,
+   *  text colour). */
+  props: StyleProp[];
+  /** Facets requiring a real table cell — blocked by the S-03 text-frame
+   *  degradation (empty when nothing is blocked). */
+  blocked: BlockedFacet[];
+}
+
+/** Map one `LoweredStyle` to its host character-level overrides. The default
+ *  style (no emphasis/size/face/colour) yields an empty `props`. Bold/italic
+ *  collapse to the single `characterFontStyle` token Paged uses
+ *  ("Bold"/"Italic"/"Bold Italic"/"Regular"). */
+export function styleProps(style: LoweredStyle): StyleProp[] {
+  const props: StyleProp[] = [];
+
+  // Bold/italic → one `characterFontStyle` face token.
+  const face =
+    style.bold && style.italic
+      ? "Bold Italic"
+      : style.bold
+        ? "Bold"
+        : style.italic
+          ? "Italic"
+          : null;
+  if (face) props.push({ path: "characterFontStyle", value: { type: "text", value: face } });
+
+  if (style.fontName != null)
+    props.push({
+      path: "characterFontFamily",
+      value: { type: "text", value: style.fontName },
+    });
+
+  if (style.fontSizePt != null)
+    props.push({
+      path: "characterFontSize",
+      value: { type: "length", value: style.fontSizePt },
+    });
+
+  // Cell TEXT colour → character fill (the glyph colour). Fill BACKGROUND is
+  // a cell facet, handled separately (and blocked under S-03).
+  if (style.textRgb != null)
+    props.push({
+      path: "characterFillColor",
+      value: { type: "colorRef", value: style.textRgb },
+    });
+
+  return props;
+}
+
+/** Which cell facets a `LoweredStyle` carries that the S-03 tab-text frame
+ *  cannot place (a fill background and/or borders need a real table cell). */
+function blockedFacets(style: LoweredStyle): BlockedFacet[] {
+  const out: BlockedFacet[] = [];
+  if (style.fillRgb != null) out.push("fillBackground");
+  if (style.borderTop || style.borderRight || style.borderBottom || style.borderLeft)
+    out.push("border");
+  return out;
+}
+
+/** Turn the lowered styles table into per-key [`StyleEmission`]s, SKIPPING
+ *  the default key 0 and any key that emits nothing AND blocks nothing
+ *  (a visually-default style). Pure + deterministic (styles-table order). */
+export function styleEmissions(content: LoweredContent): StyleEmission[] {
+  const styles = content.styles ?? [];
+  const out: StyleEmission[] = [];
+  for (const style of styles) {
+    if (style.key === 0) continue; // the default style is never an override
+    const props = styleProps(style);
+    const blocked = blockedFacets(style);
+    if (props.length === 0 && blocked.length === 0) continue;
+    out.push({ styleKey: style.key, props, blocked });
+  }
+  return out;
 }
 
 /** Translate lowered IR + a resolved placement + the frame binding into
@@ -128,5 +261,10 @@ export function lowerToMutations(
   return {
     batch: { op: "batch", args: { ops } },
     text: joinText(content),
+    // The prepared style overrides (spec §8.3). The phase-1 batch stays the
+    // honest S-03 degradation (frame + rules + binding); the styles ride
+    // alongside so the caller can apply the expressible character-level
+    // overrides once the run offsets resolve (the doc-style-group path).
+    styles: styleEmissions(content),
   };
 }

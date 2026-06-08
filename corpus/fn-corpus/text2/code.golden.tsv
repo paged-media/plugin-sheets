@@ -1,0 +1,9 @@
+# sheet.fn.text.code golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# CODE(text): code point of the first character; empty text -> #VALUE!.
+code-upper-a	=CODE("A")	-	65
+code-first-char-only	=CODE("Apple")	-	65
+code-space	=CODE(" ")	-	32
+code-empty-is-value	=CODE("")	-	#VALUE!
+code-cell	=CODE(A1)	A1=text:zoo	122
+code-error-propagates	=CODE(A1)	A1=#N/A	#N/A

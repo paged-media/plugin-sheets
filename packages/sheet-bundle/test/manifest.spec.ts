@@ -32,10 +32,12 @@ describe("sheet_plugin_manifest_valid", () => {
   it("the contributed ids match what activate() registers", () => {
     expect(manifest.contributes.panels).toEqual([
       "media.paged.sheet.panel.workbook",
+      "media.paged.sheet.panel.grid",
     ]);
     expect(manifest.contributes.commands).toEqual([
       "media.paged.sheet.command.importXlsx",
       "media.paged.sheet.command.lowerToFrame",
+      "media.paged.sheet.command.openGrid",
     ]);
   });
 

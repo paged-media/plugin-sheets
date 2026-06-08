@@ -1,7 +1,6 @@
 # sheet.fn.text.* (M1 additions) — text family. Schema: see math.yaml.
 # Rust kernels under sheet-fn/src/families/text2.rs (the M1 text track).
-# All rows status: planned. Provenance: ECMA-376 §18.17.7 + public
-# Microsoft function docs.
+# Provenance: ECMA-376 §18.17.7 + public Microsoft function docs.
 
 - id: sheet.fn.text.textjoin
   name: TEXTJOIN
@@ -10,11 +9,11 @@
   volatility: none
   range_aware: true
   rust: text2::textjoin
-  status: planned
+  status: implemented
   provenance: ["Microsoft TEXTJOIN (public docs) — delimiter, ignore_empty, then variadic text/ranges"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_textjoin"]
-    corpus: ["corpus/fn-corpus/text/textjoin.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_textjoin"]
+    corpus: ["corpus/fn-corpus/text2/textjoin.golden.tsv"]
 
 - id: sheet.fn.text.exact
   name: EXACT
@@ -23,11 +22,11 @@
   volatility: none
   range_aware: false
   rust: text2::exact
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (EXACT) — case-sensitive text equality"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_exact"]
-    corpus: ["corpus/fn-corpus/text/exact.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_exact"]
+    corpus: ["corpus/fn-corpus/text2/exact.golden.tsv"]
 
 - id: sheet.fn.text.proper
   name: PROPER
@@ -36,11 +35,11 @@
   volatility: none
   range_aware: false
   rust: text2::proper
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (PROPER) — title-case each word"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_proper"]
-    corpus: ["corpus/fn-corpus/text/proper.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_proper"]
+    corpus: ["corpus/fn-corpus/text2/proper.golden.tsv"]
 
 - id: sheet.fn.text.char
   name: CHAR
@@ -49,11 +48,11 @@
   volatility: none
   range_aware: false
   rust: text2::char
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CHAR) — code point 1..255 to character"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_char"]
-    corpus: ["corpus/fn-corpus/text/char.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_char"]
+    corpus: ["corpus/fn-corpus/text2/char.golden.tsv"]
 
 - id: sheet.fn.text.code
   name: CODE
@@ -62,11 +61,11 @@
   volatility: none
   range_aware: false
   rust: text2::code
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CODE) — first character's code point"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_code"]
-    corpus: ["corpus/fn-corpus/text/code.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_code"]
+    corpus: ["corpus/fn-corpus/text2/code.golden.tsv"]
 
 - id: sheet.fn.text.unichar
   name: UNICHAR
@@ -75,11 +74,11 @@
   volatility: none
   range_aware: false
   rust: text2::unichar
-  status: planned
+  status: implemented
   provenance: ["Microsoft UNICHAR (public docs) — Unicode code point to character"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_unichar"]
-    corpus: ["corpus/fn-corpus/text/unichar.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_unichar"]
+    corpus: ["corpus/fn-corpus/text2/unichar.golden.tsv"]
 
 - id: sheet.fn.text.unicode
   name: UNICODE
@@ -88,11 +87,11 @@
   volatility: none
   range_aware: false
   rust: text2::unicode
-  status: planned
+  status: implemented
   provenance: ["Microsoft UNICODE (public docs) — first character's Unicode code point"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_unicode"]
-    corpus: ["corpus/fn-corpus/text/unicode.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_unicode"]
+    corpus: ["corpus/fn-corpus/text2/unicode.golden.tsv"]
 
 - id: sheet.fn.text.clean
   name: CLEAN
@@ -101,11 +100,11 @@
   volatility: none
   range_aware: false
   rust: text2::clean
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CLEAN) — strip non-printable characters"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_clean"]
-    corpus: ["corpus/fn-corpus/text/clean.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_clean"]
+    corpus: ["corpus/fn-corpus/text2/clean.golden.tsv"]
 
 - id: sheet.fn.text.t
   name: T
@@ -114,11 +113,11 @@
   volatility: none
   range_aware: false
   rust: text2::t
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (T) — value if text else empty string"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_t"]
-    corpus: ["corpus/fn-corpus/text/t.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_t"]
+    corpus: ["corpus/fn-corpus/text2/t.golden.tsv"]
 
 - id: sheet.fn.text.numbervalue
   name: NUMBERVALUE
@@ -127,11 +126,11 @@
   volatility: none
   range_aware: false
   rust: text2::numbervalue
-  status: planned
+  status: implemented
   provenance: ["Microsoft NUMBERVALUE (public docs) — text, [decimal_separator], [group_separator]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_numbervalue"]
-    corpus: ["corpus/fn-corpus/text/numbervalue.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_numbervalue"]
+    corpus: ["corpus/fn-corpus/text2/numbervalue.golden.tsv"]
 
 - id: sheet.fn.text.fixed
   name: FIXED
@@ -140,11 +139,11 @@
   volatility: none
   range_aware: false
   rust: text2::fixed
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (FIXED) — number, [decimals], [no_commas]"]
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (FIXED) — number, [decimals], [no_commas]. Rulings (text2.rs module docs): negative decimals round left of the point and format at 0 decimals; the negative number uses the simple leading-minus form (-1,235), not Excel's parenthesized form"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_fixed"]
-    corpus: ["corpus/fn-corpus/text/fixed.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_fixed"]
+    corpus: ["corpus/fn-corpus/text2/fixed.golden.tsv"]
 
 - id: sheet.fn.text.dollar
   name: DOLLAR
@@ -153,11 +152,11 @@
   volatility: none
   range_aware: false
   rust: text2::dollar
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (DOLLAR) — number, [decimals] with currency format"]
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (DOLLAR) — number, [decimals] with currency format. Rulings (text2.rs module docs): currency symbol is the T0 '$' literal (D-8, no locale tailoring); a negative value uses the simple leading-minus form (-$1,235), NOT Excel's parenthesized form (($1,235)) — documented bug-for-bug deviation"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_dollar"]
-    corpus: ["corpus/fn-corpus/text/dollar.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_dollar"]
+    corpus: ["corpus/fn-corpus/text2/dollar.golden.tsv"]
 
 - id: sheet.fn.text.replace
   name: REPLACE
@@ -166,11 +165,11 @@
   volatility: none
   range_aware: false
   rust: text2::replace
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (REPLACE) — old_text, start_num, num_chars, new_text"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_replace"]
-    corpus: ["corpus/fn-corpus/text/replace.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_replace"]
+    corpus: ["corpus/fn-corpus/text2/replace.golden.tsv"]
 
 - id: sheet.fn.text.textbefore
   name: TEXTBEFORE
@@ -179,11 +178,11 @@
   volatility: none
   range_aware: false
   rust: text2::textbefore
-  status: planned
+  status: implemented
   provenance: ["Microsoft TEXTBEFORE (public docs) — text, delimiter, [instance], [match_mode], [match_end], [if_not_found]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_textbefore"]
-    corpus: ["corpus/fn-corpus/text/textbefore.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_textbefore"]
+    corpus: ["corpus/fn-corpus/text2/textbefore.golden.tsv"]
 
 - id: sheet.fn.text.textafter
   name: TEXTAFTER
@@ -192,8 +191,8 @@
   volatility: none
   range_aware: false
   rust: text2::textafter
-  status: planned
+  status: implemented
   provenance: ["Microsoft TEXTAFTER (public docs) — text, delimiter, [instance], [match_mode], [match_end], [if_not_found]"]
   tests:
-    rust: ["sheet-conformance/tests/fn_text.rs::sheet_fn_text_textafter"]
-    corpus: ["corpus/fn-corpus/text/textafter.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_textafter"]
+    corpus: ["corpus/fn-corpus/text2/textafter.golden.tsv"]

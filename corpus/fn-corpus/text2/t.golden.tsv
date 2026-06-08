@@ -1,0 +1,10 @@
+# sheet.fn.text.t golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# T(value): the value if it is text, else the empty string; error propagates.
+# An empty expected (number/bool/blank input) is the empty 4th column.
+t-text	=T("hello")	-	hello
+t-number-empty	=T(42)	-	
+t-bool-empty	=T(TRUE)	-	
+t-text-cell	=T(A1)	A1=text:world	world
+t-number-cell-empty	=T(A1)	A1=99	
+t-error-propagates	=T(A1)	A1=#DIV/0!	#DIV/0!

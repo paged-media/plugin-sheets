@@ -1,0 +1,12 @@
+# sheet.fn.info.n golden corpus (spec §7, §11; ECMA-376 §18.17.7 N).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# N(value) coerces to a number: a number is itself; TRUE -> 1, FALSE -> 0; a
+# blank cell -> 0; ANY text -> 0 (the defining ruling: N does NOT parse numeric
+# text, so N("7") is 0, not 7); an error propagates (N(#DIV/0!) is #DIV/0!).
+number-identity	=N(42)		42
+true-is-one	=N(TRUE)		1
+false-is-zero	=N(FALSE)		0
+numeric-text-is-zero	=N("7")		0
+plain-text-is-zero	=N("hello")		0
+blank-is-zero	=N(A1)	A1=	0
+error-propagates	=N(A1)	A1=#DIV/0!	#DIV/0!

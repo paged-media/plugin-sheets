@@ -1,0 +1,8 @@
+# COSH — hyperbolic cosine. Total over the reals; overflow -> #NUM!.
+# Values are the 15-significant-digit General projection.
+# id	formula	setup	expected
+cosh-zero	=COSH(0)	-	1
+cosh-one	=COSH(1)	-	1.54308063481524
+cosh-two	=COSH(2)	-	3.76219569108363
+cosh-coerce-bad	=COSH("x")	-	#VALUE!
+cosh-error	=COSH(A1)	A1=#DIV/0!	#DIV/0!

@@ -1,0 +1,9 @@
+# PERMUT — ordered k-permutations n!/(n-k)! (ECMA-376 §18.17.7). Both args
+# truncate toward zero; negative or k>n -> #NUM!.
+# id	formula	setup	expected
+permut-basic	=PERMUT(5,2)	-	20
+permut-k0	=PERMUT(5,0)	-	1
+permut-kn	=PERMUT(4,4)	-	24
+permut-trunc	=PERMUT(5.9,2.1)	-	20
+permut-kgtn	=PERMUT(2,5)	-	#NUM!
+permut-negative	=PERMUT(3,-1)	-	#NUM!

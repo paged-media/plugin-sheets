@@ -1,0 +1,9 @@
+# ACOSH — inverse hyperbolic cosine; domain x>=1 else #NUM! (ruling).
+# ACOSH(1) == 0. Values are the 15-significant-digit General projection.
+# id	formula	setup	expected
+acosh-one	=ACOSH(1)	-	0
+acosh-two	=ACOSH(2)	-	1.31695789692482
+acosh-ten	=ACOSH(10)	-	2.99322284612638
+acosh-below-domain	=ACOSH(0.5)	-	#NUM!
+acosh-neg	=ACOSH(-1)	-	#NUM!
+acosh-error	=ACOSH(A1)	A1=#DIV/0!	#DIV/0!

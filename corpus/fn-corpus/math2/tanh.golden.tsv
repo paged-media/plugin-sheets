@@ -1,0 +1,8 @@
+# TANH — hyperbolic tangent (total, asymptotes at ±1). Values are the
+# 15-significant-digit General projection.
+# id	formula	setup	expected
+tanh-zero	=TANH(0)	-	0
+tanh-one	=TANH(1)	-	0.761594155955765
+tanh-two	=TANH(2)	-	0.964027580075817
+tanh-neg	=TANH(-1)	-	-0.761594155955765
+tanh-error	=TANH(A1)	A1=#N/A	#N/A

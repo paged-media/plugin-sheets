@@ -1,8 +1,9 @@
 # sheet.fn.stat.* — statistics family (M1, spec §13 M1). Schema: see
-# math.yaml. All rows status: planned — the M1 stat track wires the
-# kernels under sheet-fn/src/families/stat.rs. Provenance: ECMA-376
-# §18.17.7 + public Microsoft function docs. Tests/corpus pointers follow
-# the established conventions (the Phase-B stat track creates the files).
+# math.yaml. All 30 rows status: implemented — the M1 stat track (TRACK
+# FN/STAT) wired the kernels under sheet-fn/src/families/stat.rs. Provenance:
+# ECMA-376 §18.17.7 + public Microsoft function docs. Tests:
+# sheet-conformance/tests/fn_stat.rs; corpus: corpus/fn-corpus/stat/.
+# Excel rulings documented in the stat.rs module doc + per-row provenance.
 
 - id: sheet.fn.stat.median
   name: MEDIAN
@@ -11,7 +12,7 @@
   volatility: none
   range_aware: true
   rust: stat::median
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MEDIAN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_median"]
@@ -24,7 +25,7 @@
   volatility: none
   range_aware: true
   rust: stat::mode
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (MODE) — legacy MODE = MODE.SNGL"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_mode"]
@@ -37,7 +38,7 @@
   volatility: none
   range_aware: true
   rust: stat::stdev_s
-  status: planned
+  status: implemented
   provenance: ["Microsoft STDEV.S (public docs) — sample standard deviation"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdev_s"]
@@ -50,7 +51,7 @@
   volatility: none
   range_aware: true
   rust: stat::stdev_p
-  status: planned
+  status: implemented
   provenance: ["Microsoft STDEV.P (public docs) — population standard deviation"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdev_p"]
@@ -63,7 +64,7 @@
   volatility: none
   range_aware: true
   rust: stat::var_s
-  status: planned
+  status: implemented
   provenance: ["Microsoft VAR.S (public docs) — sample variance"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_var_s"]
@@ -76,7 +77,7 @@
   volatility: none
   range_aware: true
   rust: stat::var_p
-  status: planned
+  status: implemented
   provenance: ["Microsoft VAR.P (public docs) — population variance"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_var_p"]
@@ -89,7 +90,7 @@
   volatility: none
   range_aware: true
   rust: stat::stdev
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (STDEV) — legacy alias of STDEV.S semantics (sample)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdev"]
@@ -102,7 +103,7 @@
   volatility: none
   range_aware: true
   rust: stat::stdevp
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (STDEVP) — legacy alias of STDEV.P (population)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_stdevp"]
@@ -115,7 +116,7 @@
   volatility: none
   range_aware: true
   rust: stat::var
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (VAR) — legacy VAR is SAMPLE variance (= VAR.S)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_var"]
@@ -128,7 +129,7 @@
   volatility: none
   range_aware: true
   rust: stat::varp
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (VARP) — legacy alias of VAR.P (population)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_varp"]
@@ -141,7 +142,7 @@
   volatility: none
   range_aware: true
   rust: stat::percentile_inc
-  status: planned
+  status: implemented
   provenance: ["Microsoft PERCENTILE.INC (public docs) — inclusive k in 0..1"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_percentile_inc"]
@@ -154,7 +155,7 @@
   volatility: none
   range_aware: true
   rust: stat::quartile_inc
-  status: planned
+  status: implemented
   provenance: ["Microsoft QUARTILE.INC (public docs) — quart 0..4"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_quartile_inc"]
@@ -167,7 +168,7 @@
   volatility: none
   range_aware: true
   rust: stat::rank_eq
-  status: planned
+  status: implemented
   provenance: ["Microsoft RANK.EQ (public docs) — ties share the top rank"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rank_eq"]
@@ -180,7 +181,7 @@
   volatility: none
   range_aware: true
   rust: stat::rank
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RANK) — legacy alias of RANK.EQ"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rank"]
@@ -193,7 +194,7 @@
   volatility: none
   range_aware: true
   rust: stat::large
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (LARGE) — k-th largest"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_large"]
@@ -206,7 +207,7 @@
   volatility: none
   range_aware: true
   rust: stat::small
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SMALL) — k-th smallest"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_small"]
@@ -219,7 +220,7 @@
   volatility: none
   range_aware: true
   rust: stat::countifs
-  status: planned
+  status: implemented
   provenance: ["Microsoft COUNTIFS (public docs) — variadic (range, criteria) pairs"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_countifs"]
@@ -232,7 +233,7 @@
   volatility: none
   range_aware: true
   rust: stat::sumifs
-  status: planned
+  status: implemented
   provenance: ["Microsoft SUMIFS (public docs) — sum_range then variadic (range, criteria) pairs"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_sumifs"]
@@ -245,7 +246,7 @@
   volatility: none
   range_aware: true
   rust: stat::averageifs
-  status: planned
+  status: implemented
   provenance: ["Microsoft AVERAGEIFS (public docs) — average_range then variadic pairs"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_averageifs"]
@@ -258,7 +259,7 @@
   volatility: none
   range_aware: true
   rust: stat::maxifs
-  status: planned
+  status: implemented
   provenance: ["Microsoft MAXIFS (public docs) — max_range then variadic pairs"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_maxifs"]
@@ -271,7 +272,7 @@
   volatility: none
   range_aware: true
   rust: stat::minifs
-  status: planned
+  status: implemented
   provenance: ["Microsoft MINIFS (public docs) — min_range then variadic pairs"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_minifs"]
@@ -284,7 +285,7 @@
   volatility: none
   range_aware: true
   rust: stat::sumproduct
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SUMPRODUCT)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_sumproduct"]
@@ -297,7 +298,7 @@
   volatility: none
   range_aware: true
   rust: stat::geomean
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (GEOMEAN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_geomean"]
@@ -310,7 +311,7 @@
   volatility: none
   range_aware: true
   rust: stat::harmean
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (HARMEAN)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_harmean"]
@@ -323,7 +324,7 @@
   volatility: none
   range_aware: true
   rust: stat::avedev
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (AVEDEV) — mean absolute deviation"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_avedev"]
@@ -336,7 +337,7 @@
   volatility: none
   range_aware: true
   rust: stat::devsq
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DEVSQ) — sum of squared deviations"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_devsq"]
@@ -349,7 +350,7 @@
   volatility: none
   range_aware: true
   rust: stat::correl
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (CORREL) — Pearson correlation of two arrays"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_correl"]
@@ -362,7 +363,7 @@
   volatility: none
   range_aware: true
   rust: stat::slope
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (SLOPE) — linear-regression slope (known_y, known_x)"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_slope"]
@@ -375,7 +376,7 @@
   volatility: none
   range_aware: true
   rust: stat::intercept
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (INTERCEPT) — linear-regression intercept"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_intercept"]
@@ -388,7 +389,7 @@
   volatility: none
   range_aware: true
   rust: stat::rsq
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (RSQ) — square of the Pearson correlation"]
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rsq"]

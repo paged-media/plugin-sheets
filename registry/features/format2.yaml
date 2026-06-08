@@ -1,46 +1,59 @@
 # sheet.format.* (M1 additions) — advanced number-format engine features
-# (M1 format track, spec §9). All rows status: planned — the Phase-B format
-# track creates the conformance files these point at. Schema:
+# (M1 format track, spec §9). The FORMAT2 track implements all six rows in
+# sheet-format (additive over the frozen M0 public fns) with golden corpora
+# and the sheet-conformance/tests/format2.rs registry-pointer tests. Schema:
 # id/title/status/provenance/tests.
 
 - id: sheet.format.elapsed-brackets
   title: Elapsed time formats ([h], [mm], [ss]) — bracketed accumulators that exceed a single unit
-  status: planned
+  ruling: "[h]/[m]/[s] are TOTAL elapsed accumulators over the whole serial, NOT the modular wall-clock component: [h] over a 1.5-day serial renders 36 (not 12), while a modular :mm in the same code keeps its wall-clock 00. [hh]/[mm]/[ss] set a minimum zero-padded field width. Derived via serial::serial_to_elapsed (rounded to the nearest whole second base so [h]/[m]/[s] agree)."
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (elapsed-time codes)"]
   tests:
     rust: ["sheet-conformance/tests/format2.rs::sheet_format_elapsed_brackets"]
+    corpus: ["corpus/format-corpus/elapsed.golden.tsv"]
 
 - id: sheet.format.fractions
   title: Fraction formats (# ?/?, # ??/??) — denominator fitting
-  status: planned
+  ruling: "The fitted form fits the best n/d minimizing |frac - n/d| over 1<=d<=10^den_digits-1, preferring the SMALLER denominator on ties (Excel behavior). The fixed form (# ?/16) reduces to the literal denominator, not lowest terms. A numerator that rounds up to the denominator carries into the integer (# ??/?? of 2.96 -> 2 24/25). ? slots space-pad to their width, a documented T0 alignment approximation (# ??/?? of 2/3 -> '  2/ 3'); a zero fraction with an integer part blanks the slot to spaces (# ?/? of 4 -> '4    ')."
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (fraction codes)"]
   tests:
     rust: ["sheet-conformance/tests/format2.rs::sheet_format_fractions"]
+    corpus: ["corpus/format-corpus/fractions.golden.tsv"]
 
 - id: sheet.format.conditional-sections
   title: Conditional format sections ([>=100]...;[<0]...) — comparison-gated section selection
-  status: planned
-  provenance: ["ECMA-376 §18.8.31 (conditional format brackets)"]
+  ruling: "The first conditioned section whose test passes (against the RAW signed value) wins; otherwise the first UNCONDITIONED section is the 'otherwise' default. NO selected section auto-prefixes a minus: a matched conditional section owns its sign, and the unconditioned fallthrough behaves like the negative section (the #,##0;#,##0 minus-suppression rule), so [>=100]0;0 of -5 is '5' and [>=100]0;-0 of -5 is '-5' (the author's own minus, never doubled to '--5'). The lone pathological case (every section conditioned, none matched) best-effort auto-signs over the first section."
+  status: implemented
+  provenance: ["ECMA-376 §18.8.31 (conditional format brackets)", "Excel #,##0;#,##0 minus-suppression (public docs)"]
   tests:
     rust: ["sheet-conformance/tests/format2.rs::sheet_format_conditional_sections"]
+    corpus: ["corpus/format-corpus/conditional.golden.tsv"]
 
 - id: sheet.format.color-brackets
   title: Color brackets ([Red], [Blue], [Color12]) carried through to the lowered style
-  status: planned
+  ruling: "The eight named colors ([Black][Blue][Cyan][Green][Magenta][Red][White][Yellow]) are a SIDECAR: a color bracket never changes the rendered glyphs, only the cell color. The frozen format_value DROPS the color (string byte-identical to M0); the new format_value_styled(v, fmt, ctx) -> (String, Option<FormatColor>) surfaces it. The reported color follows section selection ([Red]0.0;[Blue]0.0 colors negatives blue). Indexed [ColorN] palette entries (1..56) are NOT modeled — dropped like an unknown bracket, so only the eight named colors land."
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (color codes)"]
   tests:
     rust: ["sheet-conformance/tests/format2.rs::sheet_format_color_brackets"]
+    corpus: ["corpus/format-corpus/color.golden.tsv"]
 
 - id: sheet.format.padding
   title: Repeat/skip-width tokens (* and _) — fill-to-width and skip-a-char-width padding
-  status: planned
+  ruling: "The *x repeat-fill char fills a column to its width in Excel; the engine has NO column width (the typeset lane sets width downstream), so T0 emits the fill char EXACTLY ONCE at its token position. The companion _x (skip a char width) is approximated as a single space (already an M0 behavior)."
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (* and _ tokens)"]
   tests:
     rust: ["sheet-conformance/tests/format2.rs::sheet_format_padding"]
+    corpus: ["corpus/format-corpus/padding.golden.tsv"]
 
 - id: sheet.format.locale-currency-token
   title: Locale/currency tokens ([$-409], [$EUR]) parsed and rendered
-  status: planned
+  ruling: "The grammar is [$<symbol>-<locale-hex>]; we emit exactly the SYMBOL portion (everything between the $ and the first -locale suffix) as a literal at its token position, and DROP the locale id. A pure locale tag [$-409] has an empty symbol (contributes no literal); a bare [$USD] (no -locale) emits the whole 'USD'. Locale-driven separators/decimal marks are NOT applied in T0 (en grouping/decimal only; D-8 v1 locale set still open)."
+  status: implemented
   provenance: ["ECMA-376 §18.8.31 (currency/locale tokens)"]
   tests:
     rust: ["sheet-conformance/tests/format2.rs::sheet_format_locale_currency_token"]
+    corpus: ["corpus/format-corpus/currency.golden.tsv"]

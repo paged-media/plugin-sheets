@@ -1,0 +1,16 @@
+# sheet.fn.logical.xor golden corpus (spec §7, §11; ECMA-376 §18.17.7 XOR).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (see logical/if.golden.tsv header).
+# XOR(logical1, [logical2], …) is TRUE iff an ODD number of the logical values
+# are TRUE. Range-aware like AND/OR: scalars coerce strictly via to_bool (non-
+# boolean text -> #VALUE!); inside a range text/blank cells are IGNORED, numbers
+# (!= 0 is TRUE) and bools count, and an error cell PROPAGATES. With no logical
+# value found anywhere -> #VALUE! (Excel's empty-population rule).
+# Args use ';' as the separator (the family decoder splits on ';').
+one-true-is-true	=XOR(TRUE;FALSE)		TRUE
+two-true-is-false	=XOR(TRUE;TRUE)		FALSE
+three-true-is-true	=XOR(TRUE;TRUE;TRUE)		TRUE
+number-coercion-odd	=XOR(1;0)		TRUE
+range-two-true-text-skipped	=XOR(A1:D1)	A1=TRUE;B1=1;C1=skip;D1=	FALSE
+range-error-propagates	=XOR(A1:B1)	A1=TRUE;B1=#N/A	#N/A
+scalar-text-is-value	=XOR(TRUE;"nope")		#VALUE!
+range-no-logical-is-value	=XOR(A1:B1)	A1=x;B1=	#VALUE!

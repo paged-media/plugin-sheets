@@ -1,0 +1,12 @@
+# sheet.fn.fin.ddb golden corpus (spec §7, §11 T1; ECMA-376 §18.17.7).
+# DDB(cost, salvage, life, period, [factor]) — declining-balance, factor
+# defaults to 2 (double-declining); each period takes
+# min(book*factor/life, book-salvage), never below salvage. Domain: cost &
+# salvage >= 0, life > 0, 1 <= period <= life, factor > 0.
+# id<TAB>formula<TAB>setup<TAB>expected
+ddb-first	=DDB(2400,300,10,1)	-	480
+ddb-second	=DDB(2400,300,10,2)	-	384
+ddb-factor1.5	=DDB(2400,300,10,1,1.5)	-	360
+ddb-coerce-text	=DDB("2400",300,10,1)	-	480
+ddb-period-too-big	=DDB(2400,300,10,11)	-	#NUM!
+ddb-negative-cost	=DDB(-2400,300,10,1)	-	#NUM!

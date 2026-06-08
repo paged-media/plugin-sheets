@@ -13,7 +13,7 @@ export const sheetBundle = defineBundle({
   activate,
 });
 
-export { activate, PANEL_ID } from "./activate";
+export { activate, PANEL_ID, GRID_PANEL_ID } from "./activate";
 
 // The engine facade + boot (S-10), exported for the engine spec.
 export {
@@ -21,6 +21,7 @@ export {
   wrapEngine,
   ENGINE_NOT_BUILT,
   type CellChange,
+  type GridSceneOptions,
   type LowerOptions,
   type SheetEngine,
   type SheetInfo,
@@ -41,3 +42,4 @@ export {
 export { lowerSelectionToFrame } from "./lower";
 export { importXlsx } from "./import-xlsx";
 export { makeWorkbookPanel } from "./panels/workbook-panel";
+export { makeGridPanel } from "./panels/grid-panel";

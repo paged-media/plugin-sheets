@@ -1,0 +1,10 @@
+# sheet.fn.text.clean golden corpus (spec §7, §11 M1; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected
+# CLEAN(text): strip ASCII control chars 0x00..=0x1F; printable passes through.
+# (Control chars are injected via CHAR(); space 0x20 is kept.)
+clean-strip-tab	=CLEAN(CONCAT("a",CHAR(9),"b"))	-	ab
+clean-strip-newline	=CLEAN(CONCAT("x",CHAR(10),"y"))	-	xy
+clean-keep-space	=CLEAN(CONCAT("p",CHAR(31)," q"))	-	p q
+clean-no-controls	=CLEAN("plain")	-	plain
+clean-cell	=CLEAN(A1)	A1=text:hello	hello
+clean-error-propagates	=CLEAN(A1)	A1=#N/A	#N/A

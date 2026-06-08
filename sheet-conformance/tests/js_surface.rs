@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 
-use sheet_js::core::{LowerOptions, SheetSession};
+use sheet_js::core::{GridSceneOptions, LowerOptions, SheetSession};
 
 /// Path to a corpus fixture (sibling of the conformance crate, like
 /// `xlsx_roundtrip.rs`).
@@ -388,4 +388,179 @@ fn sheet_js_set_now_updates_clock() {
     let r2 = s.set_cell(0, 1, 0, "=NOW()").expect("enter NOW again");
     let a2 = r2.changed.iter().find(|c| c.row == 1).unwrap();
     assert!(!a2.display.is_empty());
+}
+
+// ── sheet.js.get_grid_scene ─────────────────────────────────────────────────
+
+/// `get_grid_scene` windows a populated sheet: the viewport geometry, the
+/// visible populated cells (with formatted text + cumulative offsets), and the
+/// gridlines come back; far-away cells are virtualized out. The wire JSON uses
+/// the camelCase keys the TS `GridScene` (sheet-host-model/src/grid.ts) expects.
+#[test]
+fn sheet_js_get_grid_scene_windows_populated_sheet() {
+    let mut s = SheetSession::new();
+    // Seed three cells, two inside a small viewport, one far below.
+    s.set_cell(0, 0, 0, "2").expect("A1");
+    s.set_cell(0, 1, 1, "=A1*3").expect("B2 = A1*3 = 6");
+    s.set_cell(0, 500_000, 0, "999")
+        .expect("far cell, out of window");
+
+    // A small viewport: 44.2575pt cols, 15pt rows. ~3 cols × ~3 rows.
+    let scene = s
+        .get_grid_scene(0, 0, 0, 140.0, 50.0, GridSceneOptions::default())
+        .expect("grid scene over Sheet1");
+
+    // Viewport windowing: gridlines/offsets carry cols+1 / rows+1 boundaries.
+    assert_eq!(scene.viewport.first_row, 0);
+    assert_eq!(scene.viewport.first_col, 0);
+    assert_eq!(
+        scene.viewport.x_offsets.len() as u32,
+        scene.viewport.cols + 1,
+        "x_offsets carries cols+1 cumulative boundaries"
+    );
+    assert_eq!(
+        scene.viewport.y_offsets.len() as u32,
+        scene.viewport.rows + 1
+    );
+    assert_eq!(scene.viewport.x_offsets[0], 0.0, "offsets viewport-local");
+
+    // Only the two in-window populated cells are materialized (far cell out).
+    assert_eq!(
+        scene.cells.len(),
+        2,
+        "windowing skips the far-away cell at row 500000"
+    );
+    let a1 = scene
+        .cells
+        .iter()
+        .find(|c| c.row == 0 && c.col == 0)
+        .expect("A1 visible");
+    assert_eq!(a1.text, "2", "A1 formatted text");
+    let b2 = scene
+        .cells
+        .iter()
+        .find(|c| c.row == 1 && c.col == 1)
+        .expect("B2 visible");
+    assert_eq!(b2.text, "6", "B2 = A1*3 = 6, recomputed in the engine");
+
+    // Default options: gridlines ON at every visible boundary.
+    assert!(!scene.gridlines.h.is_empty(), "gridlines default on");
+    assert!(!scene.gridlines.v.is_empty());
+
+    // No selection recorded yet.
+    assert!(scene.selection.is_none(), "no selection until recorded");
+
+    // The serialised wire shape uses the camelCase keys grid.ts mirrors.
+    let json = serde_json::to_string(&scene).unwrap();
+    assert!(json.contains("\"firstRow\""), "viewport.firstRow camelCase");
+    assert!(json.contains("\"firstCol\""), "viewport.firstCol camelCase");
+    assert!(json.contains("\"xOffsets\""), "viewport.xOffsets camelCase");
+    assert!(json.contains("\"yOffsets\""), "viewport.yOffsets camelCase");
+    assert!(json.contains("\"styleKey\""), "cell.styleKey camelCase");
+    assert!(
+        json.contains("\"align\":\"right\""),
+        "A1 number -> right (lowercase align)"
+    );
+    assert!(!json.contains("first_row"), "no snake_case leak");
+    assert!(!json.contains("x_offsets"));
+}
+
+/// `set_grid_selection` records a rectangle that the NEXT `get_grid_scene` for
+/// the same sheet folds into `GridScene.selection`; the wire JSON carries the
+/// camelCase `anchorRow`/`anchorCol`/`rows`/`cols` grid.ts expects. A selection
+/// recorded for a different sheet is NOT shown.
+#[test]
+fn sheet_js_set_grid_selection_reflected_in_scene() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "hello").expect("A1");
+    s.set_cell(0, 1, 1, "42").expect("B2");
+
+    // Before recording: selection is None.
+    let before = s
+        .get_grid_scene(0, 0, 0, 200.0, 60.0, GridSceneOptions::default())
+        .expect("scene before selection");
+    assert!(before.selection.is_none());
+
+    // Record a 2×3 selection anchored at (1, 1).
+    s.set_grid_selection(0, 1, 1, 2, 3)
+        .expect("record selection on sheet 0");
+
+    let after = s
+        .get_grid_scene(0, 0, 0, 400.0, 120.0, GridSceneOptions::default())
+        .expect("scene after selection");
+    let sel = after
+        .selection
+        .as_ref()
+        .expect("selection folded into the scene");
+    assert_eq!(sel.anchor_row, 1);
+    assert_eq!(sel.anchor_col, 1);
+    assert_eq!(sel.rows, 2);
+    assert_eq!(sel.cols, 3);
+
+    // The wire JSON carries the camelCase selection keys grid.ts mirrors.
+    let json = serde_json::to_string(&after).unwrap();
+    assert!(json.contains("\"selection\""));
+    assert!(
+        json.contains("\"anchorRow\":1"),
+        "selection.anchorRow camelCase"
+    );
+    assert!(
+        json.contains("\"anchorCol\":1"),
+        "selection.anchorCol camelCase"
+    );
+    assert!(!json.contains("anchor_row"), "no snake_case leak");
+
+    // A selection recorded for sheet 0 is not shown on a different sheet id —
+    // verified via the OOB-rejection test below; here we re-confirm same-sheet
+    // by overwriting with a new rectangle (last write wins).
+    s.set_grid_selection(0, 4, 0, 1, 1)
+        .expect("overwrite selection");
+    let again = s
+        .get_grid_scene(0, 0, 0, 400.0, 120.0, GridSceneOptions::default())
+        .expect("scene after overwrite");
+    let sel2 = again
+        .selection
+        .as_ref()
+        .expect("overwritten selection present");
+    assert_eq!(
+        (sel2.anchor_row, sel2.anchor_col, sel2.rows, sel2.cols),
+        (4, 0, 1, 1)
+    );
+}
+
+/// FREEZE AMENDMENT (audit finding 2): both grid methods reject an out-of-range
+/// sheet id as a boundary error (matching `set_cell`/`get_range_lowered`); the
+/// workbook stays clean and no selection leaks across sheets.
+#[test]
+fn sheet_js_grid_scene_rejects_oob_sheet() {
+    let mut s = SheetSession::new();
+    assert_eq!(s.list_sheets().len(), 1, "fresh workbook has one sheet");
+
+    // get_grid_scene on the OOB sheet 5 -> Err.
+    let err = s
+        .get_grid_scene(5, 0, 0, 100.0, 50.0, GridSceneOptions::default())
+        .expect_err("OOB sheet id must be Err");
+    assert!(
+        err.to_string().contains("out of range"),
+        "boundary message: {err}"
+    );
+
+    // set_grid_selection on the OOB sheet 5 -> Err (no phantom selection).
+    let err = s
+        .set_grid_selection(5, 0, 0, 1, 1)
+        .expect_err("OOB sheet id must be Err");
+    assert!(
+        err.to_string().contains("out of range"),
+        "boundary message: {err}"
+    );
+
+    // The valid sheet 0 still produces a clean scene with no selection.
+    let scene = s
+        .get_grid_scene(0, 0, 0, 100.0, 50.0, GridSceneOptions::default())
+        .expect("valid sheet still works");
+    assert!(
+        scene.selection.is_none(),
+        "rejected selection did not leak onto sheet 0"
+    );
+    assert_eq!(s.list_sheets().len(), 1, "no phantom sheet created");
 }
