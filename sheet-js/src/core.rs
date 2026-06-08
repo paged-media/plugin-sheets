@@ -368,9 +368,7 @@ impl SheetSession {
         // Build the changed list with each cell's formatted display.
         let model = engine.model();
         let mut cache = FormatCache::default();
-        let ctx = FormatCtx {
-            date_system: model.calc.date_system,
-        };
+        let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
         let changed = result
             .changed
             .iter()
@@ -399,9 +397,7 @@ impl SheetSession {
     pub fn get_cell_display(&self, sheet: u16, row: u32, col: u32) -> String {
         let model = self.engine.as_ref().expect("engine present").model();
         let mut cache = FormatCache::default();
-        let ctx = FormatCtx {
-            date_system: model.calc.date_system,
-        };
+        let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
         cell_display(model, sheet, row, col, &mut cache, &ctx)
     }
 
@@ -630,9 +626,7 @@ impl SheetSession {
             .iter()
             .find_map(|s| s.categories.as_ref())
         {
-            let ctx = FormatCtx {
-                date_system: model.calc.date_system,
-            };
+            let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
             data.categories = resolve_labels(model, cat_ref, &ctx);
         }
 

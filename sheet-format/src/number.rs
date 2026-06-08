@@ -19,22 +19,25 @@
 //! count). Literals (quoted, escaped, and the always-literal punctuation)
 //! interleave verbatim.
 
+use crate::locale::LocaleData;
 use crate::sections::{FractionSpec, Section, Token};
 use std::fmt::Write as _;
 
 /// Render the magnitude-or-signed value `x` through a numeric `section`. The
 /// caller has already selected the section and decided `force_minus` (true
-/// only for the 1-section-applied-to-negative case). An empty section (no
-/// tokens) means `General` — handled by the caller, never reached here with
-/// real General intent, but we fall back to a plain decimal to be safe.
-pub fn render_number(x: f64, section: &Section, force_minus: bool) -> String {
+/// only for the 1-section-applied-to-negative case). `loc` supplies the
+/// locale's decimal-point and group (thousands) separators — en-US (`.`/`,`)
+/// is the default and keeps existing output byte-identical. An empty section
+/// (no tokens) means `General` — handled by the caller, never reached here
+/// with real General intent, but we fall back to a plain decimal to be safe.
+pub fn render_number(x: f64, section: &Section, force_minus: bool, loc: &LocaleData) -> String {
     // Fraction path if the section has a fraction token (`# ?/?`).
     if let Some(Token::Fraction(spec)) = section
         .tokens
         .iter()
         .find(|t| matches!(t, Token::Fraction(_)))
     {
-        return render_fraction(x, section, *spec, force_minus);
+        return render_fraction(x, section, *spec, force_minus, loc);
     }
     // Scientific path if the section has an exponent token.
     if section
@@ -42,7 +45,7 @@ pub fn render_number(x: f64, section: &Section, force_minus: bool) -> String {
         .iter()
         .any(|t| matches!(t, Token::Exponent { .. }))
     {
-        return render_scientific(x, section, force_minus);
+        return render_scientific(x, section, force_minus, loc);
     }
 
     // ---- Apply scaling: percent (×100 per %) and trailing-comma (/1000). ----
@@ -75,7 +78,7 @@ pub fn render_number(x: f64, section: &Section, force_minus: bool) -> String {
     let int_specs = collect_int_specs(&section.tokens);
     let frac_specs = collect_frac_specs(&section.tokens);
 
-    let int_rendered = render_int_part(&int_digits, &int_specs, grouped);
+    let int_rendered = render_int_part(&int_digits, &int_specs, grouped, loc);
     let frac_rendered = render_frac_part(&frac_digits, &frac_specs);
 
     // Now weave literals + the assembled number into the token order.
@@ -102,7 +105,7 @@ pub fn render_number(x: f64, section: &Section, force_minus: bool) -> String {
                     int_written = true;
                 }
                 if !frac_rendered.is_empty() || frac_has_forced(&frac_specs) {
-                    out.push('.');
+                    out.push_str(loc.decimal);
                 }
             }
             Token::DigitZero | Token::DigitHash | Token::DigitSpace => {
@@ -252,8 +255,9 @@ fn frac_has_forced(frac: &[DigitKind]) -> bool {
 }
 
 /// Render the integer part: pad to the count of forced placeholders, add
-/// grouping commas if requested. `digits` has no leading zeros ("" for 0).
-fn render_int_part(digits: &str, specs: &[DigitKind], grouped: bool) -> String {
+/// grouping separators if requested. `digits` has no leading zeros ("" for
+/// 0). `loc` supplies the locale group separator (en-US `,`).
+fn render_int_part(digits: &str, specs: &[DigitKind], grouped: bool, loc: &LocaleData) -> String {
     // Minimum digits = count of Zero placeholders (and Space pads with space,
     // but Excel treats `?` like a forced-but-blank slot — we render a space
     // only when there is no digit for that slot).
@@ -277,14 +281,15 @@ fn render_int_part(digits: &str, specs: &[DigitKind], grouped: bool) -> String {
         body = p;
     }
     if grouped {
-        group_thousands(&body)
+        group_thousands(&body, loc.group)
     } else {
         body
     }
 }
 
-/// Insert `,` every three digits from the right, ignoring leading spaces.
-fn group_thousands(s: &str) -> String {
+/// Insert the locale group separator every three digits from the right,
+/// ignoring leading spaces (en-US `,`, de-DE `.`).
+fn group_thousands(s: &str, sep: &str) -> String {
     // Separate any leading spaces.
     let lead_spaces = s.len() - s.trim_start_matches(' ').len();
     let (spaces, digits) = s.split_at(lead_spaces);
@@ -296,11 +301,23 @@ fn group_thousands(s: &str) -> String {
     let n = bytes.len();
     for (i, ch) in bytes.iter().enumerate() {
         if i > 0 && (n - i).is_multiple_of(3) {
-            out.push(',');
+            out.push_str(sep);
         }
         out.push(*ch);
     }
     format!("{spaces}{out}")
+}
+
+/// Replace the ASCII `.` produced by Rust's float formatter with the locale's
+/// decimal separator. For en-US (`.`) this is a no-op, keeping output
+/// byte-identical; only the scientific mantissa path uses Rust's formatter
+/// directly (the main numeric path emits the separator token by token).
+fn localize_point(s: &str, loc: &LocaleData) -> String {
+    if loc.decimal == "." {
+        s.to_string()
+    } else {
+        s.replacen('.', loc.decimal, 1)
+    }
 }
 
 /// Render the fraction part. `digits` is exactly `frac.len()`-wide already
@@ -346,8 +363,10 @@ fn render_frac_part(digits: &str, specs: &[DigitKind]) -> String {
 
 /// Scientific rendering `m...E±NN` (spec §9). The section's pre-`E`
 /// placeholders set the mantissa decimal count; the `E+`/`E-` token sets the
-/// exponent-sign style; placeholders after `E` set the exponent width.
-fn render_scientific(x: f64, section: &Section, force_minus: bool) -> String {
+/// exponent-sign style; placeholders after `E` set the exponent width. The
+/// mantissa's decimal separator is localized (en-US `.`); the exponent
+/// `E`/sign/digits stay locale-neutral.
+fn render_scientific(x: f64, section: &Section, force_minus: bool, loc: &LocaleData) -> String {
     let exp_idx = section
         .tokens
         .iter()
@@ -385,7 +404,7 @@ fn render_scientific(x: f64, section: &Section, force_minus: bool) -> String {
 
     let mag = x.abs();
     if mag == 0.0 {
-        let _ = write!(out, "{:.*}", mant_decimals, 0.0);
+        out.push_str(&localize_point(&format!("{:.*}", mant_decimals, 0.0), loc));
         out.push('E');
         out.push(if plus { '+' } else { '-' });
         let _ = write!(out, "{:0width$}", 0, width = exp_width);
@@ -404,7 +423,7 @@ fn render_scientific(x: f64, section: &Section, force_minus: bool) -> String {
     }
     let mant = round_half_away(mant, mant_decimals);
 
-    let _ = write!(out, "{mant:.mant_decimals$}");
+    out.push_str(&localize_point(&format!("{mant:.mant_decimals$}"), loc));
     out.push('E');
     let esign = if e < 0 {
         '-'
@@ -441,7 +460,13 @@ fn render_scientific(x: f64, section: &Section, force_minus: bool) -> String {
 /// - The integer part uses Excel display rounding only through the carry from
 ///   the fraction (e.g. `2 24/25` of 2.96 with `?/?` rounds the fraction so it
 ///   does not exceed 1, carrying into the integer).
-fn render_fraction(x: f64, section: &Section, spec: FractionSpec, force_minus: bool) -> String {
+fn render_fraction(
+    x: f64,
+    section: &Section,
+    spec: FractionSpec,
+    force_minus: bool,
+    loc: &LocaleData,
+) -> String {
     let neg = x < 0.0;
     let mag = x.abs();
 
@@ -488,7 +513,7 @@ fn render_fraction(x: f64, section: &Section, spec: FractionSpec, force_minus: b
         String::new()
     };
     let grouped = has_grouping(&section.tokens);
-    let int_rendered = render_int_part(&int_digits, &int_specs, grouped);
+    let int_rendered = render_int_part(&int_digits, &int_specs, grouped, loc);
 
     // Build the numerator/denominator strings, honouring the placeholder widths
     // (`?` space-pads; `0` zero-pads; `#` no pad).
@@ -622,7 +647,37 @@ mod tests {
     fn fmt(code: &str, x: f64) -> String {
         let f = compile(code).unwrap();
         let (sec, force) = f.select_numeric(x);
-        render_number(x, sec, force)
+        render_number(
+            x,
+            sec,
+            force,
+            crate::locale::locale_data(crate::Locale::EnUs),
+        )
+    }
+
+    fn fmt_de(code: &str, x: f64) -> String {
+        let f = compile(code).unwrap();
+        let (sec, force) = f.select_numeric(x);
+        render_number(
+            x,
+            sec,
+            force,
+            crate::locale::locale_data(crate::Locale::DeDe),
+        )
+    }
+
+    #[test]
+    fn sheet_format_locale_de_separators() {
+        // de-DE: "," decimal, "." group — the same code, localized output.
+        assert_eq!(fmt_de("#,##0.00", 1234.5), "1.234,50");
+        assert_eq!(fmt_de("0.00", 1.5), "1,50");
+        assert_eq!(fmt_de("#,##0", 1234567.0), "1.234.567");
+    }
+
+    #[test]
+    fn sheet_format_locale_de_scientific() {
+        // The mantissa separator localizes; the exponent stays neutral.
+        assert_eq!(fmt_de("0.00E+00", 12345.0), "1,23E+04");
     }
 
     #[test]

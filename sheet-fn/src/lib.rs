@@ -38,6 +38,8 @@
 //!   cross-type comparison ruling (the cross-engine hot zone, §7).
 //! - [`criteria`] — `SUMIF`/`COUNTIF` criterion parsing + wildcard matching.
 //! - [`num`] — the [`Numeric`] seam (D-6: `f64` now, exact-decimal later).
+//!   The exact-decimal SPIKE backend lives behind the `exact-decimal` cargo
+//!   feature (`num_decimal`, a stub today; OFF by default — f64 stays v1).
 //! - [`families`] — the per-family kernels (owned by the family tracks; seeded
 //!   empty here so the workspace builds while every row is `planned`).
 //! - [`dispatch`] — the generated dispatch match.
@@ -49,6 +51,10 @@ pub mod ctx;
 pub mod dispatch;
 pub mod families;
 pub mod num;
+/// The D-6 exact-decimal SPIKE backend (a stub today; spec §3, M3). Gated
+/// behind the `exact-decimal` cargo feature, OFF by default — f64 stays v1.
+#[cfg(feature = "exact-decimal")]
+pub mod num_decimal;
 pub mod result;
 
 // ---- Crate-root re-exports of the frozen calling convention (spec §7). ----

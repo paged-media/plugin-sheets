@@ -62,7 +62,7 @@ pub use style::{Align, CellStyle, NumFmtId, StyleTable};
 
 pub use table::Table;
 
-pub use calc_settings::{CalcSettings, DateSystem};
+pub use calc_settings::{CalcSettings, DateSystem, Locale};
 
 pub use intern::Interner;
 

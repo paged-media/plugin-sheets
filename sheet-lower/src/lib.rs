@@ -340,9 +340,7 @@ pub fn lower_range_styled(
     let (top, left, bottom, right) = range.normalized();
     let ws = model.sheet(sheet);
 
-    let ctx = FormatCtx {
-        date_system: model.calc.date_system,
-    };
+    let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
     let mut cache = FormatCache::default();
     // The style resolver builds the deduped IR-v2 styles table as cells are
     // walked (in row/col index order — deterministic).
@@ -477,9 +475,7 @@ pub fn lower_range_condfmt(
     let (top, left, bottom, right) = range.normalized();
     let ws = model.sheet(sheet);
 
-    let ctx = FormatCtx {
-        date_system: model.calc.date_system,
-    };
+    let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
     let mut cache = FormatCache::default();
 
     // The cf-aware style table: deduped EFFECTIVE styles (base folded with cf).

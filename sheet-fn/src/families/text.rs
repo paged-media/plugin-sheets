@@ -313,9 +313,11 @@ pub fn text(args: &[Arg], ctx: &EvalCtx) -> CellValue {
         Ok(f) => f,
         Err(_) => return CellValue::Error(CellError::Value),
     };
-    let fctx = sheet_format::FormatCtx {
-        date_system: ctx.date_system,
-    };
+    // TEXT renders en-US (D-8): the function dialect is always en; value
+    // localization rides on the document locale (CalcSettings.locale),
+    // which the EvalCtx does not yet carry. Default EnUs keeps existing
+    // output byte-identical until the localization track threads it here.
+    let fctx = sheet_format::FormatCtx::new(ctx.date_system, sheet_core::Locale::EnUs);
     CellValue::Text(CompactString::new(sheet_format::format_value(
         &value, &fmt, &fctx,
     )))

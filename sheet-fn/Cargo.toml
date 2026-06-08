@@ -10,6 +10,16 @@ description = "paged.sheet registry-driven function library (spec §7): pure fn(
 [lints]
 workspace = true
 
+[features]
+# exact-decimal — the D-6 exact-decimal SPIKE (spec §3, M3). OFF by default:
+# v1 stays Excel-compatible f64 (the `F64` Numeric impl). Enabling this gates
+# in a future `Decimal` Numeric impl (src/num_decimal.rs, a stub today) so the
+# Phase B spike track has a place to land a permissive decimal backend
+# (rust_decimal MIT or a hand-rolled fixed-decimal — the spike decides) without
+# touching any kernel written against the `Numeric` trait. Exploratory: f64
+# remains the v1 default regardless of the spike outcome.
+exact-decimal = []
+
 [dependencies]
 sheet-core = { path = "../sheet-core" }
 sheet-format = { path = "../sheet-format" }

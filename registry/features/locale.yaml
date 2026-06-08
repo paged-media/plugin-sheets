@@ -1,0 +1,93 @@
+# sheet.format.locale.* — locale/localization features for the number-format
+# engine (spec §9; decision D-8, v1 set = en/de minimum). Build-consumed half
+# of the two-registry split; the state-repo row is the status ledger.
+#
+# Phase A (this pass) carved the seam: FormatCtx gained a `locale` field +
+# FormatCtx::new(date_system, locale), CalcSettings gained `locale`, the
+# locale-data table (sheet-format/src/locale.rs) ships en-US (full) + de-DE
+# (separators + month/day names + AM/PM + default short-date), and number.rs /
+# datetime.rs read separators + names from the table. en-US output is
+# BYTE-IDENTICAL to M0. These rows are the Phase B localization track:
+# corpus + tests + the de rendering pass + the workbook-locale parser.
+#
+# NOTE on scope: the formula DIALECT stays en — only VALUE parsing/formatting
+# localizes (separators/names). The format-code token grammar (yyyy/mm/dd,
+# 0/#/?, the literal . and , in a code) is locale-NEUTRAL; the locale only
+# decides which glyph the renderer emits for those tokens.
+
+- id: sheet.format.locale.separators
+  title: "Locale decimal/group/list separators (en-US ./,/, ; de-DE ,/./;) read from the locale-data table"
+  status: planned
+  note: >
+    Phase A: the en-US/de-DE separators ship in sheet-format/src/locale.rs and
+    number.rs reads ctx.locale's decimal + group from the table (en-US output
+    byte-identical to M0). Phase B: golden corpus for de separators + the
+    NUMBERVALUE list-separator interaction.
+  provenance: ["ECMA-376 §18.8.31 (number format codes)", "CLDR decimal/group separators", "spec §9, D-8"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_separators"]
+    corpus: ["corpus/format-corpus/locale-de.golden.tsv"]
+
+- id: sheet.format.locale.month-day-names
+  title: "Localized long+short month and day names (en-US January../Sunday.. ; de-DE Januar../Montag..) from the locale-data table"
+  status: planned
+  note: >
+    Phase A: en-US + de-DE month/day name arrays ship in locale.rs and
+    datetime.rs reads loc.months_full/abbr + loc.days_full/abbr. Phase B:
+    golden corpus + the audit of de-DE abbreviation forms (Mrz vs Mär, the
+    day-abbrev "Mo".."So").
+  provenance: ["ECMA-376 §18.8.31 (date-time codes)", "CLDR month/day names", "spec §9, D-8"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_month_day_names"]
+    corpus: ["corpus/format-corpus/locale-de.golden.tsv"]
+
+- id: sheet.format.locale.ampm
+  title: "Localized AM/PM strings (long + short) per locale from the locale-data table"
+  status: planned
+  note: >
+    Phase A: datetime.rs reads loc.am/pm + loc.am_short/pm_short (en-US AM/PM,
+    A/P). Phase B: confirm the de-DE AM/PM convention (German typically uses a
+    24h clock; the table currently mirrors AM/PM pending the corpus audit).
+  provenance: ["ECMA-376 §18.8.31", "spec §9, D-8"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_ampm"]
+
+- id: sheet.format.locale.locale-from-workbook
+  title: "Parse the workbook locale/codepage hint (xlsx) into CalcSettings.locale"
+  status: planned
+  note: >
+    Phase B: derive the document locale from the xlsx (workbook/styles locale
+    hint, e.g. a numFmt's [$-locale] modifier or a workbook-level codepage),
+    populating CalcSettings.locale so lowering/sheet-js render with the
+    workbook's locale. Default stays EnUs when no hint is present (keeps en
+    green). Pairs with the external-link/localization track.
+  provenance: ["ECMA-376 §18.8.30 ([$-locale] currency/locale modifier)", "spec §9, §10, D-8"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_from_workbook"]
+
+- id: sheet.format.locale.de-de-rendering
+  title: "de-DE rendering pass — number + date output through the de locale (separators + names) end-to-end"
+  status: planned
+  note: >
+    Phase A threaded the locale through number.rs/datetime.rs and filled the
+    de-DE data; Phase B is the end-to-end rendering corpus + the FormatCache
+    interaction (the compiled format is locale-neutral; the locale rides in
+    FormatCtx, so the cache key need not include it).
+  provenance: ["ECMA-376 §18.8.31", "spec §9, D-8"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_de_de_rendering"]
+    corpus: ["corpus/format-corpus/locale-de.golden.tsv"]
+
+- id: sheet.format.locale.number-parse-locale
+  title: "Locale-aware VALUE parsing (NUMBERVALUE / coercion) — only the VALUE localizes, never the formula dialect"
+  status: planned
+  note: >
+    Phase B: NUMBERVALUE(text, [decimal_sep], [group_sep]) and locale-honoring
+    coercion parse "1.234,50" under de-DE. CRITICAL SCOPE RULING: the formula
+    DIALECT stays en (function names, the ',' argument separator) — ONLY the
+    VALUE parsing/formatting localizes. NUMBERVALUE takes explicit separators,
+    so it is locale-explicit rather than locale-implicit; document that the
+    implicit coercion path keys off CalcSettings.locale.
+  provenance: ["ECMA-376 (NUMBERVALUE)", "OpenFormula coercion", "spec §9, D-8"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_number_parse"]

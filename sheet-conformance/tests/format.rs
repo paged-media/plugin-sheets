@@ -20,7 +20,7 @@
 //! 4-column-strict loader. The same TSVs are re-consumed by the Phase-2
 //! LibreOffice oracle.
 
-use sheet_core::{CellValue, DateSystem};
+use sheet_core::{CellValue, DateSystem, Locale};
 use sheet_format::{compile, format_value, FormatCtx};
 use std::path::PathBuf;
 
@@ -95,9 +95,7 @@ fn parse_value(v: &str) -> CellValue {
 
 /// Run every row of a corpus through the formatter and assert byte-equality.
 fn run_corpus(repo_relative: &str) {
-    let ctx = FormatCtx {
-        date_system: DateSystem::Date1900,
-    };
+    let ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
     for row in load(repo_relative) {
         let fmt = compile(&row.code)
             .unwrap_or_else(|e| panic!("[{}] compile {:?} failed: {e}", row.id, row.code));
@@ -186,9 +184,7 @@ fn sheet_format_sections() {
 fn sheet_format_datetime_tokens() {
     run_corpus("corpus/format-corpus/datetime.golden.tsv");
 
-    let ctx = FormatCtx {
-        date_system: DateSystem::Date1900,
-    };
+    let ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
     let f = compile("h:mm AM/PM").unwrap();
     // 12-hour clock under AM/PM.
     assert_eq!(format_value(&CellValue::Number(0.5), &f, &ctx), "12:00 PM");

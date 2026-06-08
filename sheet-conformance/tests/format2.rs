@@ -60,7 +60,7 @@
 //!   locale id); a pure `[$-409]` locale tag contributes no literal; locale-
 //!   driven separators/decimal marks are NOT applied in T0 (en grouping only).
 
-use sheet_core::{CellValue, DateSystem};
+use sheet_core::{CellValue, DateSystem, Locale};
 use sheet_format::{compile, format_value, format_value_styled, FormatColor, FormatCtx};
 use std::path::PathBuf;
 
@@ -135,9 +135,7 @@ fn parse_value(v: &str) -> CellValue {
 /// Run every row of a corpus through the formatter and assert byte-equality
 /// (under the 1900 date system, as the elapsed brackets need a serial axis).
 fn run_corpus(repo_relative: &str) {
-    let ctx = FormatCtx {
-        date_system: DateSystem::Date1900,
-    };
+    let ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
     for row in load(repo_relative) {
         let fmt = compile(&row.code)
             .unwrap_or_else(|e| panic!("[{}] compile {:?} failed: {e}", row.id, row.code));
@@ -156,9 +154,7 @@ fn nfmt(code: &str, x: f64) -> String {
     format_value(
         &CellValue::Number(x),
         &f,
-        &FormatCtx {
-            date_system: DateSystem::Date1900,
-        },
+        &FormatCtx::new(DateSystem::Date1900, Locale::EnUs),
     )
 }
 
@@ -236,9 +232,7 @@ fn sheet_format_conditional_sections() {
 fn sheet_format_color_brackets() {
     run_corpus("corpus/format-corpus/color.golden.tsv");
 
-    let ctx = FormatCtx {
-        date_system: DateSystem::Date1900,
-    };
+    let ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
     let styled = |code: &str, x: f64| {
         let f = compile(code).unwrap();
         format_value_styled(&CellValue::Number(x), &f, &ctx)

@@ -42,29 +42,51 @@
 pub mod cache;
 pub mod datetime;
 pub mod general;
+pub mod locale;
 pub mod number;
 pub mod parse;
 pub mod sections;
 pub mod serial;
 
-use sheet_core::{CellValue, DateSystem};
+use sheet_core::{CellValue, DateSystem, Locale};
 
 pub use cache::FormatCache;
 pub use general::format_general;
+pub use locale::{locale_data, LocaleData};
 pub use parse::{compile, FormatError};
 pub use sections::{CompiledFormat, FormatColor};
 
-/// Context for a format pass: currently the workbook date system (spec §9).
-/// Reserved for locale once the v1 locale set lands (D-8).
+/// Context for a format pass (spec §9): the workbook date system AND the
+/// display [`Locale`] (D-8). The locale rides INSIDE `FormatCtx` so the
+/// frozen [`format_value`]/[`format_value_styled`]/[`format_general`]
+/// signatures are unchanged — it picks the rendered separators (number.rs)
+/// and month/day/AM-PM names (datetime.rs) from the locale-data table. The
+/// default ([`Locale::EnUs`]) keeps every existing en-US output
+/// byte-identical.
 #[derive(Copy, Clone, Debug)]
 pub struct FormatCtx {
     pub date_system: DateSystem,
+    pub locale: Locale,
+}
+
+impl FormatCtx {
+    /// Construct a [`FormatCtx`] from a date system and a locale. The
+    /// preferred construction site for callers that derive the locale from
+    /// the model (`model.calc.locale`); literal-struct construction stays
+    /// valid too (the struct fields are public).
+    pub fn new(date_system: DateSystem, locale: Locale) -> Self {
+        FormatCtx {
+            date_system,
+            locale,
+        }
+    }
 }
 
 impl Default for FormatCtx {
     fn default() -> Self {
         FormatCtx {
             date_system: DateSystem::Date1900,
+            locale: Locale::EnUs,
         }
     }
 }
@@ -132,16 +154,17 @@ fn format_number_value(
         return (String::new(), color);
     }
 
+    let loc = locale::locale_data(ctx.locale);
     let s = match section.kind {
         sections::SectionKind::DateTime => {
-            match datetime::render_datetime(n, section, ctx.date_system) {
+            match datetime::render_datetime(n, section, ctx.date_system, loc) {
                 Some(s) => s,
                 // Out-of-domain serial: Excel shows ###### but for typeset
                 // output we fall back to General.
                 None => format_general(&CellValue::Number(n)),
             }
         }
-        sections::SectionKind::Number => number::render_number(n, section, force_minus),
+        sections::SectionKind::Number => number::render_number(n, section, force_minus, loc),
         // A text-classified section selected for a number renders its
         // literals only (no @ substitution for numbers).
         sections::SectionKind::Text => render_text_section(section, ""),

@@ -15,48 +15,29 @@
 //! Date/time section rendering (spec §9; ECMA-376 §18.8.31 date-time
 //! codes). A cell value is treated as a serial (see [`crate::serial`]) when
 //! its section [`classifies`](crate::sections::SectionKind::DateTime) as
-//! date/time. English (en) locale month/day names ship inline (T0 locale).
+//! date/time. Month/day/AM-PM names come from the locale-data table
+//! ([`crate::locale`]); en-US is the default and keeps existing output
+//! byte-identical, de-DE is data-filled for the Phase B localization track.
 
+use crate::locale::LocaleData;
 use crate::sections::{ElapsedUnit, Section, Token};
 use crate::serial;
 use sheet_core::DateSystem;
 use std::fmt::Write as _;
-
-const MONTHS_FULL: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-const MONTHS_ABBR: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-const DAYS_FULL: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
-const DAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /// Render a serial value through a date/time `section`. Returns `None` when
 /// the serial is outside the valid calendar domain AND the section needs a
 /// date (the caller then falls back to General). A time-only serial (integer
 /// part `0`, the Excel pseudo-day 1900-01-00) still renders its time tokens.
 /// Rounds the time-of-day to the nearest second; a carry that rolls past
-/// midnight re-derives the date from the bumped serial.
-pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> Option<String> {
+/// midnight re-derives the date from the bumped serial. `loc` supplies the
+/// localized month/day/AM-PM names (en-US default = unchanged output).
+pub fn render_datetime(
+    serial_val: f64,
+    section: &Section,
+    sys: DateSystem,
+    loc: &LocaleData,
+) -> Option<String> {
     if !serial_val.is_finite() || serial_val < 0.0 {
         return None;
     }
@@ -127,9 +108,9 @@ pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> O
             Token::MonthName { full } => {
                 let idx = (mon as usize).saturating_sub(1).min(11);
                 out.push_str(if *full {
-                    MONTHS_FULL[idx]
+                    loc.months_full[idx]
                 } else {
-                    MONTHS_ABBR[idx]
+                    loc.months_abbr[idx]
                 });
             }
             Token::Day { pad } => {
@@ -141,9 +122,9 @@ pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> O
             }
             Token::DayName { full } => {
                 out.push_str(if *full {
-                    DAYS_FULL[weekday]
+                    loc.days_full[weekday]
                 } else {
-                    DAYS_ABBR[weekday]
+                    loc.days_abbr[weekday]
                 });
             }
             Token::Hour { pad } => {
@@ -170,9 +151,9 @@ pub fn render_datetime(serial_val: f64, section: &Section, sys: DateSystem) -> O
             }
             Token::AmPm { long } => {
                 if *long {
-                    out.push_str(if pm { "PM" } else { "AM" });
+                    out.push_str(if pm { loc.pm } else { loc.am });
                 } else {
-                    out.push_str(if pm { "P" } else { "A" });
+                    out.push_str(if pm { loc.pm_short } else { loc.am_short });
                 }
             }
             Token::Elapsed { unit, pad } => {
@@ -223,7 +204,33 @@ mod tests {
 
     fn dt(code: &str, serial_val: f64) -> String {
         let f = compile(code).unwrap();
-        render_datetime(serial_val, &f.pos, DateSystem::Date1900).unwrap()
+        render_datetime(
+            serial_val,
+            &f.pos,
+            DateSystem::Date1900,
+            crate::locale::locale_data(crate::Locale::EnUs),
+        )
+        .unwrap()
+    }
+
+    fn dt_de(code: &str, serial_val: f64) -> String {
+        let f = compile(code).unwrap();
+        render_datetime(
+            serial_val,
+            &f.pos,
+            DateSystem::Date1900,
+            crate::locale::locale_data(crate::Locale::DeDe),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn sheet_format_locale_de_month_day_names() {
+        // serial 44197 = 2021-01-01 (a Friday).
+        assert_eq!(dt_de("mmmm d, yyyy", 44197.0), "Januar 1, 2021");
+        assert_eq!(dt_de("mmm", 44228.0), "Feb"); // 2021-02-01
+        assert_eq!(dt_de("dddd", 44197.0), "Freitag");
+        assert_eq!(dt_de("ddd", 44197.0), "Fr");
     }
 
     #[test]

@@ -215,9 +215,7 @@ pub fn grid_scene(
     let col_end = first_col + cols - 1;
 
     // ---- Materialize ONLY visible populated cells (virtualization). ----
-    let ctx = FormatCtx {
-        date_system: model.calc.date_system,
-    };
+    let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
     let mut cache = FormatCache::default();
     let mut cells: Vec<GridCell> = Vec::new();
     if let Some(ws) = ws {
