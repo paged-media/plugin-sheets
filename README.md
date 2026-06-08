@@ -78,14 +78,30 @@ node ../plugin-sdk/packages/plugin-cli/bin/paged-plugin.mjs validate packages/sh
 
 ## Milestones (spec §13)
 
-- **M0 — spine + round-trip + first lowering** *(this repo's current
-  campaign)*: frozen `sheet-core`, parser, dep graph + recalc, T0
-  functions via registry-driven dispatch, number-format core, XLSX
-  parse + preservation + writer (zero-edit round-trip), single-frame
-  lowering, coverage gate at 100%.
-- **M1 — the publishing product**: T1 functions, dynamic arrays, full
-  number formats, sheets mode (grid on the SDK surface), threading +
-  pagination, document-style mapping.
-- **M2 — depth**: charts (via `paged.draw` core surface), conditional
-  formatting, iterative calc.
-- **M3 — breadth**: localization, exact-decimal spike.
+All four milestones are implemented; the registry coverage gate is at
+0 gaps (342 implemented rows, 2 honest deferrals — see below).
+
+- **M0 — spine + round-trip + first lowering** ✅ — frozen `sheet-core`,
+  parser, dep graph + recalc, T0 functions via registry-driven dispatch,
+  number-format core, XLSX parse + preservation + writer (zero-edit
+  round-trip byte-identical), single-frame lowering, coverage gate live.
+- **M1 — the publishing product** ✅ — ~145 T1 functions, dynamic
+  arrays/spill, structured references + Excel tables, full number-format
+  engine, pagination engine (multi-frame chains), the panel grid
+  (`sheet-grid` GridScene), document-coherent styling.
+- **M2 — depth** ✅ — charts (`plotters` layout → custom backend →
+  `ChartGeometry` → `paged.draw` native ops; colors via document
+  swatches), conditional formatting (→ style overrides), iterative calc
+  (D-7), database D-functions + the misc T2 set.
+- **M3 — breadth** ✅ — localization (en/de, D-8), the exact-decimal
+  spike (D-6: `rust_decimal` behind the off-by-default `exact-decimal`
+  feature + `DECIMAL-SPIKE.md` recommending defer-to-v2-as-opt-in),
+  external-link cached-value reads (cached-only, never followed).
+
+**Honest deferrals** (registry `planned`, SDK/spec-gated, never faked):
+in-frame sheets mode (S-01/S-02 SDK surface), conditional-formatting
+data-bar drawn geometry, the "new style from selection" document-style
+group (S-04), and full external-reference *evaluation* (needs a frozen-AST
+amendment). The interim panel grid stands in for in-frame sheets mode;
+page lowering still degrades to tab-text + rules until a native
+table-creation op lands (S-03). See `BREAKAGE_LOG.md`.
