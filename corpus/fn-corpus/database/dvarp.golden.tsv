@@ -1,0 +1,14 @@
+# sheet.fn.database.dvarp golden corpus (spec §7, §11 T2; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (as documented in dsum.golden.tsv).
+# DVARP(database, field, criteria): POPULATION variance (n) of the field over
+# matching records; not enough numbers (n=0) is #DIV/0!.
+# All-records Yield = {14,10,9,10,8}: Sum sq dev 20.8; var_p = 20.8/5 = 4.16.
+varp-all-yield	=DVARP(A1:D6,"Yield",F1:F1)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree	4.16
+# Apple Yield = {14,10}: Sum sq dev 8; var_p = 8/2 = 4.
+varp-apple-yield	=DVARP(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Apple	4
+# Pear Yield = {10,8}: Sum sq dev 2; var_p = 2/2 = 1.
+varp-pear-yield	=DVARP(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Pear	1
+# Single matching record -> n=1 -> population variance is 0 (not an error).
+varp-single-zero	=DVARP(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Cherry	0
+# No matching record -> n=0 -> #DIV/0!.
+varp-no-match-div0	=DVARP(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Plum	#DIV/0!

@@ -57,6 +57,23 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => session.lowerSelection(),
   });
+  // Lower a parsed chart to a paged.draw vector frame (M2 charts track, spec
+  // §8.4). T0 action lowers the FIRST chart in the workbook (the panel gains a
+  // per-chart picker once the chart list UI lands); a chartless workbook is a
+  // no-op the command logs.
+  host.contribute.command({
+    id: "media.paged.sheet.command.lowerChartToFrame",
+    title: "Lower chart to frame",
+    category: "Sheet",
+    handler: async () => {
+      const charts = session.listCharts();
+      if (charts.length === 0) {
+        host.log.warn("lowerChartToFrame: the workbook has no charts");
+        return;
+      }
+      await session.lowerChart(charts[0].index);
+    },
+  });
   host.contribute.command({
     id: "media.paged.sheet.command.openGrid",
     title: "Open sheet grid",

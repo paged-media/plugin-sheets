@@ -5,9 +5,9 @@
 # header), and a criteria range (its own header row + condition rows). The
 # matching rows of the selected column are aggregated.
 #
-# STATUS: planned — the M2 database track wires the kernels (rust:
+# STATUS: implemented — the M2 database track wired the kernels (rust:
 # database::* under sheet-fn/src/families/database.rs) + tests
-# (sheet-conformance/tests/fn_database.rs::sheet_fn_database_*) and flips these
+# (sheet-conformance/tests/fn_database.rs::sheet_fn_database_*) and flipped these
 # rows to implemented. Family token: `database`. Provenance: ECMA-376 §18.17.7
 # (database functions) + public Microsoft function docs.
 #
@@ -23,7 +23,7 @@
   volatility: none
   range_aware: true
   rust: database::dsum
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DSUM) — sum of the field over rows matching criteria"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dsum"]
@@ -36,7 +36,7 @@
   volatility: none
   range_aware: true
   rust: database::dcount
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DCOUNT) — count of NUMERIC field cells over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dcount"]
@@ -49,7 +49,7 @@
   volatility: none
   range_aware: true
   rust: database::dcounta
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DCOUNTA) — count of NON-BLANK field cells over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dcounta"]
@@ -62,7 +62,7 @@
   volatility: none
   range_aware: true
   rust: database::dget
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DGET) — the single field value of the one matching row; no match -> #VALUE!, multiple -> #NUM!"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dget"]
@@ -75,7 +75,7 @@
   volatility: none
   range_aware: true
   rust: database::dmax
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DMAX) — max of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dmax"]
@@ -88,7 +88,7 @@
   volatility: none
   range_aware: true
   rust: database::dmin
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DMIN) — min of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dmin"]
@@ -101,7 +101,7 @@
   volatility: none
   range_aware: true
   rust: database::daverage
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DAVERAGE) — arithmetic mean of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_daverage"]
@@ -114,7 +114,7 @@
   volatility: none
   range_aware: true
   rust: database::dproduct
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DPRODUCT) — product of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dproduct"]
@@ -127,7 +127,7 @@
   volatility: none
   range_aware: true
   rust: database::dstdev
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DSTDEV) — SAMPLE standard deviation of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dstdev"]
@@ -140,7 +140,7 @@
   volatility: none
   range_aware: true
   rust: database::dstdevp
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DSTDEVP) — POPULATION standard deviation of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dstdevp"]
@@ -153,7 +153,7 @@
   volatility: none
   range_aware: true
   rust: database::dvar
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DVAR) — SAMPLE variance of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dvar"]
@@ -166,7 +166,7 @@
   volatility: none
   range_aware: true
   rust: database::dvarp
-  status: planned
+  status: implemented
   provenance: ["ECMA-376 §18.17.7 (DVARP) — POPULATION variance of the field over matching rows"]
   tests:
     rust: ["sheet-conformance/tests/fn_database.rs::sheet_fn_database_dvarp"]

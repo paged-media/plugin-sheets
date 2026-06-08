@@ -21,6 +21,7 @@ export {
   wrapEngine,
   ENGINE_NOT_BUILT,
   type CellChange,
+  type ChartInfo,
   type GridSceneOptions,
   type LowerOptions,
   type SheetEngine,
@@ -40,6 +41,8 @@ export {
 
 // The two-phase page lower (S-03), exported for the flow spec.
 export { lowerSelectionToFrame } from "./lower";
+// The chart → paged.draw vector lower (M2 charts track, spec §8.4).
+export { lowerChartToFrame } from "./lower-chart";
 export { importXlsx } from "./import-xlsx";
 export { makeWorkbookPanel } from "./panels/workbook-panel";
 export { makeGridPanel } from "./panels/grid-panel";

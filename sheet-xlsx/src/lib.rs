@@ -49,12 +49,17 @@ pub mod sheet_doc;
 pub mod write;
 
 pub use error::XlsxError;
+pub use parts::chart::{ParsedChart as XlsxChart, SheetResolver as ChartSheetResolver};
+pub use parts::conditional_format::{
+    CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, SheetConditionalFormats,
+};
 pub use parts::styles::{VisualStyle, VisualStyles};
 
 use opc::{ModeledKind, OpcContainer, PartEntry};
+use parts::chart::{ParsedChart, SheetResolver};
 use rels::{
-    part_dir, rels_part_for, resolve_target, Relationships, REL_OFFICE_DOCUMENT,
-    REL_SHARED_STRINGS, REL_STYLES, REL_TABLE,
+    part_dir, rels_part_for, resolve_target, Relationships, REL_CHART, REL_DRAWING,
+    REL_OFFICE_DOCUMENT, REL_SHARED_STRINGS, REL_STYLES, REL_TABLE,
 };
 use sheet_core::cell::{Cell, StyleId};
 use sheet_core::{SheetId, SheetModel};
@@ -81,10 +86,45 @@ pub struct XlsxDocument {
     /// state, never written back (round-trip stays verbatim).
     pub visual_styles: parts::styles::VisualStyles,
 
+    /// The differential-format (`<dxfs>`) table from `styles.xml`, indexed by
+    /// `dxfId` (M2 conditional-formatting track, spec §10.4). Each entry is the
+    /// OVERRIDE a matched `cfRule` applies on top of the cell's base style. The
+    /// lowering pairs this with [`conditional_formats`](Self::conditional_formats)
+    /// to fold cf matches into the lowered style. Read-only derived state.
+    pub dxfs: Vec<parts::styles::VisualStyle>,
+
+    /// Parsed conditional-format blocks per sheet (M2 track, spec §10.4),
+    /// derived from each worksheet's captured `<conditionalFormatting>`
+    /// subtrees. ADDITIVE: the subtrees STILL round-trip byte-identical via the
+    /// verbatim capture (preserve.rs); this is read-only derived state for
+    /// lowering, never written back. A sheet with no conditional formatting has
+    /// no entry.
+    pub conditional_formats: BTreeMap<SheetId, parts::conditional_format::SheetConditionalFormats>,
+
+    /// Parsed DrawingML charts (M2 charts track, spec §8.4), discovered through
+    /// each worksheet `.rels`' `/drawing` → drawing `.rels`' `/chart` chain and
+    /// parsed into the FROZEN `sheet_chart::ChartModel`. ADDITIVE + READ-ONLY:
+    /// the chart + drawing PARTS stay OPAQUE OPC parts (never promoted), so they
+    /// re-emit byte-identical on round-trip (preservation invariant, spec
+    /// §10.2); this model exists for `sheet-js` to LIST + RENDER charts, never
+    /// for re-emit. Document order across sheets.
+    pub charts: Vec<ParsedChart>,
+
     /// The OPC container (ordered parts + content types) for re-write.
     container: OpcContainer,
     /// Worksheet bindings: model sheet -> part name + captured subtrees.
     bindings: Vec<SheetBinding>,
+}
+
+/// A name→id resolver over the workbook's sheet list, for chart `c:f` refs.
+struct ModelSheetResolver<'a> {
+    model: &'a SheetModel,
+}
+
+impl SheetResolver for ModelSheetResolver<'_> {
+    fn resolve(&self, name: &str) -> Option<SheetId> {
+        self.model.sheet_id(name)
+    }
 }
 
 impl XlsxDocument {
@@ -151,23 +191,36 @@ impl XlsxDocument {
             model.strings.intern(s.clone());
         }
 
-        // styles: build the cellXfs index -> StyleId table AND the visual
-        // style model (M1 style-map track) keyed by the resolved StyleId.
-        let (xf_to_style, visual_styles) = match &styles_part {
+        // styles: build the cellXfs index -> StyleId table, the visual style
+        // model (M1 style-map track) keyed by the resolved StyleId, AND the
+        // differential-format `<dxfs>` table (M2 conditional-formatting track).
+        let (xf_to_style, visual_styles, dxfs) = match &styles_part {
             Some(name) => match container.part(name) {
                 Some(p) => {
                     let parsed = parts::styles::parse(p.bytes(), &mut model.styles)?;
-                    (parsed.xf_to_style, parsed.visual)
+                    (parsed.xf_to_style, parsed.visual, parsed.dxfs)
                 }
-                None => (Vec::new(), parts::styles::VisualStyles::default()),
+                None => (
+                    Vec::new(),
+                    parts::styles::VisualStyles::default(),
+                    Vec::new(),
+                ),
             },
-            None => (Vec::new(), parts::styles::VisualStyles::default()),
+            None => (
+                Vec::new(),
+                parts::styles::VisualStyles::default(),
+                Vec::new(),
+            ),
         };
 
         // 4. Each worksheet, in workbook (tab) order.
         let mut bindings = Vec::with_capacity(parsed_wb.sheets.len());
         let mut formula_texts: BTreeMap<(SheetId, u32, u32), String> = BTreeMap::new();
         let mut worksheet_parts: Vec<String> = Vec::new();
+        let mut conditional_formats: BTreeMap<
+            SheetId,
+            parts::conditional_format::SheetConditionalFormats,
+        > = BTreeMap::new();
 
         for sref in &parsed_wb.sheets {
             let target = wb_rels.target_of(&sref.rid).ok_or_else(|| {
@@ -242,12 +295,78 @@ impl XlsxDocument {
                 model.sheet_mut(sid).expect("just added").tables = tables;
             }
 
+            // Conditional formatting (M2 track, spec §10.4): the
+            // `<conditionalFormatting>` children of <worksheet> were captured
+            // verbatim (AfterSheetData) for the preservation invariant — we
+            // ADDITIONALLY parse them into the read-only cf model for lowering.
+            // The captured bytes are untouched (round-trip stays byte-identical).
+            let cf = parts::conditional_format::parse_all(
+                parsed_ws.captured.after().map(|c| c.bytes.as_slice()),
+            )?;
+            if !cf.is_empty() {
+                conditional_formats.insert(sid, cf);
+            }
+
             worksheet_parts.push(ws_part.clone());
             bindings.push(SheetBinding {
                 sheet_id: sid,
                 part_name: ws_part,
                 captured: parsed_ws.captured,
             });
+        }
+
+        // 4.5. Charts (M2 charts track, spec §8.4). For each worksheet, follow
+        // its `.rels`' `/drawing` rel to the drawing part, then the drawing
+        // `.rels`' `/chart` rel(s) to each `xl/charts/chartN.xml`, and parse it
+        // into the frozen `sheet_chart::ChartModel`. ADDITIVE + READ-ONLY: the
+        // chart + drawing parts stay OPAQUE (never promoted), so they re-emit
+        // byte-identical on round-trip (the `<drawing>` element on the
+        // worksheet is itself a captured unknown child). The resolver maps
+        // `c:f` sheet names to model ids; the full model has all sheets now.
+        let mut charts: Vec<ParsedChart> = Vec::new();
+        {
+            let resolver = ModelSheetResolver { model: &model };
+            // Snapshot (sheet_id, part_name) so we don't borrow `bindings`
+            // while reading the container.
+            let ws_for_charts: Vec<(SheetId, String)> = bindings
+                .iter()
+                .map(|b| (b.sheet_id, b.part_name.clone()))
+                .collect();
+            for (host_sheet, ws_part) in ws_for_charts {
+                let ws_rels_part = rels_part_for(&ws_part);
+                let Some(ws_rels_bytes) = container.part(&ws_rels_part).map(|p| p.bytes().to_vec())
+                else {
+                    continue;
+                };
+                let ws_rels = Relationships::parse(&ws_rels_bytes)?;
+                let ws_base = part_dir(&ws_part);
+                for drawing_rel in ws_rels.all_of_type(REL_DRAWING) {
+                    let drawing_part = resolve_target(&ws_base, &drawing_rel.target);
+                    let drawing_rels_part = rels_part_for(&drawing_part);
+                    let Some(dr_bytes) = container
+                        .part(&drawing_rels_part)
+                        .map(|p| p.bytes().to_vec())
+                    else {
+                        continue;
+                    };
+                    let dr_rels = Relationships::parse(&dr_bytes)?;
+                    let dr_base = part_dir(&drawing_part);
+                    for chart_rel in dr_rels.all_of_type(REL_CHART) {
+                        let chart_part = resolve_target(&dr_base, &chart_rel.target);
+                        if let Some(chart_bytes) =
+                            container.part(&chart_part).map(|p| p.bytes().to_vec())
+                        {
+                            // A malformed chart part is skipped (preservation-
+                            // safe: its bytes still round-trip).
+                            if let Ok(parsed) =
+                                parts::chart::parse(&chart_bytes, host_sheet, &resolver)
+                            {
+                                charts.push(parsed);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 5. Promote the understood parts so the writer can distinguish
@@ -268,6 +387,9 @@ impl XlsxDocument {
             model,
             formula_texts,
             visual_styles,
+            dxfs,
+            conditional_formats,
+            charts,
             container,
             bindings,
         })
@@ -307,6 +429,21 @@ impl XlsxDocument {
                 .parts
                 .iter()
                 .any(|p| matches!(p, PartEntry::Modeled { dirty: true, .. }))
+    }
+
+    /// The conditional-format model for a sheet, lowered into the
+    /// `sheet-lower` mirror the lowering consumes (dxf overrides resolved
+    /// against the workbook `<dxfs>` table) — the cf analogue of
+    /// [`visual_styles`](Self::visual_styles). An empty
+    /// [`sheet_lower::SheetCondFmt`] for a sheet without conditional
+    /// formatting, so a caller can always pass the result to
+    /// `sheet_lower::lower_range_condfmt` (it reproduces the styled path when
+    /// empty). M2 conditional-formatting track, spec §10.4.
+    pub fn lowered_conditional_formats(&self, sheet: SheetId) -> sheet_lower::SheetCondFmt {
+        match self.conditional_formats.get(&sheet) {
+            Some(cf) => cf.to_lower(&self.dxfs),
+            None => sheet_lower::SheetCondFmt::default(),
+        }
     }
 
     /// The worksheet part name bound to a model sheet (test/consumer helper).

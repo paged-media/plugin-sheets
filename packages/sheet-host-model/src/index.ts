@@ -61,3 +61,18 @@ export {
   type GridSvgOptions,
   type GridViewport,
 } from "./grid";
+
+export {
+  chartGeometryToMutations,
+  type ChartGeometry,
+  type ChartLowerResult,
+  type ChartPlacement,
+  type ChartPrimitive,
+  type ChartTextLabel,
+  type LinePrim,
+  type PolygonPrim,
+  type RectPrim,
+  type TextAnchor,
+  type TextPrim,
+  type WedgePrim,
+} from "./chart";

@@ -29,6 +29,7 @@
     "commands": [
       "media.paged.sheet.command.importXlsx",
       "media.paged.sheet.command.lowerToFrame",
+      "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid"
     ]
   }

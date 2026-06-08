@@ -72,12 +72,13 @@ describe("sheet_plugin_bundle_activate", () => {
     expect(fake.panels[1].defaultDock).toBe("right");
   });
 
-  it("registers the three commands under their declared ids", () => {
+  it("registers the four commands under their declared ids", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     expect(fake.commands.map((c) => c.id)).toEqual([
       "media.paged.sheet.command.importXlsx",
       "media.paged.sheet.command.lowerToFrame",
+      "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid",
     ]);
   });

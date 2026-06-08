@@ -13,7 +13,11 @@ import type {
   MutationOutcome,
 } from "@paged-media/plugin-api";
 
-import { lowerSelectionToFrame, type SheetEngine } from "../src";
+import {
+  lowerChartToFrame,
+  lowerSelectionToFrame,
+  type SheetEngine,
+} from "../src";
 
 // A fake engine: returns a fixed 2x1 region + one sheet.
 function fakeEngine(): SheetEngine {
@@ -49,6 +53,8 @@ function fakeEngine(): SheetEngine {
     }),
     setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 1, cols: 2 }],
+    listCharts: () => [],
+    getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
   };
 }
@@ -164,5 +170,62 @@ describe("sheet_plugin_lower_mutations: two-phase host flow", () => {
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
     expect(id).toBeNull();
     expect(mutations.map((m) => m.op)).toEqual(["batch"]);
+  });
+});
+
+// ── chart → paged.draw vector lower (M2 charts track, spec §8.4) ────────────
+
+/** A fake engine with one parsed chart + a fixed geometry IR (a column with
+ *  one bar Rect and a title Text). */
+function fakeChartEngine(): SheetEngine {
+  const base = fakeEngine();
+  return {
+    ...base,
+    listCharts: () => [
+      { index: 0, hostSheet: 0, kind: "column", title: "Q1", seriesCount: 1 },
+    ],
+    getChartGeometry: () => ({
+      widthPt: 200,
+      heightPt: 150,
+      prims: [
+        { kind: "rect", x: 10, y: 20, w: 30, h: 80, fill: "#4E79A7", stroke: null, strokeW: 0 },
+        { kind: "text", x: 100, y: 10, s: "Q1", sizePt: 10, anchor: "middle" },
+      ],
+    }),
+  };
+}
+
+describe("sheet_chart_lower_paged_draw: bundle two-phase flow", () => {
+  it("phase 1 emits the vector batch (insertPath) then pours each label", async () => {
+    const { host, mutations, selections } = fakeHost(CREATED, "Story/u9");
+    const ok = await lowerChartToFrame(host, fakeChartEngine(), 0);
+
+    expect(ok).toBe(true);
+    // Phase 1 — one batch with insertPath (the rect) + insertTextFrame (the
+    // label) + the binding metadata.
+    expect(mutations[0].op).toBe("batch");
+    const ops = (mutations[0] as { args: { ops: Array<{ op: string }> } }).args
+      .ops;
+    expect(ops.some((o) => o.op === "insertPath")).toBe(true);
+    expect(ops.some((o) => o.op === "insertTextFrame")).toBe(true);
+    expect(ops[ops.length - 1].op).toBe("setPluginMetadata");
+    // Phase 2 — the label text poured into the resolved story.
+    const pour = mutations.find((m) => m.op === "insertText") as {
+      args: { text: string };
+    };
+    expect(pour.args.text).toBe("Q1");
+    // The created element is selected.
+    expect(selections).toEqual([[CREATED]]);
+  });
+
+  it("returns false for a chartless workbook (no engine charts)", async () => {
+    const { host, mutations } = fakeHost(CREATED, "Story/u9");
+    const empty: SheetEngine = {
+      ...fakeEngine(),
+      getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
+    };
+    const ok = await lowerChartToFrame(host, empty, 0);
+    expect(ok).toBe(false); // empty geometry => nothing lowered
+    expect(mutations).toEqual([]);
   });
 });

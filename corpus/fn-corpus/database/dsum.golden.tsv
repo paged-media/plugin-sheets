@@ -1,0 +1,15 @@
+# sheet.fn.database.dsum golden corpus (spec §7, §11 T2; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   id        unique case id (free text).
+#   formula   the cell formula under test (entered at Z99, clear of the setup).
+#   setup     ';'-separated 'Cell=Literal' assignments seeding the sheet.
+#   expected  the General-formatted result, or an error literal.
+# DSUM(database, field, criteria): sum of the field over records matching the
+# criteria. database A1:D6 = (Tree, Height, Age, Yield) + 5 records. Criteria
+# tables live in F:G. field by header label OR 1-based column number.
+sum-by-header	=DSUM(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Apple	24
+sum-by-number	=DSUM(A1:D6,4,F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Apple	24
+sum-all-records	=DSUM(A1:D6,"Yield",F1:F1)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree	51
+sum-and-within-row	=DSUM(A1:D6,"Yield",F1:G2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;G1=Height;F2=Apple;G2=>15	14
+sum-or-across-rows	=DSUM(A1:D6,"Yield",F1:F3)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Apple;F3=Cherry	33
+sum-numeric-criterion	=DSUM(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Age;F2=>=14	33

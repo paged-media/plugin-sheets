@@ -192,6 +192,13 @@ impl VisualStyles {
 /// resolver's input). Field-for-field; this is the only place the two mirror
 /// types meet (see the crate `Cargo.toml` note on the `sheet-lower` dep).
 impl VisualStyle {
+    /// Public alias of [`to_attrs`](Self::to_attrs) for callers that resolve a
+    /// `<dxf>` override into the lowering's [`sheet_lower::VisualAttrs`] (the
+    /// conditional-formatting bridge, `conditional_format::to_lower`).
+    pub fn to_lower_attrs(&self) -> sheet_lower::VisualAttrs {
+        self.to_attrs()
+    }
+
     fn to_attrs(&self) -> sheet_lower::VisualAttrs {
         sheet_lower::VisualAttrs {
             bold: self.bold,
@@ -227,6 +234,13 @@ pub struct ParsedStyles {
     /// The interpreted visual model (M1 style-map track), keyed by the
     /// resolved `StyleId`. Empty for an unstyled workbook.
     pub visual: VisualStyles,
+    /// The differential-format table (`<dxfs>`, ECMA-376 §18.8.15), indexed
+    /// by `dxfId` (the index a `cfRule dxfId=` references; M2 conditional-
+    /// formatting track, spec §10.4). Each entry is the OVERRIDE a matched
+    /// conditional-format rule applies on top of the cell's base style —
+    /// bold/italic + an explicit font/fill colour. Empty when the workbook
+    /// has no conditional formatting (or no `<dxfs>`).
+    pub dxfs: Vec<VisualStyle>,
 }
 
 /// Parse `styles.xml`, interning each `cellXfs` entry into `styles` AND
@@ -264,10 +278,39 @@ pub fn parse(xml: &[u8], styles: &mut StyleTable) -> Result<ParsedStyles, XlsxEr
         visual.insert(id, vs);
     }
 
+    // The differential-format (`<dxfs>`) table for conditional formatting. A
+    // `<dxf>` is NOT a base style: each facet PRESENT is an override (no
+    // `apply*` flags, no default-font folding — `<dxf>` only ever carries the
+    // attributes the rule changes). Resolved into the same host-ready
+    // `VisualStyle` shape so the lowering layers it on the base style.
+    let dxfs = parsed.dxfs.iter().map(dxf_visual).collect();
+
     Ok(ParsedStyles {
         xf_to_style,
         visual,
+        dxfs,
     })
+}
+
+/// Build a [`VisualStyle`] OVERRIDE from one parsed `<dxf>`. Unlike a base
+/// `cellXfs` entry, every facet PRESENT in the `<dxf>` is an override the rule
+/// applies (a `<dxf>` carries only the changed attributes); there is no
+/// default-font folding or `apply*` suppression (ECMA-376 §18.8.14, `dxf`).
+fn dxf_visual(d: &DxfRec) -> VisualStyle {
+    VisualStyle {
+        bold: d.font.as_ref().map(|f| f.bold).unwrap_or(false),
+        italic: d.font.as_ref().map(|f| f.italic).unwrap_or(false),
+        // A `<dxf>` font rarely restates size/name (it overrides emphasis +
+        // colour); carry them when present so an explicit size/name applies.
+        font_size_pt: d.font.as_ref().and_then(|f| f.size_pt),
+        font_name: d.font.as_ref().and_then(|f| f.name.clone()),
+        fill_rgb: d.fill.as_ref().and_then(|f| f.fg_rgb.clone()),
+        text_rgb: d.font.as_ref().and_then(|f| f.color.clone()),
+        border_top: d.border.as_ref().map(|b| b.top).unwrap_or(false),
+        border_right: d.border.as_ref().map(|b| b.right).unwrap_or(false),
+        border_bottom: d.border.as_ref().map(|b| b.bottom).unwrap_or(false),
+        border_left: d.border.as_ref().map(|b| b.left).unwrap_or(false),
+    }
 }
 
 /// Build a [`VisualStyle`] for one `cellXfs` entry by resolving its
@@ -333,6 +376,20 @@ struct RawStyles {
     fills: Vec<FillRec>,
     borders: Vec<BorderRec>,
     xfs: Vec<XfRow>,
+    /// The `<dxfs>` differential formats, in `dxfId` order (M2 cond-fmt).
+    dxfs: Vec<DxfRec>,
+}
+
+/// One `<dxf>` (a differential format, ECMA-376 §18.8.14): the font/fill/
+/// border facets a conditional-format rule overrides. Each child is optional;
+/// only the present facets are overrides. The fill colour comes from
+/// `<patternFill><bgColor>` (the dxf convention), unlike a `cellXfs` solid
+/// fill which uses `<fgColor>` — both are accepted here (bgColor wins).
+#[derive(Default)]
+struct DxfRec {
+    font: Option<FontRec>,
+    fill: Option<FillRec>,
+    border: Option<BorderRec>,
 }
 
 /// One `<font>`: emphasis, point size, name, and resolved colour.
@@ -425,14 +482,21 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
     let mut fills: Vec<FillRec> = Vec::new();
     let mut borders: Vec<BorderRec> = Vec::new();
     let mut xfs: Vec<XfRow> = Vec::new();
+    let mut dxfs: Vec<DxfRec> = Vec::new();
 
     // Section flags. `<xf>` appears in both `<cellXfs>` and `<cellStyleXfs>`;
     // we only model the former. `<color>` appears inside fonts AND borders, so
-    // we track which sub-table we are inside to route it correctly.
+    // we track which sub-table we are inside to route it correctly. `<font>`/
+    // `<fill>`/`<border>` ALSO appear inside `<dxfs>` -> `<dxf>`; `in_dxfs`
+    // routes a completed record into the current dxf instead of the global
+    // table (M2 conditional-formatting track).
     let mut in_cell_xfs = false;
     let mut in_fonts = false;
     let mut in_fills = false;
     let mut in_borders = false;
+    let mut in_dxfs = false;
+    // The dxf currently being built (Some inside a `<dxf>`).
+    let mut cur_dxf: Option<DxfRec> = None;
     // The font/fill/border currently being built (None when between records).
     let mut cur_font: Option<FontRec> = None;
     let mut cur_fill: Option<FillRec> = None;
@@ -450,14 +514,25 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     b"fills" => in_fills = true,
                     b"borders" => in_borders = true,
                     b"cellXfs" => in_cell_xfs = true,
-                    b"font" if in_fonts => cur_font = Some(FontRec::default()),
-                    b"fill" if in_fills => {
+                    b"dxfs" => in_dxfs = true,
+                    b"dxf" if in_dxfs => cur_dxf = Some(DxfRec::default()),
+                    // A `<dxf>` child font/fill/border starts a fresh record
+                    // (routed into `cur_dxf` on its End). Inside a dxf, a fill
+                    // with NO patternType still carries a colour via <bgColor>
+                    // (the dxf convention), so default `fill_is_solid` true.
+                    b"font" if in_fonts || cur_dxf.is_some() => cur_font = Some(FontRec::default()),
+                    b"fill" if in_fills || cur_dxf.is_some() => {
                         cur_fill = Some(FillRec::default());
-                        fill_is_solid = false;
+                        fill_is_solid = !in_fills; // dxf fills colour without "solid"
                     }
-                    b"border" if in_borders => cur_border = Some(BorderRec::default()),
+                    b"border" if in_borders || cur_dxf.is_some() => {
+                        cur_border = Some(BorderRec::default())
+                    }
                     b"patternFill" if cur_fill.is_some() => {
-                        fill_is_solid = attr(&e, b"patternType")?.as_deref() == Some("solid");
+                        // A dxf patternFill MAY omit patternType but still set a
+                        // bgColor; keep "solid-or-dxf" truthy so the colour is read.
+                        let solid = attr(&e, b"patternType")?.as_deref() == Some("solid");
+                        fill_is_solid = solid || cur_dxf.is_some();
                     }
                     // `<color>` with children is rare but legal; treat as empty.
                     b"color" if cur_font.is_some() => {
@@ -493,11 +568,22 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     }
                     // Fill: an empty solid patternFill has no fgColor child.
                     b"patternFill" if cur_fill.is_some() => {
-                        fill_is_solid = attr(&e, b"patternType")?.as_deref() == Some("solid");
+                        let solid = attr(&e, b"patternType")?.as_deref() == Some("solid");
+                        fill_is_solid = solid || cur_dxf.is_some();
                     }
                     b"fgColor" if cur_fill.is_some() && fill_is_solid => {
                         if let Some(fill) = cur_fill.as_mut() {
                             fill.fg_rgb = resolve_color(&e)?;
+                        }
+                    }
+                    // A dxf solid fill carries its colour in <bgColor> (the
+                    // dxf convention; ECMA-376 §18.8.20). Only read it inside a
+                    // dxf and only if a fgColor has not already set the colour.
+                    b"bgColor" if cur_fill.is_some() && cur_dxf.is_some() => {
+                        if let Some(fill) = cur_fill.as_mut() {
+                            if fill.fg_rgb.is_none() {
+                                fill.fg_rgb = resolve_color(&e)?;
+                            }
                         }
                     }
                     // Border edges (empty-tag forms: <top/> <left/> with an
@@ -523,19 +609,36 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                 b"fills" => in_fills = false,
                 b"borders" => in_borders = false,
                 b"cellXfs" => in_cell_xfs = false,
+                b"dxfs" => in_dxfs = false,
+                b"dxf" => {
+                    if let Some(d) = cur_dxf.take() {
+                        dxfs.push(d);
+                    }
+                }
+                // A completed font/fill/border routes into the current dxf when
+                // inside one, else into the global sub-table.
                 b"font" => {
                     if let Some(f) = cur_font.take() {
-                        fonts.push(f);
+                        match cur_dxf.as_mut() {
+                            Some(d) => d.font = Some(f),
+                            None => fonts.push(f),
+                        }
                     }
                 }
                 b"fill" => {
                     if let Some(f) = cur_fill.take() {
-                        fills.push(f);
+                        match cur_dxf.as_mut() {
+                            Some(d) => d.fill = Some(f),
+                            None => fills.push(f),
+                        }
                     }
                 }
                 b"border" => {
                     if let Some(b) = cur_border.take() {
-                        borders.push(b);
+                        match cur_dxf.as_mut() {
+                            Some(d) => d.border = Some(b),
+                            None => borders.push(b),
+                        }
                     }
                 }
                 _ => {}
@@ -552,6 +655,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
         fills,
         borders,
         xfs,
+        dxfs,
     })
 }
 
@@ -799,6 +903,76 @@ mod tests {
         let p = parse(xml, &mut st).unwrap();
         // applyFont="0" suppresses the font facet → visually default.
         assert!(p.visual.get(p.xf_to_style[0]).is_none());
+    }
+
+    #[test]
+    fn parse_dxfs_for_conditional_formatting() {
+        // `<dxfs>` is the differential-format table a cfRule dxfId references.
+        // dxf 0: bold + red text + yellow fill (bgColor, the dxf convention).
+        // dxf 1: italic only. Each PRESENT facet is an override (no apply* /
+        // default-font folding — a dxf carries only what the rule changes).
+        let xml = br#"<?xml version="1.0"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+  <borders count="1"><border/></borders>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+  <dxfs count="2">
+    <dxf>
+      <font><b/><color rgb="FFFF0000"/></font>
+      <fill><patternFill><bgColor rgb="FFFFFF00"/></patternFill></fill>
+    </dxf>
+    <dxf>
+      <font><i/></font>
+    </dxf>
+  </dxfs>
+</styleSheet>"#;
+        let mut st = StyleTable::new();
+        let p = parse(xml, &mut st).unwrap();
+        assert_eq!(p.dxfs.len(), 2);
+
+        // dxf 0 — bold + red text + yellow fill, nothing else.
+        let d0 = &p.dxfs[0];
+        assert!(d0.bold);
+        assert!(!d0.italic);
+        assert_eq!(d0.text_rgb.as_deref(), Some("#FF0000"));
+        assert_eq!(d0.fill_rgb.as_deref(), Some("#FFFF00"));
+        assert_eq!(d0.font_size_pt, None);
+        assert!(!d0.border_top);
+
+        // dxf 1 — italic only.
+        let d1 = &p.dxfs[1];
+        assert!(d1.italic);
+        assert!(!d1.bold);
+        assert_eq!(d1.fill_rgb, None);
+        assert_eq!(d1.text_rgb, None);
+    }
+
+    #[test]
+    fn dxf_solid_fill_fgcolor_also_accepted() {
+        // Some writers use <fgColor> in a dxf fill; accept it too.
+        let xml = br#"<?xml version="1.0"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+  <dxfs count="1">
+    <dxf><fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill></dxf>
+  </dxfs>
+</styleSheet>"#;
+        let mut st = StyleTable::new();
+        let p = parse(xml, &mut st).unwrap();
+        assert_eq!(p.dxfs.len(), 1);
+        assert_eq!(p.dxfs[0].fill_rgb.as_deref(), Some("#00FF00"));
+    }
+
+    #[test]
+    fn no_dxfs_yields_empty_table() {
+        let xml = br#"<?xml version="1.0"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+</styleSheet>"#;
+        let mut st = StyleTable::new();
+        let p = parse(xml, &mut st).unwrap();
+        assert!(p.dxfs.is_empty());
     }
 
     #[test]

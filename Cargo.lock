@@ -618,6 +618,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sheet-calc",
+ "sheet-chart",
  "sheet-core",
  "sheet-fn",
  "sheet-format",
@@ -681,6 +682,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "sheet-calc",
+ "sheet-chart",
  "sheet-core",
  "sheet-fn",
  "sheet-format",
@@ -719,6 +721,7 @@ version = "0.0.0"
 dependencies = [
  "compact_str",
  "quick-xml",
+ "sheet-chart",
  "sheet-core",
  "sheet-lower",
  "thiserror",

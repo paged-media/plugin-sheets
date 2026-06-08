@@ -38,11 +38,12 @@
 use std::collections::BTreeSet;
 
 use sheet_calc::{Engine, EngineConfig};
-use sheet_core::{parse_a1, CellValue, DateSystem, SheetId, SheetModel};
+use sheet_chart::{generate as generate_chart, ChartGeometry, PlotData};
+use sheet_core::{parse_a1, CellValue, DateSystem, RangeRef, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
 use sheet_lower::{lower_range, CellRange, ViewOptions};
 use sheet_parser::{parse, print, ParseCtx, SheetNames};
-use sheet_xlsx::XlsxDocument;
+use sheet_xlsx::{XlsxChart, XlsxDocument};
 
 // ─────────────────────────────────────────── serde wire structs (camelCase)
 
@@ -83,6 +84,22 @@ pub struct SheetInfo {
     pub name: String,
     pub rows: u32,
     pub cols: u32,
+}
+
+/// One chart in the workbook (M2 charts track, spec §8.4) for the panel's
+/// chart list. `index` is the position in the engine's parsed-chart vector (the
+/// handle [`SheetSession::get_chart_geometry`] takes); `hostSheet` is the model
+/// sheet the chart is anchored to; `kind`/`title`/`seriesCount` summarize it.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartInfo {
+    pub index: u32,
+    pub host_sheet: u16,
+    /// The lowercase kind tag (`"column"`, `"bar"`, `"line"`, `"area"`,
+    /// `"pie"`, `"donut"`, `"scatter"`) — the geometry generator's tag space.
+    pub kind: &'static str,
+    pub title: Option<String>,
+    pub series_count: u32,
 }
 
 /// Workbook metadata for the panel (`dateSystem`/`unparsedFormulas`/`dirty`).
@@ -559,6 +576,69 @@ impl SheetSession {
             .collect()
     }
 
+    /// Enumerate the workbook's parsed charts (M2 charts track, spec §8.4):
+    /// index (the [`get_chart_geometry`](Self::get_chart_geometry) handle), host
+    /// sheet, kind, title, and series count. Empty for a workbook with no
+    /// charts. The charts were parsed from the XLSX `xl/charts/chartN.xml` parts
+    /// on load (`sheet_xlsx::XlsxDocument::charts`); the parts stay opaque /
+    /// round-trip-preserved.
+    pub fn list_charts(&self) -> Vec<ChartInfo> {
+        self.doc
+            .charts
+            .iter()
+            .enumerate()
+            .map(|(i, c)| ChartInfo {
+                index: i as u32,
+                host_sheet: c.host_sheet,
+                kind: chart_kind_tag(c.model.kind),
+                title: c.model.title.as_ref().map(|t| t.to_string()),
+                series_count: c.model.series.len() as u32,
+            })
+            .collect()
+    }
+
+    /// Resolve a parsed chart's series ranges to [`PlotData`] against the LIVE
+    /// model (so the geometry is live to recalculation — spec §8.4) and call the
+    /// PURE `sheet_chart::generate` for a `w_pt × h_pt` content box. `chart_index`
+    /// is an index into [`list_charts`](Self::list_charts); an OOB index is a
+    /// boundary error (finding-2 discipline, matching `set_cell`). The returned
+    /// [`ChartGeometry`] is the same IR the page-surface paged.draw lowering AND
+    /// the grid view consume — one generator, two projections.
+    pub fn get_chart_geometry(
+        &self,
+        chart_index: u32,
+        w_pt: f64,
+        h_pt: f64,
+    ) -> Result<ChartGeometry, SessionError> {
+        let chart: &XlsxChart = self.doc.charts.get(chart_index as usize).ok_or_else(|| {
+            SessionError(format!(
+                "chart index {chart_index} out of range ({} charts)",
+                self.doc.charts.len()
+            ))
+        })?;
+        let model = self.engine.as_ref().expect("engine present").model();
+
+        // Resolve each series' values range to a numeric vector, and the shared
+        // category labels from the FIRST series that carries a category range.
+        let mut data = PlotData::default();
+        for series in &chart.model.series {
+            data.series.push(resolve_values(model, &series.values));
+        }
+        if let Some(cat_ref) = chart
+            .model
+            .series
+            .iter()
+            .find_map(|s| s.categories.as_ref())
+        {
+            let ctx = FormatCtx {
+                date_system: model.calc.date_system,
+            };
+            data.categories = resolve_labels(model, cat_ref, &ctx);
+        }
+
+        Ok(generate_chart(&chart.model, &data, w_pt, h_pt))
+    }
+
     /// Workbook metadata for the panel.
     pub fn metadata(&self) -> Metadata {
         let model = self.engine.as_ref().expect("engine present").model();
@@ -618,6 +698,71 @@ fn cell_display(
         Ok(fmt) => sheet_format::format_value(&cell.value, fmt, ctx),
         Err(_) => sheet_format::format_general(&cell.value),
     }
+}
+
+/// The lowercase kind tag for a [`sheet_chart::model::ChartKind`] — the same
+/// space the geometry IR's `Primitive` tags / the registry use.
+fn chart_kind_tag(kind: sheet_chart::model::ChartKind) -> &'static str {
+    use sheet_chart::model::ChartKind::*;
+    match kind {
+        Column => "column",
+        Bar => "bar",
+        Line => "line",
+        Area => "area",
+        Pie => "pie",
+        Donut => "donut",
+        Scatter => "scatter",
+    }
+}
+
+/// Resolve a series' values [`RangeRef`] to a numeric vector against the LIVE
+/// model (chart geometry is live to recalc — spec §8.4). Cells iterate in
+/// natural order (row-major), so a column range `$B$2:$B$4` and a row range
+/// `$B$2:$D$2` both yield their values left-to-right / top-to-bottom. A numeric
+/// cell contributes its value; a bool contributes 0/1; empty / text / error
+/// cells contribute 0.0 (the publishing reading — a gap in a chart is a zero,
+/// never a panic).
+fn resolve_values(model: &SheetModel, range: &RangeRef) -> Vec<f64> {
+    let r = range.normalized();
+    let sheet = r.start.sheet;
+    let mut out = Vec::new();
+    for row in r.start.row..=r.end.row {
+        for col in r.start.col..=r.end.col {
+            let v = model
+                .sheet(sheet)
+                .and_then(|ws| ws.cell(row, col))
+                .map(|c| match &c.value {
+                    CellValue::Number(n) => *n,
+                    CellValue::Bool(b) => {
+                        if *b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    _ => 0.0,
+                })
+                .unwrap_or(0.0);
+            out.push(v);
+        }
+    }
+    out
+}
+
+/// Resolve a category [`RangeRef`] to formatted label strings against the live
+/// model (the category axis shows the cells' DISPLAY text — spec §9, the same
+/// formatting the grid / page lower use). Empty cells become empty labels.
+fn resolve_labels(model: &SheetModel, range: &RangeRef, ctx: &FormatCtx) -> Vec<String> {
+    let r = range.normalized();
+    let sheet = r.start.sheet;
+    let mut cache = FormatCache::default();
+    let mut out = Vec::new();
+    for row in r.start.row..=r.end.row {
+        for col in r.start.col..=r.end.col {
+            out.push(cell_display(model, sheet, row, col, &mut cache, ctx));
+        }
+    }
+    out
 }
 
 /// Parse a range string (`"A1:D9"` or a single cell `"A1"`) into a

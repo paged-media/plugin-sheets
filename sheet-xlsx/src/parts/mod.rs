@@ -16,6 +16,8 @@
 //! `sheetN.xml`, `sharedStrings.xml`, `styles.xml`. Each module is a pure
 //! parser (bytes -> a parsed struct); the writer re-encodes from the model.
 
+pub mod chart;
+pub mod conditional_format;
 pub mod shared_strings;
 pub mod styles;
 pub mod tables;

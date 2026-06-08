@@ -1,0 +1,12 @@
+# ROMAN(number, [form]) -> classic roman-numeral text (T2 renders classic for
+# any form 0-4). 0 -> "" ; non-integer truncates; negative/>3999 -> #VALUE!.
+# The General projection of a Text result is the text itself.
+# id<TAB>formula<TAB>setup<TAB>expected
+one	=ROMAN(1)	-	I
+four	=ROMAN(4)	-	IV
+forty-nine	=ROMAN(49)	-	XLIX
+year	=ROMAN(1994)	-	MCMXCIV
+max-domain	=ROMAN(3999)	-	MMMCMXCIX
+zero-empty	=ROMAN(0)	-	
+form-classic	=ROMAN(4,0)	-	IV
+out-of-domain	=ROMAN(4000)	-	#VALUE!

@@ -40,3 +40,7 @@ pub mod lookup2;
 pub mod math2;
 pub mod stat;
 pub mod text2;
+
+// M2 T2 families.
+pub mod database;
+pub mod t2misc;

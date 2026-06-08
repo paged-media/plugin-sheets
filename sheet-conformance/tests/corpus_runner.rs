@@ -333,6 +333,16 @@ fn sheet_calc_corpus_lookup2() {
     run_family("lookup2");
 }
 
+#[test]
+fn sheet_calc_corpus_database() {
+    run_family("database");
+}
+
+#[test]
+fn sheet_calc_corpus_t2misc() {
+    run_family("t2misc");
+}
+
 #[cfg(test)]
 mod unit {
     use super::*;

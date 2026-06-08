@@ -4,48 +4,56 @@
 # supported rule kinds lower into per-cell style overrides; unsupported kinds
 # (iconset) stay at the `preserved` floor.
 #
-# STATUS: planned — the M2 conditional-formatting track wires the cfRule parser,
-# the rule evaluators, and the lowering into the §8.3 document-style override
-# mechanism, then flips these rows. The §8.3 principle holds: CF results lower as
-# constrained local overrides, visually flagged off-style in the grid.
+# STATUS: M2 conditional-formatting track LANDED for the dxf-painting + scale +
+# preserve-floor subset. The cfRule parser, the value-comparison/colour-scale
+# evaluators, and the §8.3 document-style override lowering ship; the dxf table
+# parses from `<dxfs>`. The §8.3 principle holds: CF results lower as
+# constrained local overrides. STILL planned: the dataBar drawn-rect GEOMETRY
+# (the bar lowers on the page-draw track, not the style path — preserve floor
+# only for now); arbitrary `expression` predicates needing a formula evaluator
+# (DEFERRED — lowering is pure, no sheet-calc dep; only reducible
+# `cell <op> literal` forms lower).
 
 - id: sheet.xlsx.conditional-formatting
   title: XLSX conditionalFormatting / cfRule parse + preserve (round-trip safe even for unsupported rule kinds)
-  tier: planned
-  status: planned
-  provenance: ["ECMA-376 §18.3.1.18 (conditionalFormatting), §18.3.1.10 (cfRule)", "spec §10.4 (targets rendered in T2)"]
+  tier: rendered
+  status: implemented
+  ruling: "ADDITIVE parse: the worksheet still captures the conditionalFormatting subtree verbatim (preserve.rs) — it round-trips byte-identical — AND the cf model is parsed alongside for lowering (read-only derived state, never written back), exactly the VisualStyles discipline. The dxf table parses from styles.xml `<dxfs>` (bgColor fill convention)."
+  provenance: ["ECMA-376 §18.3.1.18 (conditionalFormatting), §18.3.1.10 (cfRule)", "ECMA-376 §18.8.14-15 (dxf/dxfs)", "spec §10.4 (targets rendered in T2)"]
   tests:
     rust: ["sheet-conformance/tests/condfmt.rs::sheet_xlsx_conditional_formatting"]
 
 - id: sheet.lower.condfmt.cfrule-parse
   title: cfRule model — parse the rule type, priority, dxf style, and formula/operator operands
-  tier: planned
-  status: planned
+  tier: implemented
+  status: implemented
+  ruling: "cellIs operands parse as numeric literals (a non-numeric operand makes the rule inert in T2, preserve-only); `expression` reduces to `cell <op> literal` when possible, else ExpressionUnsupported (DEFERRED — no formula evaluator in pure lowering); priority absent sorts last."
   provenance: ["ECMA-376 §18.3.1.10 (cfRule)", "spec §10.4"]
   tests:
     rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_cfrule_parse"]
 
 - id: sheet.lower.condfmt.cellis
   title: "cellIs rules (cell-value comparison: between/equal/greaterThan/...) -> per-cell style override"
-  tier: planned
-  status: planned
+  ruling: "cellIs + the reducible `expression` form lower to per-cell style overrides, evaluated against the cell's already-computed value (no formula eval). The lowest-priority matching dxf wins (ECMA-376 precedence). Non-numeric cells never match (T2 value-comparison subset)."
+  tier: implemented
+  status: implemented
   provenance: ["ECMA-376 §18.3.1.10 (cfRule type=cellIs)", "spec §8.3 style-override lowering"]
   tests:
     rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_cellis"]
 
 - id: sheet.lower.condfmt.colorscale
   title: "colorScale (2/3-color) -> per-cell fill override (T2: the interpolated color becomes a local fill override)"
-  ruling: "T2: a 2- or 3-color scale lowers to a per-cell fill override computed by interpolating the scale across the range's value domain (spec §8.3 — direct formatting as a constrained local override)."
-  tier: planned
-  status: planned
+  ruling: "T2: a 2- or 3-color scale lowers to a per-cell fill override computed by interpolating the scale across the range's value domain (spec §8.3 — direct formatting as a constrained local override). min/max cfvo endpoints derive from the range's numeric min/max; `num val` endpoints are absolute; per-channel linear lerp, rounded."
+  tier: implemented
+  status: implemented
   provenance: ["ECMA-376 §18.3.1.16 (colorScale)", "spec §8.3, §10.4"]
   tests:
     rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_colorscale"]
 
 - id: sheet.lower.condfmt.databar
   title: "dataBar -> a drawn rule/rect (T2: the bar lowers to a drawn rectangle in frame-content coordinates)"
-  ruling: "T2: a data bar lowers to a drawn rect (proportional to the cell value over the range domain) in frame-content coordinates, not a Unicode/text fake (spec §8.2 rules + §8.3)."
-  tier: planned
+  ruling: "T2 STATUS: dataBar is PARSED (min/max cfvo + bar colour) and round-trips; in the STYLE path it paints nothing (Preserved) — the proportional drawn-rect GEOMETRY belongs to the page-draw track (spec §8.2) and is NOT yet emitted. Honest floor: parsed + preserved, drawn-rect lowering still planned."
+  tier: preserved
   status: planned
   provenance: ["ECMA-376 §18.3.1.28 (dataBar)", "spec §8.2, §8.3, §10.4"]
   tests:
@@ -53,17 +61,18 @@
 
 - id: sheet.lower.condfmt.iconset
   title: "iconSet -> preserve-only (T2 floor: round-tripped, not interpreted/rendered)"
-  ruling: "T2 floor: icon sets are PRESERVED on round-trip but not rendered (no icon glyph asset pipeline in T2) — the honest fidelity ladder floor (spec §10.4), never a silent drop."
-  tier: planned
-  status: planned
+  ruling: "T2 floor: icon sets are PRESERVED on round-trip but not rendered (no icon glyph asset pipeline in T2) — the honest fidelity ladder floor (spec §10.4), never a silent drop. Parsed as IconSet (so a later tier can render it); lowers to Preserved (no style override)."
+  tier: preserved
+  status: implemented
   provenance: ["ECMA-376 §18.3.1.49 (iconSet)", "spec §10.4 (preserved floor)"]
   tests:
     rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_iconset"]
 
 - id: sheet.lower.condfmt.lower-to-style-override
   title: The shared lowering seam — a matched CF rule resolves to a constrained local style override (spec §8.3), visually flagged off-style in the grid
-  tier: planned
-  status: planned
+  ruling: "lower_range_condfmt folds the matched dxf/scale override onto the base style per cell; cells sharing a base StyleId but different cf outcomes get DISTINCT style_keys (what a StyleId-keyed resolver cannot express), identical outcomes dedup. An empty cf reproduces lower_range_styled exactly; output is deterministic (serde_json-byte-equal across runs)."
+  tier: implemented
+  status: implemented
   provenance: ["spec §8.3 (direct formatting lowers as constrained local overrides)"]
   tests:
     rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_lower_to_style_override"]

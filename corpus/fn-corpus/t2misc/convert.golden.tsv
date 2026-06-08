@@ -1,0 +1,13 @@
+# CONVERT(number, from_unit, to_unit) -> basic unit conversion. Length
+# (m/ft/in/mi/km), mass (g/kg/lbm), time (s/min/hr/day), temperature (C/F/K).
+# Units are case-sensitive. Unknown unit / cross-dimension -> #N/A.
+# id<TAB>formula<TAB>setup<TAB>expected
+km-to-m	=CONVERT(1,"km","m")	-	1000
+ft-to-in	=CONVERT(1,"ft","in")	-	12
+kg-to-g	=CONVERT(2,"kg","g")	-	2000
+hr-to-min	=CONVERT(2,"hr","min")	-	120
+day-to-hr	=CONVERT(1,"day","hr")	-	24
+c-to-f	=CONVERT(100,"C","F")	-	212
+c-to-k	=CONVERT(0,"C","K")	-	273.15
+cross-dimension	=CONVERT(1,"m","kg")	-	#N/A
+unknown-unit	=CONVERT(1,"furlong","m")	-	#N/A

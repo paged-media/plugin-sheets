@@ -164,6 +164,29 @@ mod wasm {
             to_js(&self.session.list_sheets()).unwrap_or(JsValue::NULL)
         }
 
+        /// Enumerate the workbook's charts (M2, spec §8.4):
+        /// `[{index,hostSheet,kind,title,seriesCount}]`.
+        pub fn list_charts(&self) -> JsValue {
+            to_js(&self.session.list_charts()).unwrap_or(JsValue::NULL)
+        }
+
+        /// Resolve chart `chart_index`'s series ranges against the live model
+        /// and generate its geometry IR for a `w_pt × h_pt` content box (the
+        /// same IR the page paged.draw lowering AND the grid view consume).
+        /// Returns `{widthPt,heightPt,prims:[...]}`. An OOB index errors.
+        pub fn get_chart_geometry(
+            &self,
+            chart_index: u32,
+            w_pt: f64,
+            h_pt: f64,
+        ) -> Result<JsValue, JsValue> {
+            let geom = self
+                .session
+                .get_chart_geometry(chart_index, w_pt, h_pt)
+                .map_err(map_err)?;
+            to_js(&geom)
+        }
+
         /// Workbook metadata (`{dateSystem,unparsedFormulas,dirty}`).
         pub fn metadata(&self) -> JsValue {
             to_js(&self.session.metadata()).unwrap_or(JsValue::NULL)

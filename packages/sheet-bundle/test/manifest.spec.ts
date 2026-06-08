@@ -37,6 +37,7 @@ describe("sheet_plugin_manifest_valid", () => {
     expect(manifest.contributes.commands).toEqual([
       "media.paged.sheet.command.importXlsx",
       "media.paged.sheet.command.lowerToFrame",
+      "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid",
     ]);
   });

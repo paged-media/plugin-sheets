@@ -33,6 +33,8 @@ CT_RELS = "application/vnd.openxmlformats-package.relationships+xml"
 CT_XML = "application/xml"
 CT_VML = "application/vnd.openxmlformats-officedocument.vmlDrawing"
 CT_TABLE = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"
+CT_DRAWING = "application/vnd.openxmlformats-officedocument.drawing+xml"
+CT_CHART = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
 
 RT_OFFICE_DOC = NS_R + "/officeDocument"
 RT_WORKSHEET = NS_R + "/worksheet"
@@ -40,6 +42,13 @@ RT_SHARED = NS_R + "/sharedStrings"
 RT_STYLES = NS_R + "/styles"
 RT_CALCCHAIN = NS_R + "/calcChain"
 RT_TABLE = NS_R + "/table"
+RT_DRAWING = NS_R + "/drawing"
+RT_CHART = NS_R + "/chart"
+
+# DrawingML chart namespaces.
+NS_C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+NS_XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 
 
 def write_zip(path, members):
@@ -120,8 +129,10 @@ def shared_strings(items):
     return s
 
 
-def styles(num_fmts=None, cell_xfs=None):
-    """num_fmts: list of (id, code). cell_xfs: list of dicts with numFmtId/fontId/fillId/borderId."""
+def styles(num_fmts=None, cell_xfs=None, dxfs=None):
+    """num_fmts: list of (id, code). cell_xfs: list of dicts with
+    numFmtId/fontId/fillId/borderId. dxfs: list of pre-rendered <dxf>...</dxf>
+    body strings (the differential formats a cfRule dxfId references)."""
     num_fmts = num_fmts or []
     cell_xfs = cell_xfs or [dict(numFmtId=0, fontId=0, fillId=0, borderId=0)]
     s = XML_DECL + f'<styleSheet xmlns="{NS_MAIN}">'
@@ -145,6 +156,11 @@ def styles(num_fmts=None, cell_xfs=None):
             f'fillId="{xf["fillId"]}" borderId="{xf["borderId"]}" xfId="0" applyNumberFormat="1"/>'
         )
     s += "</cellXfs>"
+    if dxfs:
+        s += f'<dxfs count="{len(dxfs)}">'
+        for body in dxfs:
+            s += body
+        s += "</dxfs>"
     s += "</styleSheet>"
     return s
 
@@ -446,6 +462,220 @@ def gen_07_tables():
     write_zip("07-tables.xlsx", members)
 
 
+def gen_08_condfmt():
+    """08: conditional formatting lowered to style overrides (spec §10.4, M2).
+    Sheet1 carries four cf blocks over distinct columns so each rule kind is
+    exercised independently:
+
+      A1:A5  cellIs greaterThan 5  -> dxf 0 (bold + red text + yellow fill)
+      B1:B5  expression  B1>100    -> dxf 1 (green fill)   [reducible form]
+      C1:C5  2-colour scale  white -> red   over the column's value domain
+      D1:D5  dataBar  (drawn-rect track; lowers to Preserved in the style path)
+      E1:E5  iconSet  (preserve-only T2 floor)
+
+    The <conditionalFormatting> children are unknown to the worksheet parser, so
+    they round-trip via the verbatim capture; the cf MODEL is parsed additively.
+    Values are chosen so specific cells match (A1=8>5, A3=10>5; B1=150>100)."""
+    rows = (
+        '<row r="1">'
+        '<c r="A1" t="n"><v>8</v></c>'
+        '<c r="B1" t="n"><v>150</v></c>'
+        '<c r="C1" t="n"><v>0</v></c>'
+        '<c r="D1" t="n"><v>10</v></c>'
+        '<c r="E1" t="n"><v>1</v></c>'
+        "</row>"
+        '<row r="2">'
+        '<c r="A2" t="n"><v>3</v></c>'
+        '<c r="B2" t="n"><v>50</v></c>'
+        '<c r="C2" t="n"><v>50</v></c>'
+        '<c r="D2" t="n"><v>40</v></c>'
+        '<c r="E2" t="n"><v>2</v></c>'
+        "</row>"
+        '<row r="3">'
+        '<c r="A3" t="n"><v>10</v></c>'
+        '<c r="B3" t="n"><v>200</v></c>'
+        '<c r="C3" t="n"><v>100</v></c>'
+        '<c r="D3" t="n"><v>70</v></c>'
+        '<c r="E3" t="n"><v>3</v></c>'
+        "</row>"
+        '<row r="4">'
+        '<c r="A4" t="n"><v>5</v></c>'
+        '<c r="B4" t="n"><v>99</v></c>'
+        '<c r="C4" t="n"><v>25</v></c>'
+        '<c r="D4" t="n"><v>20</v></c>'
+        '<c r="E4" t="n"><v>2</v></c>'
+        "</row>"
+        '<row r="5">'
+        '<c r="A5" t="n"><v>7</v></c>'
+        '<c r="B5" t="n"><v>120</v></c>'
+        '<c r="C5" t="n"><v>75</v></c>'
+        '<c r="D5" t="n"><v>90</v></c>'
+        '<c r="E5" t="n"><v>1</v></c>'
+        "</row>"
+    )
+    cf = (
+        '<conditionalFormatting sqref="A1:A5">'
+        '<cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>5</formula></cfRule>'
+        "</conditionalFormatting>"
+        '<conditionalFormatting sqref="B1:B5">'
+        '<cfRule type="expression" dxfId="1" priority="2"><formula>B1&gt;100</formula></cfRule>'
+        "</conditionalFormatting>"
+        '<conditionalFormatting sqref="C1:C5">'
+        '<cfRule type="colorScale" priority="3"><colorScale>'
+        '<cfvo type="min"/><cfvo type="max"/>'
+        '<color rgb="FFFFFFFF"/><color rgb="FFFF0000"/>'
+        "</colorScale></cfRule>"
+        "</conditionalFormatting>"
+        '<conditionalFormatting sqref="D1:D5">'
+        '<cfRule type="dataBar" priority="4"><dataBar>'
+        '<cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/>'
+        "</dataBar></cfRule>"
+        "</conditionalFormatting>"
+        '<conditionalFormatting sqref="E1:E5">'
+        '<cfRule type="iconSet" priority="5"><iconSet iconSet="3TrafficLights1">'
+        '<cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/>'
+        "</iconSet></cfRule>"
+        "</conditionalFormatting>"
+    )
+    # dxf 0: bold + red text + yellow fill (bgColor — the dxf convention).
+    # dxf 1: green fill.
+    dxfs = [
+        (
+            "<dxf>"
+            '<font><b/><color rgb="FFFF0000"/></font>'
+            '<fill><patternFill><bgColor rgb="FFFFFF00"/></patternFill></fill>'
+            "</dxf>"
+        ),
+        "<dxf><fill><patternFill><bgColor rgb="
+        '"FF00FF00"/></patternFill></fill></dxf>',
+    ]
+    sheet1 = ws("A1:E5", rows, extras_after=cf)
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+            ("/xl/styles.xml", CT_STYLES),
+        ])),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook([("Sheet1", 1, "rId1")])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+            ("rId2", RT_STYLES, "styles.xml"),
+        ])),
+        ("xl/styles.xml", styles(dxfs=dxfs)),
+        ("xl/worksheets/sheet1.xml", sheet1),
+    ]
+    write_zip("08-condfmt.xlsx", members)
+
+
+def gen_09_chart():
+    """09: a DrawingML chart (M2 charts track, spec §8.4). Sheet1!A1:B4 holds a
+    category column (A: Q1/Q2/Q3) + a value column (B: 10/20/30) with a header
+    row (A1=Region, B1=Revenue). The worksheet references a drawing via
+    <drawing r:id>; the drawing anchors a graphicFrame to chart1.xml; chart1.xml
+    is a column barChart with ONE series bound to Sheet1!$B$2:$B$4 (values) and
+    Sheet1!$A$2:$A$4 (categories), a cached series title 'Revenue', a series
+    fill (#3366CC), a chart title 'Q1 Revenue', and a legend. Exercises:
+    chart-part parse into ChartModel (kind/series/title/legend/color), the
+    worksheet→drawing→chart relationship chain, range-ref resolution, and
+    round-trip preservation of the OPAQUE drawing + chart parts (+ the captured
+    <drawing> worksheet child)."""
+    rows = (
+        '<row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>Region</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>Revenue</t></is></c>'
+        "</row>"
+        '<row r="2">'
+        '<c r="A2" t="inlineStr"><is><t>Q1</t></is></c>'
+        '<c r="B2" t="n"><v>10</v></c></row>'
+        '<row r="3">'
+        '<c r="A3" t="inlineStr"><is><t>Q2</t></is></c>'
+        '<c r="B3" t="n"><v>20</v></c></row>'
+        '<row r="4">'
+        '<c r="A4" t="inlineStr"><is><t>Q3</t></is></c>'
+        '<c r="B4" t="n"><v>30</v></c></row>'
+    )
+    # The worksheet's <drawing> child is unknown to the parser → captured
+    # verbatim (round-trips byte-identical).
+    drawing_ref = '<drawing r:id="rId1"/>'
+    sheet1 = ws("A1:B4", rows, extras_after=drawing_ref)
+    sheet1_rels = workbook_rels([("rId1", RT_DRAWING, "../drawings/drawing1.xml")])
+
+    # The drawing: a two-cell anchor holding a graphicFrame that references the
+    # chart part through the drawing's OWN rels (r:id rId1 → chart1.xml).
+    drawing1 = (
+        XML_DECL
+        + f'<xdr:wsDr xmlns:xdr="{NS_XDR}" xmlns:a="{NS_A}" xmlns:r="{NS_R}">'
+        "<xdr:twoCellAnchor>"
+        "<xdr:from><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff>"
+        "<xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        "<xdr:to><xdr:col>10</xdr:col><xdr:colOff>0</xdr:colOff>"
+        "<xdr:row>15</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>"
+        "<xdr:graphicFrame><xdr:nvGraphicFramePr>"
+        '<xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/>'
+        "</xdr:nvGraphicFramePr>"
+        "<xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm>"
+        '<a:graphic><a:graphicData uri="' + NS_C + '">'
+        f'<c:chart xmlns:c="{NS_C}" r:id="rId1"/>'
+        "</a:graphicData></a:graphic></xdr:graphicFrame>"
+        "<xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"
+    )
+    drawing1_rels = workbook_rels([("rId1", RT_CHART, "../charts/chart1.xml")])
+
+    # The chart: a column barChart, one series bound to Sheet1 ranges, a cached
+    # series title + color, a chart title, and a legend.
+    chart1 = (
+        XML_DECL
+        + f'<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}" xmlns:r="{NS_R}">'
+        "<c:chart>"
+        "<c:title><c:tx><c:rich><a:p><a:r><a:t>Q1 Revenue</a:t></a:r></a:p>"
+        "</c:rich></c:tx></c:title>"
+        "<c:plotArea>"
+        "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/>"
+        "<c:ser><c:idx val=\"0\"/><c:order val=\"0\"/>"
+        "<c:tx><c:strRef><c:f>Sheet1!$B$1</c:f>"
+        '<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Revenue</c:v></c:pt>'
+        "</c:strCache></c:strRef></c:tx>"
+        "<c:spPr><a:solidFill><a:srgbClr val=\"3366CC\"/></a:solidFill></c:spPr>"
+        "<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$4</c:f>"
+        '<c:strCache><c:ptCount val="3"/>'
+        '<c:pt idx="0"><c:v>Q1</c:v></c:pt>'
+        '<c:pt idx="1"><c:v>Q2</c:v></c:pt>'
+        '<c:pt idx="2"><c:v>Q3</c:v></c:pt></c:strCache></c:strRef></c:cat>'
+        "<c:val><c:numRef><c:f>Sheet1!$B$2:$B$4</c:f>"
+        '<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/>'
+        '<c:pt idx="0"><c:v>10</c:v></c:pt>'
+        '<c:pt idx="1"><c:v>20</c:v></c:pt>'
+        '<c:pt idx="2"><c:v>30</c:v></c:pt></c:numCache></c:numRef></c:val>'
+        "</c:ser>"
+        '<c:axId val="1"/><c:axId val="2"/>'
+        "</c:barChart>"
+        "</c:plotArea>"
+        '<c:legend><c:legendPos val="r"/></c:legend>'
+        "</c:chart></c:chartSpace>"
+    )
+
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+            ("/xl/drawings/drawing1.xml", CT_DRAWING),
+            ("/xl/charts/chart1.xml", CT_CHART),
+        ])),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook([("Sheet1", 1, "rId1")])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+        ])),
+        ("xl/worksheets/sheet1.xml", sheet1),
+        ("xl/worksheets/_rels/sheet1.xml.rels", sheet1_rels),
+        ("xl/drawings/drawing1.xml", drawing1),
+        ("xl/drawings/_rels/drawing1.xml.rels", drawing1_rels),
+        ("xl/charts/chart1.xml", chart1),
+    ]
+    write_zip("09-chart.xlsx", members)
+
+
 def main():
     gen_01_minimal()
     gen_02_formulas()
@@ -454,6 +684,8 @@ def main():
     gen_05_unknown_subtrees()
     gen_06_multisheet_1904()
     gen_07_tables()
+    gen_08_condfmt()
+    gen_09_chart()
 
 
 if __name__ == "__main__":

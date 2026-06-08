@@ -22,6 +22,11 @@ sheet-format = { path = "../sheet-format" }
 sheet-xlsx = { path = "../sheet-xlsx" }
 sheet-lower = { path = "../sheet-lower" }
 sheet-grid = { path = "../sheet-grid" }
+# The M2 charts track (spec §8.4): sheet-js resolves a parsed chart's series
+# RangeRefs to PlotData and calls the pure `sheet_chart::generate` to produce
+# the geometry IR that crosses the wasm door (the lowering / grid view consume
+# it). Pure leaf crate (deps = core+format), no SDK, no inter-plugin contact.
+sheet-chart = { path = "../sheet-chart" }
 serde.workspace = true
 # `zip` is already in the tree (sheet-xlsx); used here only to author the
 # embedded empty workbook for the `SheetEngine::new()` start-without-a-file path.

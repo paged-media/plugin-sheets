@@ -1,94 +1,109 @@
-# sheet.fn.* (T2/M2) — remaining publishing-relevant functions, family per fn.
-# A deliberately SMALL, honest seed (spec §11 T2 "remaining publishing-relevant
-# functions"); web/RTD functions are EXCLUDED by design (spec §1.1) so ENCODEURL
-# and friends are NOT here. Schema: see math.yaml.
+# sheet.fn.* (T2/M2) — remaining publishing-relevant misc functions, ONE family
+# module (`families/t2misc.rs`). A deliberately SMALL, honest seed (spec §11 T2
+# "remaining publishing-relevant functions"); web/RTD functions are EXCLUDED by
+# design (spec §1.1) so ENCODEURL and friends are NOT here. Schema: see math.yaml.
 #
-# STATUS: planned — the M2 publishing-functions track wires the kernels + tests
-# and flips these rows to implemented. Rust kernels land in their family's
-# source file (math2.rs / engineering, etc.); tests follow the family's existing
-# conformance file + the `sheet_fn_<family>_*` prefix convention.
+# STATUS: implemented by the M2 t2misc track. Kernels land in
+# `sheet-fn/src/families/t2misc.rs`; direct-dispatch tests in
+# `sheet-conformance/tests/fn_t2misc.rs` (prefix `sheet_fn_t2misc_<name>`);
+# goldens under `corpus/fn-corpus/t2misc/`.
 #
 # AGGREGATE / SUBTOTAL are aggregation functions over ranges (range_aware) whose
 # function_num selector chooses the inner aggregate AND (for AGGREGATE) the
 # error/hidden-row handling. ROMAN/ARABIC are scalar text<->number conversions.
 # CONVERT does basic unit conversion. HYPERLINK is display-only in T2 — it
 # returns its friendly text; the link target is not navigable on the page
-# surface (documented ruling).
+# surface (documented ruling, see the kernel module docs).
+#
+# DOCUMENTED T2 SUBSETS (full subset rationale in `families/t2misc.rs`):
+# - AGGREGATE: function_num 1-11 only (AVERAGE/COUNT/COUNTA/MAX/MIN/PRODUCT/
+#   STDEV.S/STDEV.P/SUM/VAR.S/VAR.P); options 0/4 (ignore nothing) and 6 (ignore
+#   error values). function_num 12-19 (MEDIAN/MODE/LARGE/SMALL/PERCENTILE.INC/
+#   QUARTILE.INC and friends) and the hidden-row / nested-subtotal options
+#   (1/2/3/5/7) are NOT interpreted in T2 -> #NUM! (bad function_num) / #VALUE!
+#   (unsupported option). No row visibility reaches the pure kernel.
+# - SUBTOTAL: function_num 1-11 and 101-111. T2 has no row-visibility metadata
+#   in the pure kernel, so 1-11 and 101-111 compute IDENTICALLY (both include all
+#   cells); nested SUBTOTAL/AGGREGATE results inside a ref are NOT re-excluded
+#   (the pure kernel sees plain values). Documented, not faked.
+# - CONVERT: a documented BASIC unit set only — length (m/ft/in/mi/km), mass
+#   (g/kg/lbm), time (s/min/hr/day), temperature (C/F/K). Unknown unit or
+#   mismatched dimension -> #N/A.
 
 - id: sheet.fn.math.aggregate
   name: AGGREGATE
-  family: math
+  family: t2misc
   arity: { min: 3, max: null }
   volatility: none
   range_aware: true
-  rust: math2::aggregate
-  status: planned
-  provenance: ["Microsoft AGGREGATE (public docs) — function_num, options (error/hidden-row handling), then ref(s) or (k) for the quantile-style inner functions; 19 inner aggregates"]
+  rust: t2misc::aggregate
+  status: implemented
+  provenance: ["Microsoft AGGREGATE (public docs) — function_num, options (error/hidden-row handling), then ref(s). T2 SUBSET: function_num 1-11; options 0/4 (ignore nothing) + 6 (ignore errors). 12-19 and hidden-row/nested options out of T2 scope (ruling in families/t2misc.rs)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_aggregate"]
-    corpus: ["corpus/fn-corpus/math2/aggregate.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_aggregate"]
+    corpus: ["corpus/fn-corpus/t2misc/aggregate.golden.tsv"]
 
 - id: sheet.fn.math.subtotal
   name: SUBTOTAL
-  family: math
+  family: t2misc
   arity: { min: 2, max: null }
   volatility: none
   range_aware: true
-  rust: math2::subtotal
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (SUBTOTAL) — function_num (1-11 incl-manual, 101-111 ignore-hidden) then ref(s); nested SUBTOTALs are excluded from the aggregate"]
+  rust: t2misc::subtotal
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (SUBTOTAL) — function_num (1-11 incl-manual, 101-111 ignore-hidden) then ref(s); nested SUBTOTALs are excluded from the aggregate. T2: no row-visibility metadata in the pure kernel, so 1-11 == 101-111 (ruling in families/t2misc.rs)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_subtotal"]
-    corpus: ["corpus/fn-corpus/math2/subtotal.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_subtotal"]
+    corpus: ["corpus/fn-corpus/t2misc/subtotal.golden.tsv"]
 
 - id: sheet.fn.math.roman
   name: ROMAN
-  family: math
+  family: t2misc
   arity: { min: 1, max: 2 }
   volatility: none
   range_aware: false
-  rust: math2::roman
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (ROMAN) — arabic -> roman-numeral text; optional [form] 0-4 (classic..simplified); 1-3999 domain"]
+  rust: t2misc::roman
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (ROMAN) — arabic -> roman-numeral text; optional [form] (form 0 = classic). 1-3999 domain; 0 -> empty text; negative/>3999 -> #VALUE! (ruling in families/t2misc.rs)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_roman"]
-    corpus: ["corpus/fn-corpus/math2/roman.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_roman"]
+    corpus: ["corpus/fn-corpus/t2misc/roman.golden.tsv"]
 
 - id: sheet.fn.math.arabic
   name: ARABIC
-  family: math
+  family: t2misc
   arity: { min: 1, max: 1 }
   volatility: none
   range_aware: false
-  rust: math2::arabic
-  status: planned
-  provenance: ["Microsoft ARABIC (public docs) — roman-numeral text -> arabic number (inverse of ROMAN); empty -> 0"]
+  rust: t2misc::arabic
+  status: implemented
+  provenance: ["Microsoft ARABIC (public docs) — roman-numeral text -> arabic number (inverse of classic ROMAN); empty -> 0; leading '-' negates; non-roman text -> #VALUE!."]
   tests:
-    rust: ["sheet-conformance/tests/fn_math2.rs::sheet_fn_math_arabic"]
-    corpus: ["corpus/fn-corpus/math2/arabic.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_arabic"]
+    corpus: ["corpus/fn-corpus/t2misc/arabic.golden.tsv"]
 
 - id: sheet.fn.engineering.convert
   name: CONVERT
-  family: engineering
+  family: t2misc
   arity: { min: 3, max: 3 }
   volatility: none
   range_aware: false
-  rust: engineering::convert
-  status: planned
-  provenance: ["ECMA-376 §18.17.7 (CONVERT) — number, from_unit, to_unit; basic unit set (weight, distance, time, temperature) in T2; mismatched dimensions -> #N/A"]
+  rust: t2misc::convert
+  status: implemented
+  provenance: ["ECMA-376 §18.17.7 (CONVERT) — number, from_unit, to_unit; T2 BASIC unit set: length (m/ft/in/mi/km), mass (g/kg/lbm), time (s/min/hr/day), temperature (C/F/K). Unknown unit or mismatched dimension -> #N/A (ruling in families/t2misc.rs)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_engineering.rs::sheet_fn_engineering_convert"]
-    corpus: ["corpus/fn-corpus/engineering/convert.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_convert"]
+    corpus: ["corpus/fn-corpus/t2misc/convert.golden.tsv"]
 
 - id: sheet.fn.lookup.hyperlink
   name: HYPERLINK
-  family: lookup
+  family: t2misc
   arity: { min: 1, max: 2 }
   volatility: none
   range_aware: false
-  rust: lookup2::hyperlink
-  status: planned
-  provenance: ["Microsoft HYPERLINK (public docs) — link_location, [friendly_name]. T2 RULING: returns the friendly text (or the link text when friendly is absent); the link is DISPLAY-ONLY on the page surface (not navigable). Documented, not faked."]
+  rust: t2misc::hyperlink
+  status: implemented
+  provenance: ["Microsoft HYPERLINK (public docs) — link_location, [friendly_name]. T2 RULING: returns the friendly text (or the link text when friendly is absent/blank); the link is DISPLAY-ONLY on the page surface (not navigable). Documented, not faked (ruling in families/t2misc.rs)."]
   tests:
-    rust: ["sheet-conformance/tests/fn_lookup2.rs::sheet_fn_lookup_hyperlink"]
-    corpus: ["corpus/fn-corpus/lookup2/hyperlink.golden.tsv"]
+    rust: ["sheet-conformance/tests/fn_t2misc.rs::sheet_fn_t2misc_hyperlink"]
+    corpus: ["corpus/fn-corpus/t2misc/hyperlink.golden.tsv"]

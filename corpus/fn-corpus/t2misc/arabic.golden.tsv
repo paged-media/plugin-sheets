@@ -1,0 +1,9 @@
+# ARABIC(text) -> number from a classic roman numeral (inverse of ROMAN).
+# "" -> 0 ; leading '-' negates ; lower-case accepted ; non-roman -> #VALUE!.
+# id<TAB>formula<TAB>setup<TAB>expected
+lvii	=ARABIC("LVII")	-	57
+year	=ARABIC("MCMXCIV")	-	1994
+lower-case	=ARABIC("mmxxiv")	-	2024
+empty-zero	=ARABIC("")	-	0
+negative	=ARABIC("-IV")	-	-4
+non-roman	=ARABIC("hello")	-	#VALUE!

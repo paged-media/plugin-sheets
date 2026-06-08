@@ -22,6 +22,10 @@ sheet-fn = { path = "../sheet-fn" }
 sheet-format = { path = "../sheet-format" }
 sheet-xlsx = { path = "../sheet-xlsx" }
 sheet-lower = { path = "../sheet-lower" }
+# The M2 charts track (spec §8.4): the chart conformance test parses the
+# corpus chart fixture into ChartModel and projects it through the pure
+# `sheet_chart::generate` geometry IR.
+sheet-chart = { path = "../sheet-chart" }
 # sheet-js exposes the rlib `core::SheetSession` (plain Rust); the native
 # js_surface test drives the full load→recalc→set→save→lower loop through it.
 # (sheet-js's wasm `#[wasm_bindgen]` shim compiles only for wasm32; the native

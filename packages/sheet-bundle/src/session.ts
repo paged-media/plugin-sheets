@@ -8,8 +8,14 @@
 import type { BundleHost } from "@paged-media/plugin-api";
 import type { GridScene, GridSelection } from "@paged-media/sheet-host-model";
 
-import { bootEngine, ENGINE_NOT_BUILT, type SheetEngine } from "./engine";
+import {
+  bootEngine,
+  ENGINE_NOT_BUILT,
+  type ChartInfo,
+  type SheetEngine,
+} from "./engine";
 import { lowerSelectionToFrame } from "./lower";
+import { lowerChartToFrame } from "./lower-chart";
 
 /** A tiny synchronous event emitter (one channel: "did the session
  *  state change"). Avoids dragging a dependency for a single signal. */
@@ -66,6 +72,13 @@ export interface WorkbookSession {
   /** Lower the active sheet's selected range to a new page frame
    *  (the two-phase flow in lower.ts). Returns the created frame id. */
   lowerSelection(): Promise<string | null>;
+  /** Enumerate the workbook's parsed charts (M2 charts track, spec §8.4).
+   *  Empty when there is no engine / no charts. */
+  listCharts(): ChartInfo[];
+  /** Lower a parsed chart to a paged.draw vector frame (spec §8.4 — the
+   *  two-phase flow in lower-chart.ts). `chartIndex` indexes [`listCharts`].
+   *  Returns false when there is no engine or the lower fails. */
+  lowerChart(chartIndex: number): Promise<boolean>;
   /** Window the active sheet into a [`GridScene`] for the grid panel (spec
    *  §8.1). Delegates the windowing to `engine.getGridScene` (Rust) and
    *  overlays the session's current [`gridSelection`] onto the scene.
@@ -191,6 +204,24 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         state.activeSheet,
         state.selectedRange,
       );
+    },
+
+    listCharts() {
+      if (!state.engine) return [];
+      try {
+        return state.engine.listCharts();
+      } catch (err) {
+        host.log.warn("listCharts: engine call failed", err);
+        return [];
+      }
+    },
+
+    async lowerChart(chartIndex) {
+      if (!state.engine) {
+        host.log.warn("lowerChart: no workbook");
+        return false;
+      }
+      return lowerChartToFrame(host, state.engine, chartIndex);
     },
 
     gridScene(firstRow, firstCol, wPt, hPt) {

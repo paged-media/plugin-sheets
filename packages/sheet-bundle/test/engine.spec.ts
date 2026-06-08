@@ -7,7 +7,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import type { GridScene, LoweredContent } from "@paged-media/sheet-host-model";
+import type {
+  ChartGeometry,
+  GridScene,
+  LoweredContent,
+} from "@paged-media/sheet-host-model";
 
 import {
   ENGINE_NOT_BUILT,
@@ -31,6 +35,13 @@ function fakeWasm() {
     styles: [],
     gridlines: { h: [], v: [] },
     selection: null,
+  };
+  const geometry: ChartGeometry = {
+    widthPt: 120,
+    heightPt: 90,
+    prims: [
+      { kind: "rect", x: 0, y: 0, w: 10, h: 20, fill: "#4E79A7", stroke: null, strokeW: 0 },
+    ],
   };
   const wasm: SheetWasmEngine = {
     load_xlsx(bytes) {
@@ -69,16 +80,32 @@ function fakeWasm() {
       calls.push({ method: "list_sheets", args: [] });
       return [{ id: 0, name: "Sheet1", rows: 10, cols: 4 }];
     },
+    list_charts() {
+      calls.push({ method: "list_charts", args: [] });
+      return [
+        {
+          index: 0,
+          hostSheet: 0,
+          kind: "column",
+          title: "Q1",
+          seriesCount: 1,
+        },
+      ];
+    },
+    get_chart_geometry(index, wPt, hPt) {
+      calls.push({ method: "get_chart_geometry", args: [index, wPt, hPt] });
+      return geometry;
+    },
     free() {
       calls.push({ method: "free", args: [] });
     },
   };
-  return { wasm, calls, lowered, scene };
+  return { wasm, calls, lowered, scene, geometry };
 }
 
 describe("sheet_plugin_engine_boot: facade mapping", () => {
   it("forwards every camelCase method to its snake_case wasm twin", () => {
-    const { wasm, calls, lowered, scene } = fakeWasm();
+    const { wasm, calls, lowered, scene, geometry } = fakeWasm();
     const engine = wrapEngine(wasm);
 
     const bytes = new Uint8Array([9]);
@@ -98,6 +125,10 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(engine.listSheets()).toEqual([
       { id: 0, name: "Sheet1", rows: 10, cols: 4 },
     ]);
+    expect(engine.listCharts()).toEqual([
+      { index: 0, hostSheet: 0, kind: "column", title: "Q1", seriesCount: 1 },
+    ]);
+    expect(engine.getChartGeometry(0, 360, 240)).toBe(geometry);
     engine.dispose();
 
     expect(calls.map((c) => c.method)).toEqual([
@@ -109,6 +140,8 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "get_grid_scene",
       "set_grid_selection",
       "list_sheets",
+      "list_charts",
+      "get_chart_geometry",
       "free",
     ]);
     // argument fidelity through the facade.
@@ -116,6 +149,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(calls[4].args).toEqual([0, "A1:B2", { includeGridRules: true }]);
     expect(calls[5].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
     expect(calls[6].args).toEqual([0, 1, 2, 3, 4]);
+    expect(calls[9].args).toEqual([0, 360, 240]); // get_chart_geometry
   });
 
   it("dispose maps to free()", () => {

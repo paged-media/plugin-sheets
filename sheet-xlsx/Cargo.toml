@@ -21,6 +21,13 @@ sheet-core = { path = "../sheet-core" }
 # as sheet-grid's documented sheet-lower dep). No cycle: lower deps =
 # core+format; adding it here makes xlsx -> lower -> (core, format).
 sheet-lower = { path = "../sheet-lower" }
+# DOCUMENTED DEVIATION from the spec §4 dependency table (xlsx -> core only).
+# The M2 charts track (spec §8.4) parses `xl/charts/chartN.xml` into the FROZEN
+# `sheet_chart::ChartModel` so the engine can list + render charts. `sheet-chart`
+# is a PURE leaf crate (model + geometry IR, no SDK; deps = core+format), so this
+# is leaf-IR reuse like the sheet-lower dep above — NOT a render-surface
+# dependency, no inter-plugin contact, no cycle (xlsx -> chart -> core+format).
+sheet-chart = { path = "../sheet-chart" }
 zip.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true

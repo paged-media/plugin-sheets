@@ -3,36 +3,40 @@
 # iterate to a fixed point (Excel-style max-iterations / max-change) instead of
 # the default `sheet.calc.circular` ruling that stores #REF! for cycle members.
 #
-# STATUS: planned — the M2 iterative-calc track wires the convergence loop into
-# the scheduler (sheet-calc) behind the enable flag, then flips these rows. The
+# STATUS: implemented (M2) — the iterative-calc track wired the convergence loop
+# into the scheduler (sheet-calc/src/iterate.rs + Engine::iterate_cycle /
+# Engine::set_iterative) behind the enable flag and flipped these rows. The
 # default (flag off) behavior is unchanged: a cycle stores #REF! and is reported
-# on RecalcResult::circular (the existing sheet.calc.circular row).
+# on RecalcResult::circular (the existing sheet.calc.circular row). With the flag
+# ON, a cycle iterates to a fixed point (seeded at 0, recomputed in stable sorted
+# order up to max_iter, stopping early at max_change); RecalcResult::circular is
+# then empty and a non-settling cycle is reported on RecalcResult::non_converged.
 
 - id: sheet.calc.iterative.enable-flag
   title: Iterative-calc enable flag (D-7 — OFF by default; CalcSettings carries the toggle)
   ruling: "D-7: iterative calculation is OFF by default. With the flag off, a cycle keeps the sheet.calc.circular ruling (#REF! stored, reported on RecalcResult::circular). The flag is a CalcSettings field round-tripped from the workbook calcPr (iterate/iterateCount/iterateDelta)."
-  status: planned
+  status: implemented
   provenance: ["spec §6.2, §14 D-7", "ECMA-376 §18.2.2 (calcPr iterate/iterateCount/iterateDelta)"]
   tests:
     rust: ["sheet-conformance/tests/itercalc.rs::sheet_calc_iterative_enable_flag"]
 
 - id: sheet.calc.iterative.max-iter
   title: Max-iterations bound (the iteration cap; Excel default 100)
-  status: planned
+  status: implemented
   provenance: ["spec §6.2, §14 D-7", "ECMA-376 §18.2.2 (iterateCount)"]
   tests:
     rust: ["sheet-conformance/tests/itercalc.rs::sheet_calc_iterative_max_iter"]
 
 - id: sheet.calc.iterative.max-change
   title: Max-change (convergence delta; Excel default 0.001) — stop early when the largest cell delta falls below it
-  status: planned
+  status: implemented
   provenance: ["spec §6.2, §14 D-7", "ECMA-376 §18.2.2 (iterateDelta)"]
   tests:
     rust: ["sheet-conformance/tests/itercalc.rs::sheet_calc_iterative_max_change"]
 
 - id: sheet.calc.iterative.convergence
   title: Convergence loop — iterate the cycle's cells until max-iter or max-change, deterministically (fixed evaluation order)
-  status: planned
+  status: implemented
   provenance: ["spec §6.2 determinism", "spec §14 D-7"]
   tests:
     rust: ["sheet-conformance/tests/itercalc.rs::sheet_calc_iterative_convergence"]
@@ -40,7 +44,7 @@
 - id: sheet.calc.iterative.circular-with-iteration
   title: Cells in a cycle iterate to a fixed point (instead of #REF!) when iteration is enabled
   ruling: "With the enable flag ON, a detected cycle is evaluated iteratively to a fixed point rather than stored as #REF!. This SUPERSEDES the sheet.calc.circular ruling for that cycle only while the flag is on."
-  status: planned
+  status: implemented
   provenance: ["spec §6.2, §14 D-7"]
   tests:
     rust: ["sheet-conformance/tests/itercalc.rs::sheet_calc_iterative_circular_with_iteration"]

@@ -1,0 +1,9 @@
+# HYPERLINK(link_location, [friendly_name]) -> the friendly text, or the link
+# text when friendly is absent/blank. T2 RULING: display-only (the link is not
+# navigable on the page surface). The result is Text; General is the text.
+# id<TAB>formula<TAB>setup<TAB>expected
+friendly	=HYPERLINK("https://paged.media","Paged")	-	Paged
+link-only	=HYPERLINK("https://paged.media")	-	https://paged.media
+blank-friendly	=HYPERLINK("https://paged.media","")	-	https://paged.media
+numeric-friendly	=HYPERLINK("x",42)	-	42
+from-cell	=HYPERLINK(A1,A2)	A1=text:https://paged.media;A2=text:Docs	Docs

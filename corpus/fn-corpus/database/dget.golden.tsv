@@ -1,0 +1,10 @@
+# sheet.fn.database.dget golden corpus (spec §7, §11 T2; ECMA-376 §18.17.7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (as documented in dsum.golden.tsv).
+# DGET(database, field, criteria): the single field value of the one matching
+# record. No match -> #VALUE!; more than one match -> #NUM!. The matching field
+# cell is returned verbatim (its own type).
+get-single	=DGET(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Cherry	9
+get-text-field	=DGET(A1:D6,"Tree",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Yield;F2=9	Cherry
+get-no-match-value	=DGET(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Plum	#VALUE!
+get-multiple-num	=DGET(A1:D6,"Yield",F1:F2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;F2=Apple	#NUM!
+get-and-narrows-to-one	=DGET(A1:D6,"Yield",F1:G2)	A1=Tree;B1=Height;C1=Age;D1=Yield;A2=Apple;B2=18;C2=20;D2=14;A3=Pear;B3=12;C3=12;D3=10;A4=Cherry;B4=13;C4=14;D4=9;A5=Apple;B5=14;C5=15;D5=10;A6=Pear;B6=9;C6=8;D6=8;F1=Tree;G1=Height;F2=Apple;G2=>15	14

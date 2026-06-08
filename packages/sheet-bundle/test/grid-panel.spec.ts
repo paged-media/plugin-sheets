@@ -94,6 +94,8 @@ function fakeEngine() {
       setSelCalls.push([sheet, anchorRow, anchorCol, rows, cols]);
     },
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 2, cols: 2 }],
+    listCharts: () => [],
+    getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
   };
   return { engine, setCellCalls, setSelCalls };

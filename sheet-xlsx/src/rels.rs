@@ -34,6 +34,12 @@ pub const REL_CALC_CHAIN: &str = "/calcChain";
 /// A worksheet → table-part relationship (`xl/tables/tableN.xml`, the
 /// `ListObject` definition; ECMA-376 §18.5). One per `<tablePart>` on a sheet.
 pub const REL_TABLE: &str = "/table";
+/// A worksheet → drawing-part relationship (`xl/drawings/drawingN.xml`); the
+/// drawing anchors charts/shapes onto the sheet (M2 charts track, spec §8.4).
+pub const REL_DRAWING: &str = "/drawing";
+/// A drawing → chart-part relationship (`xl/charts/chartN.xml`, the DrawingML
+/// chart; ECMA-376 §21.2). One per `<c:chart>` graphic frame in the drawing.
+pub const REL_CHART: &str = "/chart";
 
 /// One `<Relationship>` row.
 #[derive(Debug, Clone)]

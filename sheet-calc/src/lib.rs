@@ -31,13 +31,25 @@
 //! ## The circular-reference encoding (registry `sheet.calc.circular`)
 //!
 //! [`CellError`] has no `Circular` variant (the wire enum is frozen at 8
-//! codes). When the scheduler detects a cycle, each cycle member's STORED
-//! value becomes [`CellValue::Error`]`(`[`CellError::Ref`]`)` (the
-//! `#REF!`-class display the registry row's title calls for), AND the full
-//! cycle set is reported on [`RecalcResult::circular`]. The glue surfaces the
-//! circular WARNING from `circular`; the cell displays the `#REF!`-class
-//! error. Breaking the cycle (re-entering one member as a non-cyclic formula
-//! or a literal) clears both on the next recalc.
+//! codes). When the scheduler detects a cycle AND iterative calculation is OFF
+//! (the default), each cycle member's STORED value becomes
+//! [`CellValue::Error`]`(`[`CellError::Ref`]`)` (the `#REF!`-class display the
+//! registry row's title calls for), AND the full cycle set is reported on
+//! [`RecalcResult::circular`]. The glue surfaces the circular WARNING from
+//! `circular`; the cell displays the `#REF!`-class error. Breaking the cycle
+//! (re-entering one member as a non-cyclic formula or a literal) clears both on
+//! the next recalc.
+//!
+//! ## Iterative calculation (registry `sheet.calc.iterative.*`, D-7)
+//!
+//! When iterative calculation is ON ([`Engine::set_iterative`] /
+//! [`sheet_core::CalcSettings::iterative`]), a detected cycle is instead
+//! evaluated to a fixed point: the members are seeded at `0` and recomputed in a
+//! stable order up to `max_iter` passes, stopping early when the largest
+//! per-cell change falls to/below `max_change` (see [`iterate`]). On convergence
+//! [`RecalcResult::circular`] is EMPTY; a system that exhausts `max_iter` is
+//! reported on [`RecalcResult::non_converged`] (its last-iterate values kept).
+//! This SUPERSEDES the `#REF!` ruling for that cycle only while the flag is on.
 //!
 //! ## Determinism
 //!
@@ -51,6 +63,7 @@ pub mod argview;
 pub mod dirty;
 pub mod eval;
 pub mod graph;
+pub mod iterate;
 pub mod spill;
 pub mod topo;
 pub mod volatile;
@@ -82,13 +95,23 @@ impl Default for EngineConfig {
 }
 
 /// The outcome of a recalc: the cells whose stored value CHANGED in this pass,
-/// and the cells found on a cycle (the `sheet.calc.circular` set).
+/// the cells found on a cycle (the `sheet.calc.circular` set), and — when
+/// iterative calculation is enabled — the cycle cells that did NOT converge
+/// within `max_iter` (the `sheet.calc.iterative.*` set).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RecalcResult {
     /// Formula cells whose stored value changed during this recalc.
     pub changed: Vec<CellRef>,
-    /// Formula cells on a circular reference (stored as `#REF!`).
+    /// Formula cells on a circular reference stored as `#REF!` (iteration OFF).
+    /// EMPTY when iterative calculation is enabled — a cycle then iterates to a
+    /// fixed point (its members move to `non_converged` only if they fail to
+    /// settle within `max_iter`).
     pub circular: Vec<CellRef>,
+    /// Cycle cells that did NOT converge within `max_iter` while iterative
+    /// calculation was enabled (their last-iterate values are kept in the
+    /// model). Always EMPTY with iteration off, and empty for a cycle that
+    /// converged. Sorted [`CellRef`] for determinism.
+    pub non_converged: Vec<CellRef>,
 }
 
 /// The cell-entry payload for [`Engine::set_cell`] — the structured door
@@ -166,6 +189,32 @@ impl Engine {
     /// new clock visible without a separate write).
     pub fn set_now(&mut self, now_serial: f64) {
         self.config.now_serial = now_serial;
+    }
+
+    /// Toggle iterative (circular) calculation (spec §6.2, D-7; registry
+    /// `sheet.calc.iterative.*`). Writes the three knobs into the workbook's
+    /// [`CalcSettings`] (`iterative` / `max_iter` / `max_change`, the OOXML
+    /// `<calcPr>` `iterate` / `iterateCount` / `iterateDelta`) and triggers a
+    /// full recalc so cycle members switch policy immediately:
+    ///
+    /// - `on == false`: a cycle keeps the `sheet.calc.circular` ruling (each
+    ///   member stored as `#REF!`, reported on [`RecalcResult::circular`]).
+    /// - `on == true`: a cycle iterates to a fixed point (seeded at `0`,
+    ///   recomputed in stable order up to `max_iter` passes, stopping early at
+    ///   `max_change`). [`RecalcResult::circular`] is then empty; cells that do
+    ///   not settle land on [`RecalcResult::non_converged`].
+    ///
+    /// `max_iter` / `max_change` are honored even when `on == false` (they are
+    /// stored for the next time iteration is enabled); Excel's defaults are
+    /// `100` / `0.001` ([`CalcSettings::default`]).
+    ///
+    /// [`CalcSettings`]: sheet_core::CalcSettings
+    /// [`CalcSettings::default`]: sheet_core::CalcSettings
+    pub fn set_iterative(&mut self, on: bool, max_iter: u32, max_change: f64) -> RecalcResult {
+        self.model.calc.iterative = on;
+        self.model.calc.max_iter = max_iter;
+        self.model.calc.max_change = max_change;
+        self.recalc_all()
     }
 
     /// THE cell-entry door (Excel-like semantics live HERE, in Rust).
@@ -318,6 +367,7 @@ impl Engine {
     pub fn recalc_dirty(&mut self) -> RecalcResult {
         let mut changed: Vec<CellRef> = Vec::new();
         let mut circular: Vec<CellRef> = Vec::new();
+        let mut non_converged: Vec<CellRef> = Vec::new();
 
         // Volatile cells reseed ONCE per recalc (not per spill sub-pass — that
         // would keep the fixpoint alive forever whenever any volatile exists).
@@ -358,17 +408,28 @@ impl Engine {
                 }
             }
 
-            // Cycle members: store #REF! (the wire encoding of the Circular
-            // diagnostic) and report them. The first pass's cycle set is the
-            // authoritative one (later passes only chase spill reflow).
-            for cref in &to.cycle {
-                let ref_err = CellValue::Error(CellError::Ref);
-                if self.commit_value(*cref, ref_err) {
-                    changed.push(*cref);
+            // Cycle members. Two policies (registry `sheet.calc.iterative.*`,
+            // D-7): with iteration OFF (default) store #REF! (the wire encoding
+            // of the Circular diagnostic) and report on `circular`; with
+            // iteration ON, drive the convergence loop to a fixed point and
+            // report only the non-converged remainder. The first pass's cycle
+            // set is the authoritative one (later passes only chase spill reflow).
+            if self.model.calc.iterative {
+                let (nc_changed, nc) = self.iterate_cycle(&to.cycle);
+                changed.extend(nc_changed);
+                if pass_n == 0 {
+                    non_converged = nc;
                 }
-            }
-            if pass_n == 0 {
-                circular = to.cycle;
+            } else {
+                for cref in &to.cycle {
+                    let ref_err = CellValue::Error(CellError::Ref);
+                    if self.commit_value(*cref, ref_err) {
+                        changed.push(*cref);
+                    }
+                }
+                if pass_n == 0 {
+                    circular = to.cycle;
+                }
             }
         }
 
@@ -378,7 +439,11 @@ impl Engine {
         // passes — clear then refill, or anchor then reflow).
         changed.sort();
         changed.dedup();
-        RecalcResult { changed, circular }
+        RecalcResult {
+            changed,
+            circular,
+            non_converged,
+        }
     }
 
     /// Apply a structural edit (insert/delete rows or cols): physically shift
@@ -427,6 +492,81 @@ impl Engine {
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
         eval::eval_expr(&self.model, &f.root.clone(), &ctx, &self.spills)
+    }
+
+    /// Drive iterative (circular) calculation over one cycle (spec §6.2, D-7;
+    /// registry `sheet.calc.iterative.*`). `members` is the cycle set from
+    /// [`topo::order`]; it is sorted here so the evaluation order — and thus the
+    /// converged values — are reproducible run-to-run (the §6.2 determinism
+    /// property).
+    ///
+    /// Algorithm (Excel-style): seed every member at `0`, then for up to
+    /// `model.calc.max_iter` passes recompute each member in sorted order,
+    /// committing immediately (Gauss–Seidel — a later member in the same pass
+    /// reads the freshly written value of an earlier one). Stop early when the
+    /// largest per-cell change ([`iterate::cell_delta`]) across the whole cycle
+    /// is `<= model.calc.max_change`.
+    ///
+    /// Returns `(changed, non_converged)`: the members whose stored value
+    /// differs from before the loop, and (empty on convergence) the members
+    /// still in the cycle if `max_iter` ran out — their last-iterate values are
+    /// kept in the model (matching Excel, which leaves the partial result).
+    fn iterate_cycle(&mut self, members: &[CellRef]) -> (Vec<CellRef>, Vec<CellRef>) {
+        let mut ordered: Vec<CellRef> = members.to_vec();
+        ordered.sort();
+
+        let max_iter = self.model.calc.max_iter;
+        let max_change = self.model.calc.max_change;
+
+        // Snapshot the pre-iteration stored values so we can report which cells
+        // actually changed (a cell already at its fixed point may not move).
+        let before: Vec<CellValue> = ordered.iter().map(|c| self.stored_value(*c)).collect();
+
+        // Seed every cycle cell at 0 (Excel's documented initial value) so the
+        // first pass reads a defined precedent rather than the stale value
+        // (#REF!, or a prior unrelated result).
+        for &m in &ordered {
+            self.commit_value(m, CellValue::Number(0.0));
+        }
+
+        let mut converged = ordered.is_empty();
+        for _ in 0..max_iter {
+            let mut max_delta = 0.0_f64;
+            for &m in &ordered {
+                let old = self.stored_value(m);
+                let new = self.evaluate_cell(m);
+                let delta = iterate::cell_delta(&old, &new);
+                if delta > max_delta {
+                    max_delta = delta;
+                }
+                self.commit_value(m, new);
+            }
+            if max_delta <= max_change {
+                converged = true;
+                break;
+            }
+        }
+
+        // Report changes against the PRE-iteration snapshot.
+        let mut changed: Vec<CellRef> = Vec::new();
+        for (m, prev) in ordered.iter().zip(before.iter()) {
+            if self.stored_value(*m) != *prev {
+                changed.push(*m);
+            }
+        }
+
+        let non_converged = if converged { Vec::new() } else { ordered };
+        (changed, non_converged)
+    }
+
+    /// The currently stored value of a cell (defaulting to `Empty`), used by the
+    /// iterative loop to snapshot precedents and measure convergence deltas.
+    fn stored_value(&self, cref: CellRef) -> CellValue {
+        self.model
+            .sheet(cref.sheet)
+            .and_then(|ws| ws.cell(cref.row, cref.col))
+            .map(|c| c.value.clone())
+            .unwrap_or(CellValue::Empty)
     }
 
     /// Whether the formula at `cref` has a *spilling* root (a `returns_array`
@@ -1068,5 +1208,83 @@ mod tests {
             m.sheet(0).unwrap().cell(0, 0).unwrap().value,
             CellValue::Number(7.0)
         );
+    }
+
+    fn approx(v: CellValue, target: f64, tol: f64) {
+        match v {
+            CellValue::Number(n) => assert!(
+                (n - target).abs() <= tol,
+                "expected ~{target}, got {n} (tol {tol})"
+            ),
+            other => panic!("expected a number ~{target}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn iterative_convergent_system_settles() {
+        // A1 = B1*0.5 + 10 ; B1 = A1 + 5. Fixed point: A1 = 0.5*(A1+5)+10 ->
+        // 0.5*A1 = 12.5 -> A1 = 25, B1 = 30.
+        let mut e = engine();
+        e.set_iterative(true, 1000, 1e-9);
+        e.enter(0, 0, 0, "=B1*0.5+10").unwrap();
+        let r = e.enter(0, 0, 1, "=A1+5").unwrap();
+        // Converged: no #REF!, circular empty, non_converged empty.
+        assert!(r.circular.is_empty());
+        assert!(r.non_converged.is_empty());
+        approx(value_at(&e, 0, 0), 25.0, 1e-6);
+        approx(value_at(&e, 0, 1), 30.0, 1e-6);
+    }
+
+    #[test]
+    fn iterative_off_yields_ref() {
+        // Same system, iteration OFF (default): #REF! + circular reported.
+        let mut e = engine();
+        e.enter(0, 0, 0, "=B1*0.5+10").unwrap();
+        let r = e.enter(0, 0, 1, "=A1+5").unwrap();
+        assert!(!r.circular.is_empty());
+        assert!(r.non_converged.is_empty());
+        assert_eq!(value_at(&e, 0, 0), CellValue::Error(CellError::Ref));
+        assert_eq!(value_at(&e, 0, 1), CellValue::Error(CellError::Ref));
+    }
+
+    #[test]
+    fn iterative_divergent_caps_at_max_iter() {
+        // A1 = A1 + 1 diverges; it is reported non-converged and capped.
+        let mut e = engine();
+        e.set_iterative(true, 7, 1e-9);
+        let r = e.enter(0, 0, 0, "=A1+1").unwrap();
+        assert!(r.circular.is_empty());
+        assert_eq!(r.non_converged, vec![cr(0, 0)]);
+        // Seeded at 0, +1 per pass, 7 passes -> 7.
+        approx(value_at(&e, 0, 0), 7.0, 0.0);
+    }
+
+    #[test]
+    fn iterative_is_deterministic_across_runs() {
+        let run = || {
+            let mut e = engine();
+            e.set_iterative(true, 1000, 1e-12);
+            e.enter(0, 0, 0, "=B1*0.5+10").unwrap();
+            e.enter(0, 0, 1, "=A1+5").unwrap();
+            (value_at(&e, 0, 0), value_at(&e, 0, 1))
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn set_iterative_toggles_policy_live() {
+        // Enter a cycle with iteration off -> #REF!, then turn iteration on and
+        // the SAME cells settle (set_iterative recalcs).
+        let mut e = engine();
+        e.enter(0, 0, 0, "=B1*0.5+10").unwrap();
+        e.enter(0, 0, 1, "=A1+5").unwrap();
+        assert_eq!(value_at(&e, 0, 0), CellValue::Error(CellError::Ref));
+        let r = e.set_iterative(true, 1000, 1e-9);
+        assert!(r.circular.is_empty());
+        assert!(r.non_converged.is_empty());
+        approx(value_at(&e, 0, 0), 25.0, 1e-6);
+        // And back off -> #REF! again.
+        e.set_iterative(false, 100, 0.001);
+        assert_eq!(value_at(&e, 0, 0), CellValue::Error(CellError::Ref));
     }
 }

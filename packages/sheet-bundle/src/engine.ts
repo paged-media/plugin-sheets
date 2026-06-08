@@ -17,7 +17,11 @@
 // Until the artifact exists the dynamic import REJECTS — bootEngine
 // surfaces that honestly so the panel can say "engine wasm not built".
 
-import type { GridScene, LoweredContent } from "@paged-media/sheet-host-model";
+import type {
+  ChartGeometry,
+  GridScene,
+  LoweredContent,
+} from "@paged-media/sheet-host-model";
 
 // ------------------------------------------------------------ facade
 
@@ -50,6 +54,19 @@ export interface LowerOptions {
  *  the engine windows in Rust, spec §8.1). */
 export interface GridSceneOptions {
   includeGridlines?: boolean;
+}
+
+/** One chart in the workbook (M2 charts track, spec §8.4) — the engine's
+ *  parsed-chart summary for the panel's chart list. `index` is the handle
+ *  `getChartGeometry` takes. */
+export interface ChartInfo {
+  index: number;
+  hostSheet: number;
+  /** The lowercase kind tag (`"column"`, `"bar"`, `"line"`, `"area"`,
+   *  `"pie"`, `"donut"`, `"scatter"`). */
+  kind: string;
+  title: string | null;
+  seriesCount: number;
 }
 
 /** The stable engine contract the bundle codes against. Every method is
@@ -104,6 +121,14 @@ export interface SheetEngine {
   ): void;
   /** Enumerate the workbook's sheets (id, name, used extent). */
   listSheets(): SheetInfo[];
+  /** Enumerate the workbook's charts (M2 charts track, spec §8.4). Parsed
+   *  from the XLSX chart parts on load; empty for a chartless workbook. */
+  listCharts(): ChartInfo[];
+  /** Resolve chart `index`'s series ranges against the live model and
+   *  generate its geometry IR for a `wPt × hPt` content box (spec §8.4 —
+   *  live to recalc). The IR feeds BOTH the page paged.draw lowering and the
+   *  grid view (one generator, two projections). */
+  getChartGeometry(index: number, wPt: number, hPt: number): ChartGeometry;
   /** Release the wasm-held model. */
   dispose(): void;
 }
@@ -144,6 +169,8 @@ export interface SheetWasmEngine {
     cols: number,
   ): void;
   list_sheets(): SheetInfo[];
+  list_charts(): ChartInfo[];
+  get_chart_geometry(index: number, w_pt: number, h_pt: number): ChartGeometry;
   free(): void;
 }
 
@@ -176,6 +203,9 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
     setGridSelection: (sheet, anchorRow, anchorCol, rows, cols) =>
       wasm.set_grid_selection(sheet, anchorRow, anchorCol, rows, cols),
     listSheets: () => wasm.list_sheets(),
+    listCharts: () => wasm.list_charts(),
+    getChartGeometry: (index, wPt, hPt) =>
+      wasm.get_chart_geometry(index, wPt, hPt),
     dispose: () => wasm.free(),
   };
 }
