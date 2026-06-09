@@ -11,6 +11,11 @@ joint-RFC summary at the foot of this file.
 
 Format: `S-NN · date · area · status`. Verified against the published
 SDK + the repo's own code on 2026-06-08 (M1 phase B+C, commit `9906aef`).
+**Platform Wave 1 (2026-06-09):** S-03 (native `InsertTable`), S-13
+(`measure_text`), S-10 (wasm-bindgen loader ratified), S-12 (paged.draw
+verified) RESOLVED by core protocol **v37** + the SDK door — see those
+entries. Waves 2–4 (S-05 threading, S-06/S-07/S-08/S-11 IO+workers+OPFS,
+S-02/S-01 in-frame sheets mode) remain.
 
 ---
 
@@ -25,8 +30,9 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
   modal-session lifecycle + frame-content coordinate inversion).
 - Editing surface for sheets mode (vector rendering target) — **GAP** →
   S-02 (joint with plugin-image I-01).
-- Commit table/text/rule content inside owned frames — **GAP** → S-03
-  (no native table-creation op; lowering degrades to text + rules).
+- Commit table/text/rule content inside owned frames — **COVERED**
+  (S-03 RESOLVED — native `InsertTable`, protocol v37; lowering emits a
+  real `<Table>`).
 - Document style read AND write — read **COVERED**; the write/enumerate
   half is a **GAP** → S-04.
 - Frame ownership & lock (owned-content attribute + edit interception) —
@@ -34,8 +40,9 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
 - Frame linking / threading topology read — **GAP** → S-05.
 - Reflow notification (content-box resize vs pure transform) — **GAP** →
   S-05.
-- `paged.draw` access for chart lowering (core SDK, §8.4) — **GAP
-  (verify)** → S-12.
+- `paged.draw` access for chart lowering (core SDK, §8.4) — **COVERED**
+  (S-12 RESOLVED — `insertPath`/`insertLine`/`insertOval` confirmed
+  sufficient; charts lower as native vector content).
 - Asset placement in cells (images via the standard asset mechanism) —
   **COVERED** (core asset surface).
 - Worker spawn + SharedArrayBuffer — **GAP** → S-07 (joint I-02).
@@ -44,8 +51,9 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
   S-06 (joint I-05).
 
 Sheets-discovered, beyond the §2.2 table: the wasm-bindgen loader path
-(S-10, joint I-07), the host file picker (S-11), font metrics (S-13),
-and range clipboard (S-14).
+(S-10 — **RESOLVED**, ratified), the host file picker (S-11), font
+metrics (S-13 — **RESOLVED**, `measure_text`), and range clipboard
+(S-14).
 
 ---
 
@@ -91,8 +99,22 @@ and range clipboard (S-14).
   not fake it — `capabilities.rendering` is still `["hitTest"]` only.
   The SDK gate is unchanged.
 
-- **S-03 · 2026-06-07 · engine ops · OPEN (degradation active)** — no
-  native table-creation Mutation: the wire has table ops
+- **S-03 · 2026-06-07 · engine ops · RESOLVED (2026-06-09)** — core
+  protocol **v37** added `Mutation::InsertTable { story_id, rows, cols,
+  header_rows, footer_rows, column_widths, row_heights }` (translate →
+  `Operation::InsertNode { parent: Story, NodeSpec::Table }`, createdId =
+  the minted tableId). Page lowering now emits a **native `<Table>`** —
+  `packages/sheet-host-model/src/lower-to-table.ts` (`tableInsertOp` +
+  `tableCellOps`) + the three-phase `lower.ts` flow (frame → table →
+  per-cell `insertText` with the `TextCellAddr` qualifier). The tab-text
+  + drawn-rules degradation (`lower-to-mutations.ts`) is retired to the
+  old-engine fallback. RESIDUAL (next increment, NOT a regression — the
+  tab-text path placed neither): per-cell FILL background + BORDERS need
+  a `tableCell` `ElementId` kind so `cellFillColor`/`cell*EdgeStroke*`
+  (real PropertyPaths) can be `setElementProperty`-addressed; tracked
+  forward. Historical degradation note retained below for provenance.
+
+  *(superseded)* no native table-creation Mutation: the wire has table ops
   (`insertTableRow`, `insertTableColumn`, `setCellSpan`, `setRowHeight`,
   `setColumnWidth`, header/footer-row ops, cell styles, and `insertText`
   with an optional `cell: TextCellAddr` qualifier) but they all require a
@@ -193,8 +215,19 @@ and range clipboard (S-14).
   a manual edit attempt on owned content → invoke sheets-mode entry).
   T2 gate.
 
-- **S-10 · 2026-06-07 · wasm packaging · OPEN (by design in T0)** —
-  `loadBundleWasm` instantiates a RAW module (host-owned memory, only
+- **S-10 · 2026-06-07 · wasm packaging · RESOLVED (2026-06-09, by
+  ratification)** — the two-loader split is now the documented v1
+  contract (`plugin-sdk/docs/wasm-packaging.md` "Two loaders, ratified"):
+  raw modules load via `host.loadBundleWasm`; **wasm-bindgen** modules
+  (sheet-js, the canvas-wasm pattern) load via the bundle's own
+  `--target web` glue in the bundle realm (`engine.ts` `bootEngine`),
+  still declared under `capabilities.wasm[]` for the budget gate. No
+  host-side wasm-bindgen loader is needed; the glue path is the answer.
+  (A host-owned wasm-bindgen instantiation — to share a `GPUDevice` — is
+  the separate I-01/I-07 GPU-surface RFC, not this door.) Historical
+  framing retained below.
+
+  *(superseded)* `loadBundleWasm` instantiates a RAW module (host-owned memory, only
   caller-passed imports, no glue — `docs/wasm-packaging.md`). A
   wasm-bindgen artifact (`sheet-js`) cannot load that way — it needs its
   `__wbindgen_*` imports, its own exported memory, and the generated JS
@@ -215,7 +248,18 @@ and range clipboard (S-14).
   source panel — `workbook-panel.tsx`). Clean path: a
   `host.shell.pickFile()` door or the S-06 importer registration.
 
-- **S-12 · 2026-06-08 · charts / paged.draw · OPEN (verify)** — charts
+- **S-12 · 2026-06-08 · charts / paged.draw · RESOLVED (2026-06-09,
+  verified)** — confirmed the published wire carries `insertPath` /
+  `insertLine` / `insertOval` routed through `host.document.mutate()`, so
+  the M2 chart lowering (`packages/sheet-host-model/src/chart.ts` →
+  `chartGeometryToMutations`) submits chart geometry as native
+  `paged.draw` vector content (paths + frame fills via document swatches)
+  with NO new platform surface — paged.draw is reached as a CORE wire
+  surface, never as a plugin (§2.1). The "verify scripting-level
+  sufficiency" question is closed: the path is real and shipped.
+  Historical framing retained below.
+
+  *(superseded)* charts
   are in scope (spec D-4 re-ruled; T2/§8.4): one pure geometry generator
   feeds both the sheets-mode grid view and page lowering, the latter
   emitting native vector content through **`paged.draw`** (a CORE SDK
@@ -227,7 +271,17 @@ and range clipboard (S-14).
   paged.draw geometry-submission surface (or file the clause that closes
   it) before M2 chart lowering.
 
-- **S-13 · 2026-06-08 · font metrics · OPEN** — no text-measurement
+- **S-13 · 2026-06-08 · font metrics · RESOLVED (2026-06-09)** — core
+  added a `measure_text(family, style, text, size_pt) -> {advance,
+  ascender, descender}` query on the canvas-wasm surface (wrapping
+  `paged-text::shape_run`; no wire/protocol change — a read), surfaced as
+  `host.text.measureString` on `BundleHost` (a read door, no capability
+  gate; `supports("text.measure@1")` reports whether a real shaper is
+  wired, else an estimate). `lower.ts` `measureColumnWidths` now sizes
+  native-table columns from real advances (the §8.3 cross-surface-width
+  requirement). Historical framing retained below.
+
+  *(superseded)* no text-measurement
   door. The lowerer must size grid columns and make the sheets-mode grid
   view and the lowered page content resolve to the **same** widths
   (a §8.3 cross-surface-consistency requirement) — both need the

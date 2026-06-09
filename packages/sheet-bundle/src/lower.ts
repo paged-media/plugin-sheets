@@ -25,12 +25,54 @@
 
 import type { BundleHost, ElementId, PageId } from "@paged-media/plugin-api";
 import {
+  BINDING_KEY,
   defaultPlacement,
-  lowerToMutations,
   makeBinding,
+  tableCellOps,
+  tableInsertOp,
+  type LoweredContent,
 } from "@paged-media/sheet-host-model";
 
 import type { SheetEngine } from "./engine";
+
+/** Per-column width (pt) from the document's font metrics (S-13). For
+ *  each column, measure the widest formatted cell text via the host
+ *  shaper and add a small inset; fall back to the IR's char-based width
+ *  when the shaper is unwired or yields nothing. Keeps the page table and
+ *  any future grid view resolving to the SAME widths (the §8.3
+ *  cross-surface-consistency requirement). */
+async function measureColumnWidths(
+  host: BundleHost,
+  content: LoweredContent,
+): Promise<number[]> {
+  const styleOf = (key: number | undefined) =>
+    key == null ? null : (content.styles ?? []).find((s) => s.key === key) ?? null;
+  const CELL_INSET_PT = 4; // left+right padding inside a cell
+
+  return Promise.all(
+    content.cols.map(async (col) => {
+      let widest = "";
+      let style: ReturnType<typeof styleOf> = null;
+      for (const row of content.rows) {
+        for (const cell of row.cells) {
+          if (cell.col === col.index && cell.text.length > widest.length) {
+            widest = cell.text;
+            style = styleOf(cell.styleKey);
+          }
+        }
+      }
+      if (widest.length === 0) return col.widthPt;
+      const metrics = await host.text.measureString(
+        style?.fontName ?? "",
+        style?.bold || style?.italic ? "Bold" : null,
+        widest,
+        style?.fontSizePt ?? 11,
+      );
+      const measured = metrics.advance + CELL_INSET_PT;
+      return measured > 0 ? measured : col.widthPt;
+    }),
+  );
+}
 
 /** The frame center, page-local pt, from `[top, left, bottom, right]`. */
 function center(
@@ -87,12 +129,28 @@ export async function lowerSelectionToFrame(
   // contentVersion 0: T0 has no workbook revision counter (the engine
   // gains one when save-back lands); the binding still round-trips.
   const binding = makeBinding(sheetName, range, 0);
-  const { batch, text } = lowerToMutations(content, placement, binding);
 
-  // Phase 1 — frame + rules + binding, one undoable batch.
-  const outcome = await host.document.mutate(batch);
+  // Phase 1 — the frame + its binding, one undoable step. NO drawn rules:
+  // a native `<Table>` (S-03 RESOLVED, protocol v37) draws its own
+  // borders. The binding rides the batch-created frame via `$created`.
+  const outcome = await host.document.mutate({
+    op: "batch",
+    args: {
+      ops: [
+        { op: "insertTextFrame", args: { pageId, bounds: placement.bounds } },
+        {
+          op: "setPluginMetadata",
+          args: {
+            elementId: { kind: "textFrame", id: "$created" },
+            key: BINDING_KEY,
+            value: JSON.stringify(binding),
+          },
+        },
+      ],
+    },
+  });
   if (!outcome.applied || !outcome.createdId) {
-    host.log.warn("lower: phase-1 batch rejected", outcome);
+    host.log.warn("lower: phase-1 frame batch rejected", outcome);
     return null;
   }
   const frameId = frameIdOf(outcome.createdId);
@@ -101,23 +159,37 @@ export async function lowerSelectionToFrame(
     return null;
   }
 
-  // Phase 2 — resolve the new frame's story via the hitTest read door,
-  // then pour the text. Empty regions skip the pour (nothing to insert).
-  if (text.length > 0) {
-    const hit = await host.document.hitTest(pageId, center(placement.bounds));
-    const storyId = hit?.storyId ?? null;
-    if (!storyId) {
-      host.log.warn(
-        "lower: could not resolve the created frame's story; frame placed " +
-          "without text (S-03 phase-2 read-door gap)",
-      );
-      return frameId;
-    }
-    const pour = await host.document.mutate({
-      op: "insertText",
-      args: { storyId, offset: 0, text },
-    });
-    if (!pour.applied) host.log.warn("lower: phase-2 insertText rejected", pour);
+  // Resolve the new frame's story via the hitTest read door (plugin-api
+  // exposes no direct frame→story lookup; HitResult carries storyId).
+  const hit = await host.document.hitTest(pageId, center(placement.bounds));
+  const storyId = hit?.storyId ?? null;
+  if (!storyId) {
+    host.log.warn(
+      "lower: could not resolve the created frame's story; frame placed " +
+        "empty (hitTest read-door miss)",
+    );
+    await host.selection.set([outcome.createdId]);
+    return frameId;
+  }
+
+  // Phase 2 — create the native table in that story, sized by font
+  // metrics (S-13). createdId is the new tableId.
+  const columnWidths = await measureColumnWidths(host, content);
+  const tableOutcome = await host.document.mutate(
+    tableInsertOp(content, storyId, columnWidths),
+  );
+  if (!tableOutcome.applied || !tableOutcome.createdId) {
+    host.log.warn("lower: phase-2 insertTable rejected", tableOutcome);
+    await host.selection.set([outcome.createdId]);
+    return frameId;
+  }
+  const tableId = tableOutcome.createdId.id as string;
+
+  // Phase 3 — pour each cell's formatted text into its table cell.
+  const cellBatch = tableCellOps(content, storyId, tableId);
+  if (cellBatch.op === "batch" && cellBatch.args.ops.length > 0) {
+    const pour = await host.document.mutate(cellBatch);
+    if (!pour.applied) host.log.warn("lower: phase-3 cell pour rejected", pour);
   }
 
   await host.selection.set([outcome.createdId]);

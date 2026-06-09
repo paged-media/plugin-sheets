@@ -75,9 +75,22 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
       },
       async mutate(m: Mutation): Promise<MutationOutcome> {
         mutations.push(m);
-        // Only the first (batch) mints an element.
+        // A batch that creates a frame mints the frame id; a native
+        // insertTable mints the table id; everything else (the cell
+        // batch, the text pour) creates nothing.
         if (m.op === "batch") {
-          return { applied: true, createdId, pageIds: ["Page/u1"] };
+          const ops = (m as { args: { ops: Array<{ op: string }> } }).args.ops;
+          if (ops.some((o) => o.op === "insertTextFrame")) {
+            return { applied: true, createdId, pageIds: ["Page/u1"] };
+          }
+          return { applied: true, createdId: null, pageIds: ["Page/u1"] };
+        }
+        if (m.op === "insertTable") {
+          return {
+            applied: true,
+            createdId: { kind: "textFrame", id: "table1" } as ElementId,
+            pageIds: ["Page/u1"],
+          };
         }
         return { applied: true, createdId: null, pageIds: ["Page/u1"] };
       },
@@ -85,6 +98,11 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
         return storyId
           ? ({ storyId, frameId: "frame1" } as never)
           : null;
+      },
+    },
+    text: {
+      async measureString() {
+        return { advance: 30, ascender: 9, descender: -2 };
       },
     },
     selection: {
@@ -99,28 +117,43 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
 
 const CREATED: ElementId = { kind: "textFrame", id: "frame1" };
 
-describe("sheet_plugin_lower_mutations: two-phase host flow", () => {
-  it("phase 1 batch first, then phase 2 insertText into the resolved story", async () => {
+describe("sheet_plugin_lower_mutations: native-table host flow", () => {
+  it("phase 1 frame batch → phase 2 insertTable → phase 3 cell text", async () => {
     const { host, mutations, selections } = fakeHost(CREATED, "Story/u9");
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
 
     expect(id).toBe("frame1");
-    expect(mutations).toHaveLength(2);
-    // Phase 1 — the batch.
+    expect(mutations).toHaveLength(3);
+    // Phase 1 — frame + binding (NO drawn rules: the table draws borders).
     expect(mutations[0].op).toBe("batch");
     const ops = (mutations[0] as { args: { ops: Array<{ op: string }> } }).args
       .ops;
     expect(ops[0].op).toBe("insertTextFrame");
-    expect(ops.some((o) => o.op === "insertLine")).toBe(true);
-    expect(ops[ops.length - 1].op).toBe("setPluginMetadata");
-    // Phase 2 — insertText into the hitTest-resolved story at offset 0.
-    expect(mutations[1].op).toBe("insertText");
-    const text = mutations[1] as {
-      args: { storyId: string; offset: number; text: string };
+    expect(ops.some((o) => o.op === "insertLine")).toBe(false);
+    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
+    // Phase 2 — native table in the resolved story, font-metric widths.
+    expect(mutations[1].op).toBe("insertTable");
+    const tbl = mutations[1] as {
+      args: { storyId: string; rows: number; cols: number; columnWidths: number[] };
     };
-    expect(text.args.storyId).toBe("Story/u9");
-    expect(text.args.offset).toBe(0);
-    expect(text.args.text).toBe("Item\tQty");
+    expect(tbl.args.storyId).toBe("Story/u9");
+    expect(tbl.args.rows).toBe(1);
+    expect(tbl.args.cols).toBe(2);
+    expect(tbl.args.columnWidths).toHaveLength(2);
+    expect(tbl.args.columnWidths[0]).toBeGreaterThan(0); // measured, not 0
+    // Phase 3 — each cell's text poured into its table cell.
+    expect(mutations[2].op).toBe("batch");
+    const cellOps = (mutations[2] as {
+      args: { ops: Array<{ op: string; args: { text?: string; cell?: unknown } }> };
+    }).args.ops;
+    const item = cellOps.find((o) => o.args.text === "Item");
+    expect(item?.op).toBe("insertText");
+    expect(item?.args.cell).toEqual({ tableId: "table1", row: 0, col: 0 });
+    expect(cellOps.find((o) => o.args.text === "Qty")?.args.cell).toEqual({
+      tableId: "table1",
+      row: 0,
+      col: 1,
+    });
     // The new frame is selected.
     expect(selections).toEqual([[CREATED]]);
   });
@@ -139,11 +172,11 @@ describe("sheet_plugin_lower_mutations: two-phase host flow", () => {
     expect(binding.data.range).toBe("A1:B1");
   });
 
-  it("skips phase 2 (frame still placed) when the story can't be resolved", async () => {
+  it("skips the table (frame still placed) when the story can't be resolved", async () => {
     const { host, mutations } = fakeHost(CREATED, null);
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
     expect(id).toBe("frame1"); // frame placed, honest about the gap
-    expect(mutations.map((m) => m.op)).toEqual(["batch"]); // no insertText
+    expect(mutations.map((m) => m.op)).toEqual(["batch"]); // no insertTable
   });
 
   it("returns null when the phase-1 batch is rejected", async () => {

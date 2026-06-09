@@ -48,6 +48,12 @@ export {
 } from "./lower-to-mutations";
 
 export {
+  columnOrder,
+  tableCellOps,
+  tableInsertOp,
+} from "./lower-to-table";
+
+export {
   DEFAULT_GRID_SVG_OPTIONS,
   cellEditorRect,
   gridSceneToSvg,
