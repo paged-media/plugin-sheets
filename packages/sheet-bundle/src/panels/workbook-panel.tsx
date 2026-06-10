@@ -21,6 +21,7 @@ import {
 
 import type { BundleHost } from "@paged-media/plugin-api";
 
+import { XLSX_MIME } from "../import-xlsx";
 import type { WorkbookSession } from "../session";
 
 // ---------------------------------------------------------------- styles
@@ -88,6 +89,23 @@ export function makeWorkbookPanel(
       [],
     );
 
+    // S-11: prefer the HOST file picker (a real modal dialog); the panel's
+    // own `<input>` stays as the honest no-picker fallback.
+    const pickerSupported = host.supports("shell.pickFile@1");
+    const onPick = useCallback(async () => {
+      try {
+        const files = await host.shell.pickFile({
+          accept: [".xlsx", XLSX_MIME],
+          multiple: false,
+        });
+        const file = files[0];
+        if (!file) return; // cancelled
+        await session.import(file.bytes, file.name);
+      } catch (err) {
+        host.log.error("workbook pick failed", err);
+      }
+    }, []);
+
     const onLower = useCallback(() => {
       void session.lowerSelection();
     }, []);
@@ -104,15 +122,32 @@ export function makeWorkbookPanel(
         }}
       >
         <div style={{ ...kicker, marginTop: 0 }}>Workbook</div>
-        {/* S-11: the panel owns the file input (no host file picker). */}
-        <input
-          ref={fileRef}
-          data-sheet-file
-          type="file"
-          accept=".xlsx"
-          onChange={onFile}
-          style={{ ...body, marginBottom: "var(--space-2, 8px)" }}
-        />
+        {/* S-11 RESOLVED: the host file picker is the primary path; the
+         *  panel's own `<input>` is the honest fallback when no picker is
+         *  wired (headless / a host that predates the door). */}
+        {pickerSupported ? (
+          <button
+            data-sheet-pick
+            type="button"
+            onClick={() => void onPick()}
+            style={{
+              ...primaryButton,
+              alignSelf: "flex-start",
+              marginBottom: "var(--space-2, 8px)",
+            }}
+          >
+            Choose .xlsx…
+          </button>
+        ) : (
+          <input
+            ref={fileRef}
+            data-sheet-file
+            type="file"
+            accept=".xlsx"
+            onChange={onFile}
+            style={{ ...body, marginBottom: "var(--space-2, 8px)" }}
+          />
+        )}
 
         {/* S-10: engine-boot failure (the wasm isn't built) — say so. */}
         {st.bootError && (

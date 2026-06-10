@@ -16,7 +16,7 @@ import { contributePanel } from "@paged-media/plugin-sdk";
 
 import manifest from "../manifest.json";
 
-import { importXlsx } from "./import-xlsx";
+import { pickAndImport, XLSX_MIME } from "./import-xlsx";
 import { createWorkbookSession } from "./session";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
 import { makeGridPanel } from "./panels/grid-panel";
@@ -49,7 +49,9 @@ export function activate(host: BundleHost): BundleHandle {
     id: "media.paged.sheet.command.importXlsx",
     title: "Import workbook (.xlsx)",
     category: "Sheet",
-    handler: () => importXlsx(host, PANEL_ID),
+    // S-11: the command now opens the HOST file picker (and falls back to
+    // the panel's own input when no picker is wired).
+    handler: () => void pickAndImport(host, session, PANEL_ID),
   });
   host.contribute.command({
     id: "media.paged.sheet.command.lowerToFrame",
@@ -80,6 +82,36 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => host.shell.openPanel(GRID_PANEL_ID),
   });
+
+  // K-2 / S-06 — register the .xlsx IMPORTER so opening a spreadsheet
+  // through the editor's File/Open or drag-drop routes its bytes HERE (the
+  // host loads them into this in-memory session instead of the IDML
+  // loader — it does NOT replace the document). Same path as the in-panel
+  // import; degrades honestly if the host predates the door.
+  if (host.supports("contribute.importer@1")) {
+    host.contribute.importer({
+      id: "media.paged.sheet.importer.xlsx",
+      title: "Spreadsheet",
+      extensions: [".xlsx"],
+      mimeTypes: [XLSX_MIME],
+      import: async ({ name, bytes }) => {
+        await session.import(bytes, name);
+        host.shell.openPanel(PANEL_ID);
+      },
+    });
+  }
+  // K-2 / S-06 — register the .xlsx EXPORTER: the Export Center pulls the
+  // workbook bytes on demand (the host owns blob→download). Preservation-
+  // first re-emit via session.saveWorkbook → engine.saveXlsx (§10.2).
+  if (host.supports("contribute.exporter@1")) {
+    host.contribute.exporter({
+      id: "media.paged.sheet.exporter.xlsx",
+      title: "Workbook (.xlsx)",
+      extension: ".xlsx",
+      mimeType: XLSX_MIME,
+      export: () => session.saveWorkbook(),
+    });
+  }
 
   host.log.info(`activated (apiVersion ${manifest.apiVersion})`);
 

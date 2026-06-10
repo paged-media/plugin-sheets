@@ -31,6 +31,12 @@
       "media.paged.sheet.command.lowerToFrame",
       "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid"
+    ],
+    "importers": [
+      "media.paged.sheet.importer.xlsx"
+    ],
+    "exporters": [
+      "media.paged.sheet.exporter.xlsx"
     ]
   }
 }

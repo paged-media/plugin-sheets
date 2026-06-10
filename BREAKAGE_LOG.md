@@ -19,8 +19,13 @@ content-box reflow event) RESOLVED by core protocol **v38** —
 `host.document.frameChain(storyId)` + `DocumentChangeEvent.reflow`; live
 multi-frame pagination now threads a tall range across the host chain and
 re-paginates on a content-box resize (never on a pure transform, §8.5).
-Remaining: S-06/S-07/S-08/S-11 (IO+workers+OPFS), S-02/S-01 (in-frame
-sheets mode).
+**Platform Wave 3 — IO slice (2026-06-10):** S-06 (importer/exporter
+registration) + S-11 (host file picker) RESOLVED — pure SDK + editor
+surface, NO wire/protocol change: `ContributionSurface.importer()/
+exporter()` + `ShellSurface.pickFile()`; `.xlsx` now opens via the
+plugin (File/Open + drag-drop route to the importer) and the workbook
+panel picks through the host dialog. Remaining: S-07/S-08 (workers +
+OPFS — Wave 3b), S-02/S-01 (in-frame sheets mode).
 
 ---
 
@@ -60,13 +65,14 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
   **COVERED** (core asset surface).
 - Worker spawn + SharedArrayBuffer — **GAP** → S-07 (joint I-02).
 - OPFS quota — **GAP** → S-08 (joint I-03).
-- Register importer/exporter (XLSX opens via the plugin) — **GAP** →
-  S-06 (joint I-05).
+- Register importer/exporter (XLSX opens via the plugin) — **COVERED**
+  (S-06 RESOLVED — `contribute.importer()/exporter()`; `.xlsx` opens via
+  the plugin through File/Open + drag-drop; joint I-05).
 
 Sheets-discovered, beyond the §2.2 table: the wasm-bindgen loader path
-(S-10 — **RESOLVED**, ratified), the host file picker (S-11), font
-metrics (S-13 — **RESOLVED**, `measure_text`), and range clipboard
-(S-14).
+(S-10 — **RESOLVED**, ratified), the host file picker (S-11 —
+**RESOLVED**, `host.shell.pickFile`), font metrics (S-13 —
+**RESOLVED**, `measure_text`), and range clipboard (S-14).
 
 ---
 
@@ -207,16 +213,27 @@ metrics (S-13 — **RESOLVED**, `measure_text`), and range clipboard
   SDK gate — reading the host's actual frame-chain topology and
   receiving content-box reflow notifications — is unchanged.
 
-- **S-06 · 2026-06-07 · importer/exporter · OPEN** — no
-  importer/exporter registration capability: `ContributionSurface`
-  offers tool/panel/schemaPanel/command/keybinding/overlay/editContext/
-  objectType but no `importer()`/`exporter()`, and `PluginContributions`
-  has no `importers`/`exporters` field — so `.xlsx` cannot register as a
-  document open/import handler. T0 imports via an in-panel
-  `<input type="file">` (see S-11). **Joint RFC with plugin-image's
-  document-type-handler row (I-05)** — both want the same contribution
-  capability ("XLSX opens via the plugin" / "PSD opens via the plugin").
-  Resolution: importer/exporter registration capability.
+- **S-06 · 2026-06-07 · importer/exporter · RESOLVED (2026-06-10)** —
+  the SDK gained the document-IO contributions (plugin-platform RFI
+  Wave 3, the IO slice; NO wire/protocol change — pure SDK + editor
+  surface). `ContributionSurface.importer()/exporter()`,
+  `ImporterContribution`/`ExporterContribution` (+ `ImportRequest`/
+  `ExportResult`), `PluginContributions.importers[]/exporters[]`
+  (id-only, mirroring `commands`) + schema + CLI namespace check;
+  `HOST_FEATURES` += `contribute.importer@1`/`contribute.exporter@1`.
+  The editor owns the registries (`registries/document-io.ts` —
+  `resolve(name,mime)` by extension-then-MIME, `acceptExtensions()`):
+  the open + drag-drop flow consults the importer registry by extension
+  BEFORE the default IDML load, so a `.xlsx` routes its bytes to the
+  plugin's `import()` instead of replacing the document; exporters
+  surface as one-click outputs in the Export Center (the host owns
+  blob→download). paged.sheet registers both
+  (`packages/sheet-bundle/src/activate.ts`): the `.xlsx` importer feeds
+  `session.import` (then opens the panel), the exporter pulls
+  `session.saveWorkbook → engine.saveXlsx` (preservation-first re-emit).
+  Joint with plugin-image's document-type-handler (I-05) — the same
+  contribution capability serves both. Tests: `activate.spec.ts`
+  (registration + manifest match), `import-xlsx.spec.ts` (pick → import).
 
 - **S-07 · 2026-06-07 · workers · OPEN** — no worker-spawn /
   SharedArrayBuffer capability (`BundleHost` has no `spawn`/`worker`;
@@ -281,12 +298,22 @@ metrics (S-13 — **RESOLVED**, `measure_text`), and range clipboard
   loader door for wasm-bindgen-shaped modules, or ratify the glue path
   as the contract.
 
-- **S-11 · 2026-06-07 · shell / file input · OPEN** — no host
-  file-picker surface (`ShellSurface` = openPanel/closePanel only). T0
-  uses an in-panel `<input type="file" accept=".xlsx">` (the React
-  expert-leaf escape hatch; the panel owns its own DOM, like paged.web's
-  source panel — `workbook-panel.tsx`). Clean path: a
-  `host.shell.pickFile()` door or the S-06 importer registration.
+- **S-11 · 2026-06-07 · shell / file picker · RESOLVED (2026-06-10)** —
+  `ShellSurface.pickFile(options?) -> Promise<readonly PickedFile[]>` is
+  LIVE (plugin-platform RFI Wave 3 IO; no wire/protocol change). It
+  returns the chosen files' BYTES (read at the host boundary — a DOM
+  `File` never crosses the contract, so the bundle stays isolate-ready);
+  `[]` on cancel OR when no picker is wired (the honest no-picker door —
+  probe `supports("shell.pickFile@1")`). The editor backs it with a
+  transient `<input type="file">` (`apps/canvas/src/shell-file-picker.ts`,
+  injected as the `shell.pickFile` host option in `main.tsx`). paged.sheet
+  now imports through it: the workbook panel shows a "Choose .xlsx…"
+  button (`workbook-panel.tsx`) and the `importXlsx` command calls
+  `pickAndImport` (`import-xlsx.ts`), both routing to
+  `host.shell.pickFile({ accept: [".xlsx"] })`. The in-panel `<input>` is
+  RETAINED as the honest fallback ONLY when `supports("shell.pickFile@1")`
+  is false (headless / a host predating the door). Tests:
+  `import-xlsx.spec.ts` (pick + cancel + fallback paths).
 
 - **S-12 · 2026-06-08 · charts / paged.draw · RESOLVED (2026-06-09,
   verified)** — confirmed the published wire carries `insertPath` /

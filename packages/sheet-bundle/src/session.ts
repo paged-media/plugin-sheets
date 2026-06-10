@@ -103,6 +103,11 @@ export interface WorkbookSession {
    *  only drives the write + signal. Returns false when there is no engine
    *  / active sheet or the write throws (never throws). */
   editCell(sheet: number, row: number, col: number, input: string): boolean;
+  /** Re-emit the loaded workbook as XLSX bytes for the exporter
+   *  contribution (S-06). Preservation-first (`engine.saveXlsx` — the
+   *  lazy-verbatim re-emit, §10.2). Returns the bytes + a suggested file
+   *  name, or null when there is no workbook (nothing to export). */
+  saveWorkbook(): { bytes: Uint8Array; fileName: string } | null;
   /** Tear down: free the engine, drop listeners. */
   dispose(): void;
 }
@@ -281,6 +286,21 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       // the windowed scene on the next render).
       emitter.emit();
       return true;
+    },
+
+    saveWorkbook() {
+      if (!state.engine) {
+        host.log.warn("saveWorkbook: no workbook");
+        return null;
+      }
+      try {
+        const bytes = state.engine.saveXlsx();
+        const base = (state.fileName ?? "workbook").replace(/\.xlsx$/i, "");
+        return { bytes, fileName: `${base}.xlsx` };
+      } catch (err) {
+        host.log.error("saveWorkbook: engine save failed", err);
+        return null;
+      }
     },
 
     dispose() {

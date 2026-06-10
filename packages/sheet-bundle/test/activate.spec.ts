@@ -10,6 +10,8 @@ import type {
   BundleHost,
   CommandContribution,
   Disposable,
+  ExporterContribution,
+  ImporterContribution,
   PanelContribution,
 } from "@paged-media/plugin-api";
 
@@ -22,6 +24,8 @@ import { sheetBundle } from "../src";
 function fakeHost() {
   const panels: PanelContribution[] = [];
   const commands: CommandContribution[] = [];
+  const importers: ImporterContribution[] = [];
+  const exporters: ExporterContribution[] = [];
   let disposed = 0;
   const track = (): Disposable => ({
     dispose() {
@@ -32,6 +36,10 @@ function fakeHost() {
   const host = {
     manifest: sheetBundle.manifest,
     log: { debug() {}, info() {}, warn() {}, error() {} },
+    // The IO contribution doors are wired; the host file picker is NOT,
+    // so importXlsx exercises the panel-fallback path (S-11 fallback).
+    supports: (f: string) =>
+      f === "contribute.importer@1" || f === "contribute.exporter@1",
     contribute: {
       panel(c: PanelContribution): Disposable {
         panels.push(c);
@@ -39,6 +47,14 @@ function fakeHost() {
       },
       command(c: CommandContribution): Disposable {
         commands.push(c);
+        return track();
+      },
+      importer(c: ImporterContribution): Disposable {
+        importers.push(c);
+        return track();
+      },
+      exporter(c: ExporterContribution): Disposable {
+        exporters.push(c);
         return track();
       },
     },
@@ -53,6 +69,8 @@ function fakeHost() {
     host,
     panels,
     commands,
+    importers,
+    exporters,
     openedPanels,
     disposedCount: () => disposed,
   };
@@ -102,14 +120,36 @@ describe("sheet_plugin_bundle_activate", () => {
     );
   });
 
-  it("importXlsx command opens the workbook panel (S-11: panel owns the file input)", () => {
+  it("importXlsx command falls back to opening the panel when no host picker (S-11 fallback)", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     const importCmd = fake.commands.find((c) =>
       c.id.endsWith("importXlsx"),
     );
+    // The fake reports no shell.pickFile@1, so pickAndImport opens the
+    // workbook panel (the panel's <input> is the no-picker path).
     importCmd?.handler(undefined);
     expect(fake.openedPanels).toEqual(["media.paged.sheet.panel.workbook"]);
+  });
+
+  it("registers the .xlsx importer + exporter (K-2 / S-06)", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    expect(fake.importers.map((i) => i.id)).toEqual([
+      "media.paged.sheet.importer.xlsx",
+    ]);
+    expect(fake.importers[0].extensions).toEqual([".xlsx"]);
+    expect(fake.exporters.map((e) => e.id)).toEqual([
+      "media.paged.sheet.exporter.xlsx",
+    ]);
+    expect(fake.exporters[0].extension).toBe(".xlsx");
+    // The declared ids match the manifest's contributes block.
+    expect(fake.importers.map((i) => i.id)).toEqual(
+      sheetBundle.manifest.contributes?.importers,
+    );
+    expect(fake.exporters.map((e) => e.id)).toEqual(
+      sheetBundle.manifest.contributes?.exporters,
+    );
   });
 
   it("dispose tears the session down (no throw — honesty smoke test)", () => {
