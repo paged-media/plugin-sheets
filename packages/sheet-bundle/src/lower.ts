@@ -23,17 +23,24 @@
 // read door (plugin-web re-reads its created frame via getMetadata; here
 // the needed datum is the story, and hitTest is the door that yields it).
 
-import type { BundleHost, ElementId, PageId } from "@paged-media/plugin-api";
+import type {
+  BundleHost,
+  Disposable,
+  ElementId,
+  PageId,
+} from "@paged-media/plugin-api";
 import {
   BINDING_KEY,
   defaultPlacement,
   makeBinding,
+  pageTableMutations,
   tableCellOps,
   tableInsertOp,
   type LoweredContent,
+  type Page,
 } from "@paged-media/sheet-host-model";
 
-import type { SheetEngine } from "./engine";
+import type { FrameBox, SheetEngine } from "./engine";
 
 /** Per-column width (pt) from the document's font metrics (S-13). For
  *  each column, measure the widest formatted cell text via the host
@@ -194,4 +201,262 @@ export async function lowerSelectionToFrame(
 
   await host.selection.set([outcome.createdId]);
   return frameId;
+}
+
+// ── Live multi-frame pagination across the host frame chain (Wave 2D,
+// RFI C-2 / S-05; spec §8.2 "the killer feature"). The engine threads a
+// tall range across the chain's content boxes (Rust); this flow reads the
+// real chain via host.document.frameChain, resolves each frame's content
+// box via host.document.elementGeometry, lowers each Page into ITS frame's
+// story, and re-paginates when a content-box reflow event fires (§8.5: a
+// pure transform — move/scale/rotate — never re-paginates; only a
+// resizeFrame does, carried by DocumentChangeEvent.reflow).
+
+/** A resolved chain frame: its raw frame id + content box (frame-content pt,
+ *  §8.5 — the geometry door's bounds ARE the content box). */
+interface ChainFrame {
+  frameId: string;
+  box: FrameBox;
+}
+
+/** The active page id of a story-bearing frame, recovered via hitTest's
+ *  storyId on the frame center. */
+async function frameStoryId(
+  host: BundleHost,
+  pageId: PageId,
+  bounds: [number, number, number, number],
+): Promise<string | null> {
+  const hit = await host.document.hitTest(pageId, center(bounds));
+  return hit?.storyId ?? null;
+}
+
+/** Resolve a frame's content box (frame-content pt) from its page geometry.
+ *  `elementGeometry` returns `bounds: [top, left, bottom, right]` in
+ *  content-box space (§8.5) — exactly the box pagination threads into. */
+function boxOf(bounds: [number, number, number, number]): FrameBox {
+  const [top, left, bottom, right] = bounds;
+  return { widthPt: right - left, heightPt: bottom - top };
+}
+
+/**
+ * Read the host frame chain starting from `storyId` and resolve each link's
+ * content box (Wave 2D / S-05). Returns the ordered `ChainFrame[]` — the
+ * input to pagination. A link with no resolvable geometry is dropped (the
+ * caller under-provisioned; pagination tolerates a short chain). Empty when
+ * the story threads no frames.
+ */
+export async function resolveChain(
+  host: BundleHost,
+  storyId: string,
+): Promise<ChainFrame[]> {
+  const links = await host.document.frameChain(storyId);
+  if (links.length === 0) return [];
+
+  const ids = links.map((l) => ({
+    kind: "textFrame" as const,
+    id: l.frameId,
+  }));
+  const geom = await host.document.elementGeometry(ids);
+  const byId = new Map(geom.map((g) => [idOf(g.id), g.bounds]));
+
+  const chain: ChainFrame[] = [];
+  for (const link of links) {
+    const bounds = byId.get(link.frameId);
+    if (!bounds) continue; // no geometry → drop this link (honest shortfall)
+    chain.push({ frameId: link.frameId, box: boxOf(bounds) });
+  }
+  return chain;
+}
+
+/** The raw id string of an ElementId (textFrame/rectangle carry a string
+ *  id; others are out of scope for the chain). */
+function idOf(id: ElementId): string | null {
+  if (id.kind === "textFrame" || id.kind === "rectangle") {
+    return id.id as string;
+  }
+  return null;
+}
+
+/**
+ * Lower one paginated `Page` into a chain frame's story as a native table
+ * (Wave 2D / S-05). Resolves the frame's storyId via hitTest, then drives
+ * the two-phase native-table emission (`pageTableMutations`): insert (its
+ * outcome mints the tableId) → pour the cells. Returns the resolved tableId
+ * or null on any failure (mutate-never-throws: outcomes are checked).
+ */
+async function lowerPageToFrame(
+  host: BundleHost,
+  pageId: PageId,
+  frame: ChainFrame,
+  page: Page,
+): Promise<string | null> {
+  const storyId = await frameStoryId(host, pageId, frameBounds(frame));
+  if (!storyId) {
+    host.log.warn(
+      `chain-lower: could not resolve story for frame ${frame.frameId}`,
+    );
+    return null;
+  }
+
+  const columnWidths = await measureColumnWidths(host, page.content);
+  const ops = pageTableMutations(page, storyId, columnWidths);
+
+  const tableOutcome = await host.document.mutate(ops.insert);
+  if (!tableOutcome.applied || !tableOutcome.createdId) {
+    host.log.warn("chain-lower: insertTable rejected", tableOutcome);
+    return null;
+  }
+  const tableId = tableOutcome.createdId.id as string;
+
+  const cellBatch = ops.cells(tableId);
+  if (cellBatch.op === "batch" && cellBatch.args.ops.length > 0) {
+    const pour = await host.document.mutate(cellBatch);
+    if (!pour.applied) host.log.warn("chain-lower: cell pour rejected", pour);
+  }
+  return tableId;
+}
+
+/** A chain frame's page-local bounds for the hitTest center. The geometry
+ *  door gave us the content box; we reconstruct a bounds tuple at the
+ *  origin so the center lands inside the frame (hitTest uses page-local
+ *  coords, but a frame's own center in content space coincides with the
+ *  hittable interior — the existing single-frame flow uses the placement
+ *  bounds the same way). */
+function frameBounds(frame: ChainFrame): [number, number, number, number] {
+  return [0, 0, frame.box.heightPt, frame.box.widthPt];
+}
+
+/** The result of a chain pagination pass. */
+export interface ChainLowerResult {
+  /** The story whose chain was paginated. */
+  storyId: string;
+  /** The resolved chain frames (in order). */
+  chain: ChainFrame[];
+  /** The pages the engine produced (one per filled frame). */
+  pages: Page[];
+  /** The tableId lowered into each page's frame (null where a frame's story
+   *  could not be resolved or the table was rejected). */
+  tableIds: (string | null)[];
+}
+
+/**
+ * Lower `sheet`/`range` ACROSS a host frame chain with live pagination
+ * (Wave 2D, RFI C-2 / S-05; spec §8.2). Reads the real chain via
+ * `host.document.frameChain(storyId)`, resolves each frame's content box via
+ * `host.document.elementGeometry`, asks the engine to paginate the range into
+ * those boxes (all threading math in Rust), and lowers each resulting `Page`
+ * into ITS frame's story as a native table. Returns the pass result, or null
+ * when no chain resolves.
+ *
+ * `chainStoryId` selects the chain; pass the story of the active/first frame
+ * (the caller resolves it from selection or a known frame). The caller may
+ * instead supply a ready `chain` (the frames + boxes) to bypass the host
+ * reads — same downstream lowering.
+ */
+export async function lowerPaginatedToChain(
+  host: BundleHost,
+  engine: SheetEngine,
+  sheet: number,
+  range: string,
+  chainStoryId: string,
+  opts?: {
+    repeatedHeaderRows?: number;
+    continuedMarker?: boolean;
+    keepRowsTogether?: [number, number][];
+    chain?: ChainFrame[];
+  },
+): Promise<ChainLowerResult | null> {
+  const pageId = await activePageId(host);
+  if (!pageId) {
+    host.log.warn("chain-lower: no page to paginate into");
+    return null;
+  }
+
+  const chain =
+    opts?.chain ?? (await resolveChain(host, chainStoryId));
+  if (chain.length === 0) {
+    host.log.warn(`chain-lower: story ${chainStoryId} threads no frames`);
+    return null;
+  }
+
+  // Engine-computed pagination (all spreadsheet + threading semantics in
+  // Rust). Hand it the chain's content boxes in order.
+  const pages = engine.paginate(
+    sheet,
+    range,
+    chain.map((c) => c.box),
+    {
+      repeatedHeaderRows: opts?.repeatedHeaderRows,
+      continuedMarker: opts?.continuedMarker,
+      keepRowsTogether: opts?.keepRowsTogether,
+    },
+  );
+
+  // Lower each page into the frame it targets (page.frameIndex indexes the
+  // chain we handed the engine).
+  const tableIds: (string | null)[] = [];
+  for (const page of pages) {
+    const frame = chain[page.frameIndex];
+    if (!frame) {
+      // The engine returned a page for a frame index past the chain — should
+      // not happen (paginate only fills supplied frames), but stay honest.
+      tableIds.push(null);
+      continue;
+    }
+    tableIds.push(await lowerPageToFrame(host, pageId, frame, page));
+  }
+
+  return { storyId: chainStoryId, chain, pages, tableIds };
+}
+
+/**
+ * Subscribe to live re-pagination for a chain (Wave 2D, S-05; §8.5). Every
+ * `host.document.onDidChange` event that carries `reflow` for a frame IN the
+ * active chain re-runs `lowerPaginatedToChain` (a content-box resize changed
+ * the available height — re-split). Events with NO `reflow` are the §8.5
+ * transform case (move/scale/rotate is display-only) and are IGNORED — they
+ * never re-paginate. Returns the subscription `Disposable`; the chain is
+ * re-resolved on every reflow (a resize can add/remove fitting rows but the
+ * topology read stays cheap).
+ */
+export function subscribeChainReflow(
+  host: BundleHost,
+  engine: SheetEngine,
+  sheet: number,
+  range: string,
+  chainStoryId: string,
+  opts?: {
+    repeatedHeaderRows?: number;
+    continuedMarker?: boolean;
+    keepRowsTogether?: [number, number][];
+  },
+): Disposable {
+  // Track the chain frame ids so we only react to reflow of OUR frames.
+  let chainFrameIds = new Set<string>();
+  void resolveChain(host, chainStoryId).then((chain) => {
+    chainFrameIds = new Set(chain.map((c) => c.frameId));
+  });
+
+  return host.document.onDidChange((e) => {
+    // §8.5: no reflow → a pure transform → DO NOT re-paginate.
+    if (!e.reflow) return;
+    // Only re-paginate when the resized frame belongs to this chain. If we
+    // have not yet resolved the chain (the async prime is in flight), fall
+    // through and re-paginate — re-resolving the chain is the source of truth.
+    if (chainFrameIds.size > 0 && !chainFrameIds.has(e.reflow.frameId)) return;
+
+    void (async () => {
+      const result = await lowerPaginatedToChain(
+        host,
+        engine,
+        sheet,
+        range,
+        chainStoryId,
+        opts,
+      );
+      if (result) {
+        chainFrameIds = new Set(result.chain.map((c) => c.frameId));
+      }
+    })();
+  });
 }

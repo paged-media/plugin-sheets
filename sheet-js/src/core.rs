@@ -41,7 +41,9 @@ use sheet_calc::{Engine, EngineConfig};
 use sheet_chart::{generate as generate_chart, ChartGeometry, PlotData};
 use sheet_core::{parse_a1, CellValue, DateSystem, RangeRef, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
-use sheet_lower::{lower_range, CellRange, ViewOptions};
+use sheet_lower::{
+    lower_range, paginate as lower_paginate, CellRange, FrameBox, Page, ViewOptions,
+};
 use sheet_parser::{parse, print, ParseCtx, SheetNames};
 use sheet_xlsx::{XlsxChart, XlsxDocument};
 
@@ -131,6 +133,28 @@ pub struct LowerOptions {
 #[serde(rename_all = "camelCase", default)]
 pub struct GridSceneOptions {
     pub include_gridlines: Option<bool>,
+}
+
+/// One frame's content box, deserialized from the TS chain's content boxes
+/// (`{ widthPt, heightPt }` — Wave 2D, S-05). The host reads the chain via
+/// `host.document.frameChain(storyId)` + `elementGeometry`; only the height
+/// drives pagination, the width rides along (mirrors [`FrameBox`]).
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FrameBoxArg {
+    pub width_pt: f64,
+    pub height_pt: f64,
+}
+
+/// Pagination options forwarded verbatim from the TS `PaginateOptions` (serde
+/// defaults so an absent/partial object is accepted). Mirrors
+/// [`sheet_lower::PaginateOptions`] across the wasm door (Wave 2D, S-05).
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PaginateOptionsArg {
+    pub repeated_header_rows: Option<u32>,
+    pub continued_marker: Option<bool>,
+    pub keep_rows_together: Option<Vec<(u32, u32)>>,
 }
 
 // ─────────────────────────────────────────────────────────── the session
@@ -451,6 +475,83 @@ impl SheetSession {
         };
         let model = self.engine.as_ref().expect("engine present").model();
         Ok(lower_range(model, sheet, cell_range, &view))
+    }
+
+    /// Paginate `range` of `sheet` across `frames` (the host frame chain's
+    /// content boxes; Wave 2D, S-05). Threads a tall range into the ordered
+    /// frame list — rows that do not fit flow to the next frame, headers can
+    /// repeat, keep-together blocks never split — and returns one self-contained
+    /// [`Page`] per filled frame (each a [`sheet_lower::LoweredContent`] plus its
+    /// `frame_index` + `continued`/`oversize` flags). Reuses the pure
+    /// [`sheet_lower::paginate`]; this method is the same boundary-validated
+    /// surface as [`get_range_lowered`](Self::get_range_lowered).
+    ///
+    /// Junk endpoints are a boundary error; an OOB sheet id is rejected
+    /// (finding-2 discipline); the per-frame area is bounded by the SAME T0
+    /// cell cap as single-frame lowering (the full range is lowered once
+    /// internally, so the cap guards the same materialization).
+    pub fn paginate(
+        &self,
+        sheet: u16,
+        range: &str,
+        frames: Vec<FrameBoxArg>,
+        opts: PaginateOptionsArg,
+    ) -> Result<Vec<Page>, SessionError> {
+        let cell_range = parse_range(range)?;
+
+        // Validate the sheet id (FREEZE AMENDMENT, audit finding 2 — matches
+        // `set_cell`/`get_range_lowered`).
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
+        if (sheet as usize) >= sheet_count {
+            return Err(SessionError(format!(
+                "sheet id {sheet} out of range ({sheet_count} sheets)"
+            )));
+        }
+
+        // Cap the materialized area BEFORE paginating (FREEZE AMENDMENT, audit
+        // finding 1). `paginate` lowers the full range once internally, so the
+        // same cap that guards `get_range_lowered` applies here. u64 math so a
+        // full-sheet range cannot overflow `rows * cols`.
+        let (top, left, bottom, right) = (
+            cell_range.r0.min(cell_range.r1) as u64,
+            cell_range.c0.min(cell_range.c1) as u64,
+            cell_range.r0.max(cell_range.r1) as u64,
+            cell_range.c0.max(cell_range.c1) as u64,
+        );
+        let area = (bottom - top + 1) * (right - left + 1);
+        if area > T0_LOWER_CELL_CAP {
+            return Err(SessionError(format!(
+                "range exceeds the T0 lowering cap ({T0_LOWER_CELL_CAP} cells)"
+            )));
+        }
+
+        let boxes: Vec<FrameBox> = frames
+            .into_iter()
+            .map(|f| FrameBox {
+                width_pt: f.width_pt,
+                height_pt: f.height_pt,
+            })
+            .collect();
+        let paginate_opts = sheet_lower::PaginateOptions {
+            repeated_header_rows: opts.repeated_header_rows.unwrap_or(0),
+            continued_marker: opts.continued_marker.unwrap_or(false),
+            keep_rows_together: opts.keep_rows_together.unwrap_or_default(),
+        };
+
+        let model = self.engine.as_ref().expect("engine present").model();
+        Ok(lower_paginate(
+            model,
+            sheet,
+            cell_range,
+            &boxes,
+            &paginate_opts,
+        ))
     }
 
     /// Window a worksheet into a [`sheet_grid::GridScene`] for the sheets-mode

@@ -8,14 +8,20 @@ import { describe, expect, it } from "vitest";
 
 import type {
   BundleHost,
+  DocumentChangeEvent,
+  ElementGeometryItem,
   ElementId,
+  FrameChainLink,
   Mutation,
   MutationOutcome,
 } from "@paged-media/plugin-api";
+import type { Page } from "@paged-media/sheet-host-model";
 
 import {
   lowerChartToFrame,
+  lowerPaginatedToChain,
   lowerSelectionToFrame,
+  subscribeChainReflow,
   type SheetEngine,
 } from "../src";
 
@@ -44,6 +50,7 @@ function fakeEngine(): SheetEngine {
       rules: { h: [{ at: 18, from: 0, to: 100 }], v: [] },
       merges: [],
     }),
+    paginate: () => [],
     getGridScene: () => ({
       viewport: { firstRow: 0, firstCol: 0, rows: 0, cols: 0, xOffsets: [0], yOffsets: [0] },
       cells: [],
@@ -274,5 +281,262 @@ describe("sheet_chart_lower_paged_draw: bundle two-phase flow", () => {
     const ok = await lowerChartToFrame(host, empty, 0);
     expect(ok).toBe(false); // empty geometry => nothing lowered
     expect(mutations).toEqual([]);
+  });
+});
+
+// ── live multi-frame pagination across the host chain (Wave 2D, S-05) ────────
+
+/** Drain the microtask queue until `pred` holds or `ticks` is exhausted —
+ *  the async chain-lower flow hops several awaits (meta → frameChain →
+ *  elementGeometry → paginate → per-frame hitTest/mutate), so a fixed
+ *  `Promise.resolve()` count is brittle. */
+async function until(pred: () => boolean, ticks = 50): Promise<void> {
+  for (let i = 0; i < ticks && !pred(); i++) {
+    await Promise.resolve();
+  }
+}
+
+/** One page over a fixed 1-row content (the slice text differs per page). */
+function pageFor(frameIndex: number, text: string, continued: boolean): Page {
+  return {
+    frameIndex,
+    content: {
+      cols: [{ index: 0, widthPt: 50 }],
+      rows: [
+        { index: 0, heightPt: 18, cells: [{ col: 0, text, align: "left" }] },
+      ],
+      rules: { h: [], v: [] },
+      merges: [],
+    },
+    continued,
+    oversize: false,
+  };
+}
+
+/** A fake engine whose `paginate` returns two pages (one per chain frame),
+ *  recording the boxes it was handed. */
+function fakeChainEngine() {
+  const paginateCalls: Array<{
+    sheet: number;
+    range: string;
+    frames: Array<{ widthPt: number; heightPt: number }>;
+  }> = [];
+  const engine: SheetEngine = {
+    ...fakeEngine(),
+    paginate(sheet, range, frames) {
+      paginateCalls.push({ sheet, range, frames });
+      return [pageFor(0, "r0", true), pageFor(1, "r1", false)];
+    },
+  };
+  return { engine, paginateCalls };
+}
+
+/** A fake host with a real frame chain (2 links), per-frame geometry boxes,
+ *  per-frame story resolution (hitTest), table minting (mutate), and an
+ *  onDidChange channel the test fires reflow / non-reflow events on. */
+function fakeChainHost(links: FrameChainLink[]) {
+  const mutations: Mutation[] = [];
+  const listeners: Array<(e: DocumentChangeEvent) => void> = [];
+  let tableSeq = 0;
+
+  // Each frame: a content box (from elementGeometry) + a story (from hitTest).
+  const boxes: Record<string, [number, number, number, number]> = {
+    f0: [0, 0, 54, 50], // 54pt tall (3 × 18) , 50 wide
+    f1: [0, 0, 54, 50],
+  };
+  const storyByFrame: Record<string, string> = {
+    f0: "Story/f0",
+    f1: "Story/f1",
+  };
+
+  const host = {
+    log: { debug() {}, info() {}, warn() {}, error() {} },
+    document: {
+      async meta() {
+        return { activePage: "Page/u1" } as never;
+      },
+      async collection() {
+        return [] as never;
+      },
+      async frameChain(_storyId: string): Promise<FrameChainLink[]> {
+        return links;
+      },
+      async elementGeometry(ids: ElementId[]): Promise<ElementGeometryItem[]> {
+        return ids
+          .map((id) => {
+            const fid = (id as { id: string }).id;
+            const bounds = boxes[fid];
+            if (!bounds) return null;
+            return {
+              id,
+              pageId: "Page/u1",
+              bounds,
+            } as ElementGeometryItem;
+          })
+          .filter((x): x is ElementGeometryItem => x !== null);
+      },
+      async hitTest(_pageId: string, _pt: [number, number]) {
+        // The flow hit-tests each frame's center; we resolve the story from
+        // which frame's box contains the point. Both frames are placed at the
+        // origin here, so route by call order via a per-frame map keyed on the
+        // y-extent — simpler: return the NEXT unresolved frame's story.
+        const fid = pendingFrames.shift();
+        return fid
+          ? ({ storyId: storyByFrame[fid], frameId: fid } as never)
+          : null;
+      },
+      async mutate(m: Mutation): Promise<MutationOutcome> {
+        mutations.push(m);
+        if (m.op === "insertTable") {
+          tableSeq += 1;
+          return {
+            applied: true,
+            createdId: { kind: "textFrame", id: `tbl${tableSeq}` } as ElementId,
+            pageIds: ["Page/u1"],
+          };
+        }
+        return { applied: true, createdId: null, pageIds: ["Page/u1"] };
+      },
+      onDidChange(listener: (e: DocumentChangeEvent) => void) {
+        listeners.push(listener);
+        return { dispose() {} };
+      },
+    },
+    text: {
+      async measureString() {
+        return { advance: 30, ascender: 9, descender: -2 };
+      },
+    },
+    selection: {
+      async set(ids: ElementId[]) {
+        return ids;
+      },
+    },
+  } as unknown as BundleHost;
+
+  // The hitTest order: the flow lowers page 0 (frame f0) then page 1 (f1).
+  const pendingFrames = ["f0", "f1"];
+  // Reset before each pass: lowerPaginatedToChain hit-tests in chain order.
+  const resetHitOrder = () => {
+    pendingFrames.length = 0;
+    pendingFrames.push("f0", "f1");
+  };
+
+  const fire = (e: DocumentChangeEvent) => {
+    resetHitOrder();
+    for (const l of listeners) l(e);
+  };
+
+  return { host, mutations, listeners, fire, resetHitOrder };
+}
+
+const CHAIN: FrameChainLink[] = [
+  { frameId: "f0", next: "f1", overflow: false },
+  { frameId: "f1", next: null, overflow: false },
+];
+
+describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
+  it("reads the chain, paginates into its boxes, lowers each page to its frame", async () => {
+    const { host, mutations } = fakeChainHost(CHAIN);
+    const { engine, paginateCalls } = fakeChainEngine();
+
+    const result = await lowerPaginatedToChain(
+      host,
+      engine,
+      0,
+      "A1:A6",
+      "Story/f0",
+      { continuedMarker: true },
+    );
+
+    expect(result).not.toBeNull();
+    // The engine was handed the chain's TWO content boxes (height 54 each).
+    expect(paginateCalls).toHaveLength(1);
+    expect(paginateCalls[0].frames).toEqual([
+      { widthPt: 50, heightPt: 54 },
+      { widthPt: 50, heightPt: 54 },
+    ]);
+
+    // Two pages → two tables, one per frame's resolved story.
+    const inserts = mutations.filter((m) => m.op === "insertTable") as Array<{
+      args: { storyId: string };
+    }>;
+    expect(inserts).toHaveLength(2);
+    expect(inserts[0].args.storyId).toBe("Story/f0");
+    expect(inserts[1].args.storyId).toBe("Story/f1");
+
+    // Each frame got its OWN page's cell text (r0 → f0, r1 → f1).
+    const pours = mutations.filter((m) => m.op === "batch") as Array<{
+      args: { ops: Array<{ args: { text?: string } }> };
+    }>;
+    expect(pours).toHaveLength(2);
+    expect(pours[0].args.ops.some((o) => o.args.text === "r0")).toBe(true);
+    expect(pours[1].args.ops.some((o) => o.args.text === "r1")).toBe(true);
+
+    expect(result!.tableIds).toEqual(["tbl1", "tbl2"]);
+  });
+
+  it("re-paginates on a reflow event for a chain frame, ignores non-reflow", async () => {
+    const { host, mutations, fire } = fakeChainHost(CHAIN);
+    const { engine, paginateCalls } = fakeChainEngine();
+
+    const sub = subscribeChainReflow(host, engine, 0, "A1:A6", "Story/f0", {
+      continuedMarker: true,
+    });
+    // Let the async chain-prime in subscribeChainReflow settle.
+    await until(() => false, 5);
+
+    const insertsBefore = mutations.filter((m) => m.op === "insertTable").length;
+    expect(paginateCalls).toHaveLength(0);
+
+    // (a) A change with NO reflow is the §8.5 transform case — IGNORED.
+    fire({ kind: "mutationApplied", pageIds: ["Page/u1"] });
+    await until(() => false, 10); // give a re-pagination a chance to (not) run
+    expect(paginateCalls).toHaveLength(0);
+    expect(mutations.filter((m) => m.op === "insertTable").length).toBe(
+      insertsBefore,
+    );
+
+    // (b) A reflow for a frame IN the chain re-paginates the whole chain.
+    fire({
+      kind: "mutationApplied",
+      pageIds: ["Page/u1"],
+      reflow: { frameId: "f0", contentBox: [0, 0, 36, 50] },
+    });
+    await until(() => paginateCalls.length === 1);
+
+    expect(paginateCalls).toHaveLength(1); // re-paginated exactly once
+    await until(
+      () => mutations.filter((m) => m.op === "insertTable").length ===
+        insertsBefore + 2,
+    );
+    expect(mutations.filter((m) => m.op === "insertTable").length).toBe(
+      insertsBefore + 2, // two pages re-lowered
+    );
+
+    // (c) A reflow for a frame NOT in the chain is ignored.
+    fire({
+      kind: "mutationApplied",
+      pageIds: ["Page/u1"],
+      reflow: { frameId: "fOTHER", contentBox: [0, 0, 10, 10] },
+    });
+    await until(() => false, 10);
+    expect(paginateCalls).toHaveLength(1); // unchanged
+
+    sub.dispose();
+  });
+
+  it("returns null when the story threads no frames", async () => {
+    const { host } = fakeChainHost([]);
+    const { engine, paginateCalls } = fakeChainEngine();
+    const result = await lowerPaginatedToChain(
+      host,
+      engine,
+      0,
+      "A1:A6",
+      "Story/empty",
+    );
+    expect(result).toBeNull();
+    expect(paginateCalls).toHaveLength(0); // never paginates an empty chain
   });
 });

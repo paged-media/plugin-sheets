@@ -11,6 +11,7 @@ export {
   type LoweredContent,
   type LoweredStyle,
   type Merge,
+  type Page,
   type Rule,
   type Rules,
   totalHeightPt,
@@ -49,8 +50,10 @@ export {
 
 export {
   columnOrder,
+  pageTableMutations,
   tableCellOps,
   tableInsertOp,
+  type PageTableOps,
 } from "./lower-to-table";
 
 export {

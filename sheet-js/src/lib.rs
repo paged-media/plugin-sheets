@@ -33,7 +33,7 @@
 //!
 //! The facade boots `new mod.SheetEngine()` (an empty workbook), then calls the
 //! snake_case instance methods `load_xlsx` / `save_xlsx` / `set_cell` /
-//! `get_cell_display` / `get_range_lowered` / `get_grid_scene` /
+//! `get_cell_display` / `get_range_lowered` / `paginate` / `get_grid_scene` /
 //! `set_grid_selection` / `list_sheets` / `free`. The names and JSON shapes
 //! below match that contract exactly; `metadata` / `set_now` are additive (the
 //! panel uses them).
@@ -42,7 +42,9 @@ pub mod core;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use crate::core::{GridSceneOptions, LowerOptions, SheetSession};
+    use crate::core::{
+        FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg, SheetSession,
+    };
     use wasm_bindgen::prelude::*;
 
     /// The wasm class the bundle consumes (`sheet-bundle/src/engine.ts`'s
@@ -116,6 +118,37 @@ mod wasm {
                 .get_range_lowered(sheet, range, opts)
                 .map_err(map_err)?;
             to_js(&lowered)
+        }
+
+        /// Paginate a range across the host frame chain's content boxes (Wave
+        /// 2D, S-05). `frames` is the chain's content boxes
+        /// (`[{widthPt,heightPt}]`); returns the serialized `Vec<Page>` (each
+        /// `{frameIndex, content, continued, oversize}`). Reuses
+        /// `sheet_lower::paginate`. Accepts undefined/null/partial `opts`.
+        pub fn paginate(
+            &self,
+            sheet: u16,
+            range: &str,
+            frames: JsValue,
+            opts: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let frames: Vec<FrameBoxArg> = if frames.is_undefined() || frames.is_null() {
+                Vec::new()
+            } else {
+                serde_wasm_bindgen::from_value(frames)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let opts: PaginateOptionsArg = if opts.is_undefined() || opts.is_null() {
+                PaginateOptionsArg::default()
+            } else {
+                serde_wasm_bindgen::from_value(opts)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let pages = self
+                .session
+                .paginate(sheet, range, frames, opts)
+                .map_err(map_err)?;
+            to_js(&pages)
         }
 
         /// Window a sheet into a `GridScene` for the sheets-mode grid surface

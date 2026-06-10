@@ -21,6 +21,7 @@ import type {
   ChartGeometry,
   GridScene,
   LoweredContent,
+  Page,
 } from "@paged-media/sheet-host-model";
 
 // ------------------------------------------------------------ facade
@@ -54,6 +55,25 @@ export interface LowerOptions {
  *  the engine windows in Rust, spec §8.1). */
 export interface GridSceneOptions {
   includeGridlines?: boolean;
+}
+
+/** One frame's content box for pagination (the host chain link's content
+ *  box; Wave 2D / S-05). Only height bounds the split; width rides along.
+ *  Forwarded verbatim to wasm. */
+export interface FrameBox {
+  widthPt: number;
+  heightPt: number;
+}
+
+/** Options the pagination pass honours (forwarded verbatim to wasm — the
+ *  threading math lives in Rust, spec §8.2). */
+export interface PaginateOptions {
+  /** Leading rows re-emitted at the top of every continuation frame. */
+  repeatedHeaderRows?: number;
+  /** Append a continued-from marker to frames followed by more body rows. */
+  continuedMarker?: boolean;
+  /** Range-relative `[firstRow, lastRow]` blocks never split across a break. */
+  keepRowsTogether?: [number, number][];
 }
 
 /** One chart in the workbook (M2 charts track, spec §8.4) — the engine's
@@ -94,6 +114,17 @@ export interface SheetEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  /** Paginate a range across the host frame chain's content boxes (Wave 2D
+   *  / S-05). `frames` is the chain's content boxes (only height splits);
+   *  returns one `Page` per filled frame — each a self-contained
+   *  `LoweredContent` plus its chain index + continuation flags. The
+   *  threading math lives in Rust (spec §8.2, the killer feature). */
+  paginate(
+    sheet: number,
+    range: string,
+    frames: FrameBox[],
+    opts?: PaginateOptions,
+  ): Page[];
   /** Window a sheet into a [`GridScene`] for the sheets-mode grid surface
    *  (spec §8.1, S-02). The engine windows from the `(firstRow, firstCol)`
    *  scroll origin bounded by `(wPt, hPt)` and materializes only visible
@@ -153,6 +184,12 @@ export interface SheetWasmEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  paginate(
+    sheet: number,
+    range: string,
+    frames: FrameBox[],
+    opts?: PaginateOptions,
+  ): Page[];
   get_grid_scene(
     sheet: number,
     first_row: number,
@@ -198,6 +235,8 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.get_cell_display(sheet, row, col),
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
+    paginate: (sheet, range, frames, opts) =>
+      wasm.paginate(sheet, range, frames, opts),
     getGridScene: (sheet, firstRow, firstCol, wPt, hPt, opts) =>
       wasm.get_grid_scene(sheet, firstRow, firstCol, wPt, hPt, opts),
     setGridSelection: (sheet, anchorRow, anchorCol, rows, cols) =>

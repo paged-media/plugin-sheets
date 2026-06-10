@@ -63,6 +63,12 @@ function fakeWasm() {
       calls.push({ method: "get_range_lowered", args: [sheet, range, opts] });
       return lowered;
     },
+    paginate(sheet, range, frames, opts) {
+      calls.push({ method: "paginate", args: [sheet, range, frames, opts] });
+      return [
+        { frameIndex: 0, content: lowered, continued: false, oversize: false },
+      ];
+    },
     get_grid_scene(sheet, firstRow, firstCol, wPt, hPt, opts) {
       calls.push({
         method: "get_grid_scene",
@@ -119,6 +125,16 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       lowered,
     );
     expect(
+      engine.paginate(
+        0,
+        "A1:B9",
+        [{ widthPt: 100, heightPt: 50 }],
+        { continuedMarker: true },
+      ),
+    ).toEqual([
+      { frameIndex: 0, content: lowered, continued: false, oversize: false },
+    ]);
+    expect(
       engine.getGridScene(0, 0, 0, 480, 320, { includeGridlines: true }),
     ).toBe(scene);
     engine.setGridSelection(0, 1, 2, 3, 4);
@@ -137,6 +153,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "set_cell",
       "get_cell_display",
       "get_range_lowered",
+      "paginate",
       "get_grid_scene",
       "set_grid_selection",
       "list_sheets",
@@ -147,9 +164,15 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     // argument fidelity through the facade.
     expect(calls[0].args[0]).toBe(bytes);
     expect(calls[4].args).toEqual([0, "A1:B2", { includeGridRules: true }]);
-    expect(calls[5].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
-    expect(calls[6].args).toEqual([0, 1, 2, 3, 4]);
-    expect(calls[9].args).toEqual([0, 360, 240]); // get_chart_geometry
+    expect(calls[5].args).toEqual([
+      0,
+      "A1:B9",
+      [{ widthPt: 100, heightPt: 50 }],
+      { continuedMarker: true },
+    ]); // paginate
+    expect(calls[6].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
+    expect(calls[7].args).toEqual([0, 1, 2, 3, 4]);
+    expect(calls[10].args).toEqual([0, 360, 240]); // get_chart_geometry
   });
 
   it("dispose maps to free()", () => {

@@ -110,6 +110,26 @@ export interface LoweredContent {
   styles?: LoweredStyle[];
 }
 
+/** One paginated frame (the TS MIRROR of the Rust `sheet_lower::Page`,
+ *  Wave 2D / S-05). The engine threads a tall range across the host frame
+ *  chain's content boxes and returns one `Page` per filled frame — each a
+ *  self-contained `LoweredContent` (header band + that frame's body rows,
+ *  re-based to 0) plus the chain index it targets and continuation flags.
+ *  PURE DATA — the host translator compiles `content` exactly like a
+ *  single-frame lowering. serde camelCase on the Rust side. */
+export interface Page {
+  /** Index into the caller's frame list (the chain order) this page fills. */
+  frameIndex: number;
+  /** The lowered content for this frame (header band + body rows, re-based). */
+  content: LoweredContent;
+  /** `true` when more body rows follow on a later frame (drives the
+   *  continued-marker chrome; only ever set when the option is on). */
+  continued: boolean;
+  /** `true` when this frame holds a single block/row taller than the whole
+   *  frame — the spec's pathological case, placed alone and flagged. */
+  oversize: boolean;
+}
+
 /** Total content width (pt) — the sum of column widths. Pure geometry,
  *  used by default placement. */
 export function totalWidthPt(content: LoweredContent): number {

@@ -22,8 +22,10 @@ export {
   ENGINE_NOT_BUILT,
   type CellChange,
   type ChartInfo,
+  type FrameBox,
   type GridSceneOptions,
   type LowerOptions,
+  type PaginateOptions,
   type SheetEngine,
   type SheetInfo,
   type SheetWasmEngine,
@@ -41,6 +43,13 @@ export {
 
 // The two-phase page lower (S-03), exported for the flow spec.
 export { lowerSelectionToFrame } from "./lower";
+// Live multi-frame pagination across the host frame chain (Wave 2D, S-05).
+export {
+  lowerPaginatedToChain,
+  resolveChain,
+  subscribeChainReflow,
+  type ChainLowerResult,
+} from "./lower";
 // The chart → paged.draw vector lower (M2 charts track, spec §8.4).
 export { lowerChartToFrame } from "./lower-chart";
 export { importXlsx } from "./import-xlsx";

@@ -58,6 +58,40 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
     e2.free();
   });
 
+  // Wave 2D (S-05): paginate a tall range across a 2-frame chain end-to-end
+  // across the real wasm door — the Rust engine threads the rows and serialises
+  // a Vec<Page> the TS facade reads (camelCase frameIndex/continued).
+  it("paginates a range across a frame chain (Wave 2D, S-05)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+    for (let r = 0; r < 6; r++) e.set_cell(0, r, 0, `r${r}`);
+
+    // Two 45pt frames (= 3 rows of 15pt each) → the 6 rows split 3/3.
+    const pages = e.paginate(
+      0,
+      "A1:A6",
+      [
+        { widthPt: 200, heightPt: 45 },
+        { widthPt: 200, heightPt: 45 },
+      ],
+      { continuedMarker: true },
+    ) as Array<{
+      frameIndex: number;
+      continued: boolean;
+      content: { rows: { cells: { text: string }[] }[] };
+    }>;
+
+    expect(pages.length).toBe(2);
+    expect(pages[0].frameIndex).toBe(0);
+    expect(pages[1].frameIndex).toBe(1);
+    expect(pages[0].continued).toBe(true); // more body rows follow
+    expect(pages[1].continued).toBe(false);
+    expect(pages[0].content.rows[0].cells[0].text).toBe("r0");
+    expect(pages[1].content.rows[0].cells[0].text).toBe("r3");
+    e.free();
+  });
+
   // FREEZE AMENDMENT (audit finding 1): a full-sheet lowered range must throw a
   // JS error across the wasm door — NOT abort the allocator and poison the
   // wasm-bindgen borrow (which used to brick every later &mut call). The

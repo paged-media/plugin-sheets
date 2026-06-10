@@ -23,7 +23,9 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 
-use sheet_js::core::{GridSceneOptions, LowerOptions, SheetSession};
+use sheet_js::core::{
+    FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg, SheetSession,
+};
 
 /// Path to a corpus fixture (sibling of the conformance crate, like
 /// `xlsx_roundtrip.rs`).
@@ -366,6 +368,120 @@ fn sheet_js_set_cell_rejects_oob_sheet() {
     // a sheet (it borrows &self) — the listing is unchanged.
     assert_eq!(s.get_cell_display(5, 0, 0), "");
     assert_eq!(s.list_sheets().len(), 1, "get_cell_display creates nothing");
+}
+
+// ── sheet.js.paginate ───────────────────────────────────────────────────────
+
+/// `paginate` threads a tall range across the host frame chain's content boxes
+/// (Wave 2D, S-05): each returned `Page` is a self-contained `LoweredContent`
+/// for one frame, carrying its `frame_index` + `continued` flag. The wire JSON
+/// uses the camelCase keys the TS `Page` mirror expects.
+#[test]
+fn sheet_js_paginate_threads_range_across_frame_chain() {
+    let mut s = SheetSession::new();
+    // Six 15pt rows in column A.
+    for r in 0..6u32 {
+        s.set_cell(0, r, 0, &format!("r{r}")).expect("seed cell");
+    }
+
+    // Two frames, each 45pt tall (= 3 rows of 15pt). The 6 rows split 3/3.
+    let frames = vec![
+        FrameBoxArg {
+            width_pt: 200.0,
+            height_pt: 45.0,
+        },
+        FrameBoxArg {
+            width_pt: 200.0,
+            height_pt: 45.0,
+        },
+    ];
+    let opts = PaginateOptionsArg {
+        continued_marker: Some(true),
+        ..PaginateOptionsArg::default()
+    };
+    let pages = s
+        .paginate(0, "A1:A6", frames, opts)
+        .expect("paginate A1:A6 across 2 frames");
+
+    assert_eq!(pages.len(), 2, "6 rows / 3-per-frame -> 2 pages");
+    assert_eq!(pages[0].frame_index, 0);
+    assert_eq!(pages[1].frame_index, 1);
+    // The first frame is "continued" (more body rows follow); the last is not.
+    assert!(pages[0].continued, "frame 0 is continued");
+    assert!(!pages[1].continued, "the last frame is not continued");
+    // Body rows split 3/3 (frame 0 also carries the continued marker row).
+    assert_eq!(pages[0].content.rows[0].cells[0].text, "r0");
+    assert_eq!(pages[1].content.rows[0].cells[0].text, "r3");
+
+    // The wire JSON uses camelCase keys the TS `Page` mirror reads.
+    let json = serde_json::to_string(&pages).unwrap();
+    assert!(json.contains("\"frameIndex\""), "Page.frameIndex camelCase");
+    assert!(json.contains("\"content\""), "Page.content");
+    assert!(json.contains("\"continued\""), "Page.continued");
+    assert!(
+        json.contains("\"widthPt\""),
+        "nested LoweredContent camelCase"
+    );
+    assert!(!json.contains("frame_index"), "no snake_case leak");
+}
+
+/// `paginate` reuses the boundary discipline of `get_range_lowered`: a junk
+/// range is an error, an OOB sheet id is rejected, and an empty frame list
+/// yields no pages (the caller provisioned no chain).
+#[test]
+fn sheet_js_paginate_boundary_and_empty_chain() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "x").expect("A1");
+
+    // Empty frame list -> no pages (nothing to fill).
+    let none = s
+        .paginate(0, "A1:A1", Vec::new(), PaginateOptionsArg::default())
+        .expect("empty chain is not an error");
+    assert!(none.is_empty(), "no frames -> no pages");
+
+    // Junk range -> boundary error.
+    assert!(s
+        .paginate(
+            0,
+            "not-a-range",
+            vec![FrameBoxArg {
+                width_pt: 100.0,
+                height_pt: 100.0
+            }],
+            PaginateOptionsArg::default()
+        )
+        .is_err());
+
+    // OOB sheet id -> boundary error (matches set_cell/get_range_lowered).
+    let err = s
+        .paginate(
+            5,
+            "A1:A1",
+            vec![FrameBoxArg {
+                width_pt: 100.0,
+                height_pt: 100.0,
+            }],
+            PaginateOptionsArg::default(),
+        )
+        .expect_err("OOB sheet id must be Err");
+    assert!(
+        err.to_string().contains("out of range"),
+        "boundary message: {err}"
+    );
+
+    // Full-sheet range -> the T0 cap rejects it (paginate lowers the full range
+    // once internally, so the same cap applies).
+    assert!(s
+        .paginate(
+            0,
+            "A1:XFD1048576",
+            vec![FrameBoxArg {
+                width_pt: 100.0,
+                height_pt: 100.0
+            }],
+            PaginateOptionsArg::default()
+        )
+        .is_err());
 }
 
 // ── sheet.js.set_now ────────────────────────────────────────────────────────

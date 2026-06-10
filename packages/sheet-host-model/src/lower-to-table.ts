@@ -23,7 +23,7 @@
 
 import type { Mutation } from "@paged-media/plugin-api";
 
-import type { LoweredContent } from "./lowered";
+import type { LoweredContent, Page } from "./lowered";
 
 /** The table's column order (ascending model indices) — the mapping from
  *  a cell's model `col` to its 0-based table column position. */
@@ -87,4 +87,35 @@ export function tableCellOps(
   });
 
   return { op: "batch", args: { ops } };
+}
+
+/** The two phases of native-table emission for ONE paginated page's frame
+ *  (Wave 2D / S-05). A paginated `Page` carries the same `LoweredContent`
+ *  shape a single-frame lowering does, so each page becomes a native
+ *  `<Table>` in its own frame's story — the chain lower drives `insert`
+ *  first (its outcome mints the tableId), then pours `cells`. `columnWidths`
+ *  are the caller's font-metric measurements for THIS page (S-13). */
+export interface PageTableOps {
+  /** Phase 2 — create the table in the page's frame story. The host
+   *  outcome's `createdId` is the new tableId. */
+  insert: Mutation;
+  /** Build phase 3 once the tableId is resolved — pour each non-empty cell. */
+  cells(tableId: string): Mutation;
+}
+
+/** Translate ONE paginated `Page` into its frame's native-table mutations
+ *  (Wave 2D / S-05). PURE: data in, the two-phase op pair out. Reuses
+ *  `tableInsertOp`/`tableCellOps` over the page's own `content` — each page
+ *  is a table in its frame's story (the chain lower resolves `storyId` per
+ *  frame, then applies `insert`, then `cells(tableId)`). No host calls, no
+ *  spreadsheet semantics — the engine already paginated + formatted. */
+export function pageTableMutations(
+  page: Page,
+  storyId: string,
+  columnWidths: number[],
+): PageTableOps {
+  return {
+    insert: tableInsertOp(page.content, storyId, columnWidths),
+    cells: (tableId: string) => tableCellOps(page.content, storyId, tableId),
+  };
 }

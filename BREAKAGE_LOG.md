@@ -14,8 +14,13 @@ SDK + the repo's own code on 2026-06-08 (M1 phase B+C, commit `9906aef`).
 **Platform Wave 1 (2026-06-09):** S-03 (native `InsertTable`), S-13
 (`measure_text`), S-10 (wasm-bindgen loader ratified), S-12 (paged.draw
 verified) RESOLVED by core protocol **v37** + the SDK door — see those
-entries. Waves 2–4 (S-05 threading, S-06/S-07/S-08/S-11 IO+workers+OPFS,
-S-02/S-01 in-frame sheets mode) remain.
+entries. **Platform Wave 2D (2026-06-10):** S-05 (frame-chain read +
+content-box reflow event) RESOLVED by core protocol **v38** —
+`host.document.frameChain(storyId)` + `DocumentChangeEvent.reflow`; live
+multi-frame pagination now threads a tall range across the host chain and
+re-paginates on a content-box resize (never on a pure transform, §8.5).
+Remaining: S-06/S-07/S-08/S-11 (IO+workers+OPFS), S-02/S-01 (in-frame
+sheets mode).
 
 ---
 
@@ -33,13 +38,21 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
 - Commit table/text/rule content inside owned frames — **COVERED**
   (S-03 RESOLVED — native `InsertTable`, protocol v37; lowering emits a
   real `<Table>`).
-- Document style read AND write — read **COVERED**; the write/enumerate
-  half is a **GAP** → S-04.
+- Document style read AND write — read **COVERED** (the style
+  *enumeration* read is served by `host.document.collection(...)` over the
+  `paragraphStyles`/`characterStyles`/`objectStyles`/`cellStyles`/
+  `tableStyles` collections — C-3); the named-style document-group
+  write/redefine half stays a **GAP** → S-04 (not yet consumed here — no
+  style read is wired in the pagination path).
 - Frame ownership & lock (owned-content attribute + edit interception) —
   **GAP** → S-09.
-- Frame linking / threading topology read — **GAP** → S-05.
-- Reflow notification (content-box resize vs pure transform) — **GAP** →
-  S-05.
+- Frame linking / threading topology read — **COVERED** (S-05 RESOLVED —
+  `host.document.frameChain(storyId)` reads the ordered chain, protocol
+  v38; live multi-frame pagination threads a tall range across it).
+- Reflow notification (content-box resize vs pure transform) — **COVERED**
+  (S-05 RESOLVED — `DocumentChangeEvent.reflow` carries content-box
+  geometry ONLY on a resize, never a pure transform, §8.5; the chain lower
+  re-paginates on it and ignores transform-only changes).
 - `paged.draw` access for chart lowering (core SDK, §8.4) — **COVERED**
   (S-12 RESOLVED — `insertPath`/`insertLine`/`insertOval` confirmed
   sufficient; charts lower as native vector content).
@@ -150,7 +163,34 @@ metrics (S-13 — **RESOLVED**, `measure_text`), and range clipboard
   redefining a doc style to restyle every frame — still needs the
   style read door. Direct local formatting stays honest in the meantime.
 
-- **S-05 · 2026-06-07 · frames / threading · OPEN** — no frame-chain
+- **S-05 · 2026-06-07 · frames / threading · RESOLVED (2026-06-10)** —
+  core protocol **v38** added the two reads this gap named, and the whole
+  path is now wired (Wave 2D, RFI C-2):
+  (a) `host.document.frameChain(storyId) -> FrameChainLink[]`
+  (`{frameId, next, overflow}`) reads the ordered thread topology
+  (tail-overflow flagged);
+  (b) `DocumentChangeEvent.reflow` (`{frameId, contentBox:[t,l,b,r]}`)
+  fires ONLY on a content-box resize — never on a pure transform
+  (move/scale/rotate is display-only, §8.5), the resize-vs-transform
+  distinction this entry required, carrying **content-box geometry**.
+  The Rust pagination engine (`sheet-lower/src/paginate.rs`) is now
+  exposed over wasm — `SheetSession::paginate` + the `SheetEngine`
+  wasm shim `paginate(sheet, range, frames, opts)` (`sheet-js/src/core.rs`,
+  `sheet-js/src/lib.rs`), the `engine.ts` facade `paginate`, the pure
+  per-page table translator `pageTableMutations`
+  (`packages/sheet-host-model/src/lower-to-table.ts`), and the
+  `lowerPaginatedToChain` / `subscribeChainReflow` chain flow
+  (`packages/sheet-bundle/src/lower.ts`): it reads the real chain, resolves
+  each frame's content box via `host.document.elementGeometry`, paginates
+  into those boxes (all threading math in Rust), lowers each `Page` into ITS
+  frame's story as a native `<Table>`, and re-paginates on a chain-frame
+  reflow (ignoring transform-only changes). The single-frame
+  `lowerSelectionToFrame` (S-03) stays unchanged. Tests:
+  `sheet_js_paginate_*` (js_surface), the real-wasm boot smoke
+  (engine-real), `pageTableMutations` (host-model), and the fake-host chain
+  + reflow flow (lower-flow). Historical framing retained below.
+
+  *(superseded)* no frame-chain
   topology read for owned frames and no reflow/layout-change
   subscription. `linkFrames` exists (write); chain reads, overflow
   notification, and the §8.5 resize-vs-transform distinction are
@@ -277,9 +317,14 @@ metrics (S-13 — **RESOLVED**, `measure_text`), and range clipboard
   `paged-text::shape_run`; no wire/protocol change — a read), surfaced as
   `host.text.measureString` on `BundleHost` (a read door, no capability
   gate; `supports("text.measure@1")` reports whether a real shaper is
-  wired, else an estimate). `lower.ts` `measureColumnWidths` now sizes
-  native-table columns from real advances (the §8.3 cross-surface-width
-  requirement). Historical framing retained below.
+  wired, else an estimate). `lower.ts` `measureColumnWidths` sizes
+  native-table columns from the door's advances (the §8.3
+  cross-surface-width requirement). RESIDUAL (editor consumption, not a
+  platform gap): the editor still wires `PagedEditor.text.measure` to the
+  canvas-wasm `CanvasWorker.measureText` over the render-worker RPC — a
+  small follow-on; until then the door returns the honest estimate and
+  `supports("text.measure@1")` is false. Historical framing retained
+  below.
 
   *(superseded)* no text-measurement
   door. The lowerer must size grid columns and make the sheets-mode grid
@@ -318,7 +363,8 @@ independently — the platform should design each once, for both plugins:
 | S-10 | I-07 | wasm-bindgen loader door + the 8 MiB artifact budget |
 
 Two plugins, filed independently, converging on the same surface is the
-signal that these belong in plugin-api v1. The sheets-specific rows
-(S-01 residual, S-03 tables, S-04 styles, S-05 threading, S-09 owned
-content, S-12 charts, S-13 metrics, S-14 clipboard) are paged.sheet's
-own to carry.
+signal that these belong in plugin-api v1. The sheets-specific rows are
+paged.sheet's own to carry: S-04 styles (read served by `collection()`;
+named-style write half open), S-09 owned content, S-14 clipboard remain
+open; S-03 tables, S-05 threading (Wave 2D), S-12 charts, S-13 metrics
+are RESOLVED, and S-01 keeps only its sheets-mode residual.
