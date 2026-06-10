@@ -28,8 +28,14 @@ panel picks through the host dialog. **Platform Wave 3b — persistence
 (2026-06-10):** S-08 (OPFS/blob storage) RESOLVED — `host.blob`
 (OPFS-backed, quota-gated); the workbook persists + restores on reload.
 K-3 (S-07 workers) DEFERRED — no consumer until the engine threads.
-Remaining: S-07 (workers), S-02/S-01 (in-frame sheets mode), S-09 (owned
-content), S-04 named-style write.
+**Platform Wave 4 — C-1 in-frame scene layer (2026-06-10):** S-02
+PARTIALLY RESOLVED — the in-frame VECTOR surface shipped (`host
+.contribute.sceneLayer()`, published core v0.39.0 paths/fills + v0.40.0
+text) and the sheet CONSUMES it (`session.showGridInFrame` renders the
+grid in the lowered frame). Residual = the editing/interactivity half
+(K-1 modal session + coord-inverted input). Remaining: S-07 (workers),
+S-02 editing residual + S-01 (sheets-MODE), S-09 (owned content), S-04
+named-style write.
 
 ---
 
@@ -42,8 +48,10 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
 - Frame-activation hook (double-click owned frame → sheets mode) —
   **GAP** → S-01 (the registration door now ships; the residual is the
   modal-session lifecycle + frame-content coordinate inversion).
-- Editing surface for sheets mode (vector rendering target) — **GAP** →
-  S-02 (joint with plugin-image I-01).
+- Editing surface for sheets mode (vector rendering target) — **PARTIAL**
+  → S-02 (the in-frame VECTOR render shipped via `host.contribute
+  .sceneLayer()`, consumed by `showGridInFrame`; the EDITING half needs
+  K-1 modal session + coord-inverted input; joint plugin-image I-01).
 - Commit table/text/rule content inside owned frames — **COVERED**
   (S-03 RESOLVED — native `InsertTable`, protocol v37; lowering emits a
   real `<Table>`).
@@ -107,22 +115,27 @@ Sheets-discovered, beyond the §2.2 table: the wasm-bindgen loader path
   Resolution direction: confirm/extend the modal-session lifecycle +
   the §8.5 content-coordinate event-delivery clause. T1 gate.
 
-- **S-02 · 2026-06-07 · rendering surface · OPEN** — no SDK vector
-  rendering surface for the sheets-mode grid (spec §8.1, D-10).
-  `capabilities.rendering` offers only `overlay` (tool-preview
-  rect/polyline/cubic-path), `hitTest`, and a reserved `sceneLayer`
-  (`manifest.ts` rendering enum). Preferred contract: Vello scene /
-  display-list submission in frame-content coordinates (core applies
-  frame transforms — §8.5 makes an axis-aligned canvas overlay
-  dishonest inside rotated frames); fallback: a plugin-owned
-  `GPUCanvasContext` overlay (inferior for transformed frames). Blocks
-  the entire in-frame sheets-mode grid; T1 gate. **Joint RFC with
-  plugin-image's GPU-surface row (I-01) and the WebGPU-reach question
-  (I-07).** *Updated 2026-06-08:* an interim SVG **panel** grid landed
-  (M1 phase B+C — `sheet-grid` GridScene IR + `grid-panel.tsx`). It is a
-  separate TS-side tool, NOT the reserved in-frame SDK surface, and does
-  not fake it — `capabilities.rendering` is still `["hitTest"]` only.
-  The SDK gate is unchanged.
+- **S-02 · 2026-06-07 · rendering surface · PARTIALLY RESOLVED
+  (2026-06-10)** — the in-frame VECTOR rendering surface SHIPPED (C-1,
+  the platform-RFI flagship): `capabilities.rendering` ∋ `sceneLayer` +
+  `host.contribute.sceneLayer().submit(elementId, layer)` — a plugin
+  submits a `SceneLayer` (filled/stroked paths + single-line text in
+  frame-content coords) and CORE composes it inside the frame, applying
+  the frame's `ItemTransform` + content-box clip (§8.5), through the same
+  `DisplayList → Vello/tiny-skia` lanes (published core v0.39.0 paths/
+  fills + v0.40.0 text). The sheet now CONSUMES it: `session
+  .showGridInFrame()` lowers the windowed `GridScene` →
+  `gridSceneToSceneLayer` (gridlines + cell fills + cell values) →
+  submit, sized to the lowered frame's content box. So the §8.1 grid
+  RENDERS in-frame on the canvas (not just the interim SVG panel —
+  retained as the secondary surface; one geometry, two surfaces).
+  **RESIDUAL (the editing/interactivity half, still OPEN):** modal
+  sheets-MODE entry + pointer/keyboard events delivered inverse-
+  transformed into frame-content coords (K-1 / S-01 residual) — without
+  it the in-frame grid is a render, not an editable surface. Plus the
+  in-frame text v1 caveats (default font, left-aligned, upright glyphs).
+  The raw-`GPUTexture`/`GPUDevice` stages (image viewport, I-01 + I-07)
+  are separate, still open. **Joint with plugin-image I-01/I-07.**
 
 - **S-03 · 2026-06-07 · engine ops · RESOLVED (2026-06-09)** — core
   protocol **v37** added `Mutation::InsertTable { story_id, rows, cols,
