@@ -17,6 +17,12 @@ import {
 import { lowerSelectionToFrame } from "./lower";
 import { lowerChartToFrame } from "./lower-chart";
 
+/** S-08 persistence keys: the workbook bytes live in `host.blob` (binary),
+ *  its display name in the KV `host.storage`. Per-plugin — the last
+ *  imported workbook is the one restored on reload. */
+const BLOB_KEY = "workbook";
+const BLOB_NAME_KEY = "workbook.name";
+
 /** A tiny synchronous event emitter (one channel: "did the session
  *  state change"). Avoids dragging a dependency for a single signal. */
 class Emitter {
@@ -62,8 +68,15 @@ export interface WorkbookSession {
   /** Subscribe to state changes (the panel's render trigger). */
   onDidChange(listener: () => void): { dispose(): void };
   /** Import XLSX bytes under a display name: boots the engine on first
-   *  use, loads the workbook, defaults the active sheet + range. */
+   *  use, loads the workbook, defaults the active sheet + range, and (when
+   *  `host.blob` is wired) PERSISTS the bytes so they survive a reload
+   *  (S-08). */
   import(bytes: Uint8Array, name: string): Promise<void>;
+  /** Restore the last persisted workbook from `host.blob` (S-08), if any.
+   *  A cheap no-op (one blob read) when nothing was persisted or no blob
+   *  store is wired — the engine boots ONLY when there are bytes to load.
+   *  Returns whether a workbook was restored. */
+  restore(): Promise<boolean>;
   /** Set which sheet is active (and default its range to the used
    *  extent). */
   setActiveSheet(id: number): void;
@@ -151,38 +164,79 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     if (sheet) state.selectedRange = usedRangeA1(sheet.rows, sheet.cols);
   }
 
+  /** S-08: persist the imported bytes + name to `host.blob` (best-effort —
+   *  never let a persist failure break an import). Per-plugin keyed: the
+   *  LAST imported workbook is the one restored on reload. */
+  async function persistWorkbook(bytes: Uint8Array, name: string): Promise<void> {
+    if (!host.supports("storage.blob@1")) return;
+    try {
+      await host.blob.write(BLOB_KEY, bytes);
+      host.storage.set(BLOB_NAME_KEY, name);
+    } catch (err) {
+      host.log.warn("workbook persist failed (kept in memory)", err);
+    }
+  }
+
+  /** Boot (if needed) + load bytes into the engine + default sheet/range.
+   *  Shared by import (persist) and restore (no re-persist). Returns true
+   *  on a successful load. */
+  async function loadWorkbook(
+    bytes: Uint8Array,
+    name: string,
+    persist: boolean,
+  ): Promise<boolean> {
+    try {
+      if (!state.engine) state.engine = await bootEngine();
+      state.bootError = null;
+    } catch (err) {
+      // Boot failure (the artifact isn't built — S-10). Surface it; the
+      // panel renders the honest "not built" state.
+      state.engine = null;
+      state.bootError = err instanceof Error ? err.message : ENGINE_NOT_BUILT;
+      host.log.warn("sheet engine boot failed", err);
+      emitter.emit();
+      return false;
+    }
+    try {
+      state.engine.loadXlsx(bytes);
+      state.fileName = name;
+      state.gridSelection = null;
+      const sheets = state.engine.listSheets();
+      state.activeSheet = sheets.length > 0 ? sheets[0].id : null;
+      defaultRangeForActive();
+    } catch (err) {
+      host.log.error("workbook load failed", err);
+      state.fileName = null;
+      state.activeSheet = null;
+      state.selectedRange = null;
+      emitter.emit();
+      return false;
+    }
+    if (persist) await persistWorkbook(bytes, name);
+    emitter.emit();
+    return true;
+  }
+
   return {
     state: () => state,
     onDidChange: (l) => emitter.on(l),
 
     async import(bytes, name) {
+      await loadWorkbook(bytes, name, true);
+    },
+
+    async restore() {
+      if (!host.supports("storage.blob@1")) return false;
+      let bytes: Uint8Array | null;
       try {
-        if (!state.engine) state.engine = await bootEngine();
-        state.bootError = null;
+        bytes = await host.blob.read(BLOB_KEY);
       } catch (err) {
-        // Boot failure (the artifact isn't built — S-10). Surface it; the
-        // panel renders the honest "not built" state.
-        state.engine = null;
-        state.bootError =
-          err instanceof Error ? err.message : ENGINE_NOT_BUILT;
-        host.log.warn("sheet engine boot failed", err);
-        emitter.emit();
-        return;
+        host.log.warn("workbook restore read failed", err);
+        return false;
       }
-      try {
-        state.engine.loadXlsx(bytes);
-        state.fileName = name;
-        state.gridSelection = null;
-        const sheets = state.engine.listSheets();
-        state.activeSheet = sheets.length > 0 ? sheets[0].id : null;
-        defaultRangeForActive();
-      } catch (err) {
-        host.log.error("workbook import failed", err);
-        state.fileName = null;
-        state.activeSheet = null;
-        state.selectedRange = null;
-      }
-      emitter.emit();
+      if (!bytes) return false; // nothing persisted — no engine boot
+      const name = host.storage.get<string>(BLOB_NAME_KEY) ?? "workbook.xlsx";
+      return loadWorkbook(bytes, name, false);
     },
 
     setActiveSheet(id) {

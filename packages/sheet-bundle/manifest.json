@@ -12,6 +12,10 @@
     "rendering": ["hitTest"],
     "network": false,
     "clipboard": "none",
+    "storage": {
+      "blob": true,
+      "quotaBytes": 33554432
+    },
     "wasm": [
       {
         "name": "sheet-engine",

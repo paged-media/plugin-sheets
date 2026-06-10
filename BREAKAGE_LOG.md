@@ -24,8 +24,12 @@ registration) + S-11 (host file picker) RESOLVED — pure SDK + editor
 surface, NO wire/protocol change: `ContributionSurface.importer()/
 exporter()` + `ShellSurface.pickFile()`; `.xlsx` now opens via the
 plugin (File/Open + drag-drop route to the importer) and the workbook
-panel picks through the host dialog. Remaining: S-07/S-08 (workers +
-OPFS — Wave 3b), S-02/S-01 (in-frame sheets mode).
+panel picks through the host dialog. **Platform Wave 3b — persistence
+(2026-06-10):** S-08 (OPFS/blob storage) RESOLVED — `host.blob`
+(OPFS-backed, quota-gated); the workbook persists + restores on reload.
+K-3 (S-07 workers) DEFERRED — no consumer until the engine threads.
+Remaining: S-07 (workers), S-02/S-01 (in-frame sheets mode), S-09 (owned
+content), S-04 named-style write.
 
 ---
 
@@ -63,8 +67,10 @@ The spec's §2.2 gap-analysis table, resolved row-by-row:
   sufficient; charts lower as native vector content).
 - Asset placement in cells (images via the standard asset mechanism) —
   **COVERED** (core asset surface).
-- Worker spawn + SharedArrayBuffer — **GAP** → S-07 (joint I-02).
-- OPFS quota — **GAP** → S-08 (joint I-03).
+- Worker spawn + SharedArrayBuffer — **GAP** → S-07 (joint I-02; deferred
+  — no consumer until the engine threads).
+- OPFS quota — **COVERED** (S-08 RESOLVED — `host.blob` OPFS/quota store;
+  the workbook persists + restores on reload; joint I-03).
 - Register importer/exporter (XLSX opens via the plugin) — **COVERED**
   (S-06 RESOLVED — `contribute.importer()/exporter()`; `.xlsx` opens via
   the plugin through File/Open + drag-drop; joint I-05).
@@ -247,18 +253,30 @@ Sheets-discovered, beyond the §2.2 table: the wasm-bindgen loader path
   guarantees; the editor is already cross-origin isolated (plugin-image
   A-0 audit), so the platform can host it — the gap is the contract.
 
-- **S-08 · 2026-06-07 · storage · OPEN** — no OPFS / large-blob quota
-  capability. `host.storage` is a localStorage-backed JSON KV
-  (`StorageSurface` = get/set/delete/keys) — unfit for multi-MB workbook
-  bytes. **T0: workbook bytes are in-memory only; reload requires
-  re-import** (the panel says so — honesty rule;
-  `packages/sheet-bundle/src/session.ts` + `workbook-panel.tsx`). The
-  small frame-binding envelope persists via `setPluginMetadata`
-  (namespace `x-paged:media.paged.sheet`) and round-trips IDML — but
-  note that door caps at **64 KiB** per element, so only the binding
-  envelope fits, never workbook bytes. **Joint RFC with plugin-image
-  (I-03).** Resolution: storage capability with a quota declaration +
-  an OPFS/blob store distinct from the KV door.
+- **S-08 · 2026-06-07 · storage · RESOLVED (2026-06-10)** — the SDK
+  gained `host.blob` (plugin-platform RFI Wave 3b; pure SDK + editor, NO
+  wire/protocol change, NO publish). `BlobSurface`
+  (write/read/delete/keys/usage) is an OPFS-backed, per-plugin,
+  quota-bounded BINARY store distinct from the KV `host.storage`, gated on
+  `capabilities.storage: { blob, quotaBytes? }`; the adapter owns
+  namespacing + the quota (the stricter of the 64 MiB host default and the
+  manifest's request). The editor backs it with OPFS
+  (`apps/canvas/src/plugin-blob-store.ts`, injected as `blobStore`).
+  paged.sheet now PERSISTS the imported workbook
+  (`session.persistWorkbook` → `host.blob.write("workbook", bytes)`, name
+  in KV) and RESTORES it at activate (`session.restore`, called from
+  `activate.ts` — a cheap no-op when nothing is persisted; the engine
+  boots only when there are bytes). The panel notice flips honestly
+  ("saved to this browser's local store and restored on reload" when
+  `supports("storage.blob@1")`, else the in-memory wording). Declared
+  `capabilities.storage: { blob: true, quotaBytes: 33554432 }` (32 MiB).
+  Per-plugin keyed: the LAST imported workbook is the one restored (not
+  document-scoped in T0). The 64 KiB `setPluginMetadata` binding envelope
+  is unchanged — it still carries the frame binding, round-tripping IDML.
+  Joint with plugin-image (I-03). Tests: `session-restore.spec.ts`
+  (no-op guards) + SDK `blob-store.spec.ts` (door/quota/gate). **K-3
+  (workers, S-07) stays OPEN** — deferred until the engine actually
+  threads (no speculative SDK surface).
 
 - **S-09 · 2026-06-07 · owned content · OPEN** — no owned-content
   attribute / edit-interception hook (spec D-5). Lowered frame content

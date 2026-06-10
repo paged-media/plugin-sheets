@@ -27,6 +27,11 @@ const GRID_PANEL_ID = "media.paged.sheet.panel.grid";
 export function activate(host: BundleHost): BundleHandle {
   const session = createWorkbookSession(host);
 
+  // S-08: restore the last persisted workbook from host.blob, if any. A
+  // cheap no-op (one blob read) when nothing was persisted or no blob
+  // store is wired — the engine boots only when there are bytes to load.
+  void session.restore();
+
   contributePanel(host, {
     id: PANEL_ID,
     title: "Workbook",
