@@ -43,6 +43,12 @@
     ],
     "exporters": [
       "media.paged.sheet.exporter.xlsx"
+    ],
+    "editContexts": [
+      { "type": "sheet", "entry": "doubleClick" }
+    ],
+    "objectTypes": [
+      { "type": "sheetFrame", "bakedFallback": "rectangle" }
     ]
   }
 }

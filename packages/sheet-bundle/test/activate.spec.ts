@@ -10,8 +10,10 @@ import type {
   BundleHost,
   CommandContribution,
   Disposable,
+  EditContextContribution,
   ExporterContribution,
   ImporterContribution,
+  ObjectTypeContribution,
   PanelContribution,
 } from "@paged-media/plugin-api";
 
@@ -26,6 +28,8 @@ function fakeHost() {
   const commands: CommandContribution[] = [];
   const importers: ImporterContribution[] = [];
   const exporters: ExporterContribution[] = [];
+  const objectTypes: ObjectTypeContribution[] = [];
+  const editContexts: EditContextContribution[] = [];
   let disposed = 0;
   const track = (): Disposable => ({
     dispose() {
@@ -39,7 +43,10 @@ function fakeHost() {
     // The IO contribution doors are wired; the host file picker is NOT,
     // so importXlsx exercises the panel-fallback path (S-11 fallback).
     supports: (f: string) =>
-      f === "contribute.importer@1" || f === "contribute.exporter@1",
+      f === "contribute.importer@1" ||
+      f === "contribute.exporter@1" ||
+      f === "contribute.objectType@1" ||
+      f === "contribute.editContext@1",
     contribute: {
       panel(c: PanelContribution): Disposable {
         panels.push(c);
@@ -57,6 +64,14 @@ function fakeHost() {
         exporters.push(c);
         return track();
       },
+      objectType(c: ObjectTypeContribution): Disposable {
+        objectTypes.push(c);
+        return track();
+      },
+      editContext(c: EditContextContribution): Disposable {
+        editContexts.push(c);
+        return track();
+      },
     },
     shell: {
       openPanel(id: string) {
@@ -71,6 +86,8 @@ function fakeHost() {
     commands,
     importers,
     exporters,
+    objectTypes,
+    editContexts,
     openedPanels,
     disposedCount: () => disposed,
   };
@@ -151,6 +168,36 @@ describe("sheet_plugin_bundle_activate", () => {
     );
     expect(fake.exporters.map((e) => e.id)).toEqual(
       sheetBundle.manifest.contributes?.exporters,
+    );
+  });
+
+  it("registers the sheetFrame objectType + sheet editContext (K-1 entry)", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    // The objectType marks a lowered sheet frame (by its own binding
+    // metadata) and routes its double-click to the "sheet" context.
+    expect(fake.objectTypes.map((o) => o.type)).toEqual(["sheetFrame"]);
+    const ot = fake.objectTypes[0];
+    expect(ot.bakedFallback).toBe("rectangle");
+    expect(ot.editContextType).toBe("sheet");
+    // A candidate WITHOUT this plugin's binding metadata is not a match.
+    // (parseBinding validates the envelope shape; null → no claim.)
+    expect(
+      ot.matches({
+        id: { kind: "rectangle", id: "r1" },
+        groupChain: [],
+        metadata: null,
+      }),
+    ).toBe(false);
+    // The editContext enters on double-click and shows/hides the grid.
+    expect(fake.editContexts.map((e) => e.type)).toEqual(["sheet"]);
+    expect(fake.editContexts[0].entry).toBe("doubleClick");
+    // The declared types match the manifest's contributes block.
+    expect(fake.objectTypes.map((o) => o.type)).toEqual(
+      sheetBundle.manifest.contributes?.objectTypes?.map((o) => o.type),
+    );
+    expect(fake.editContexts.map((e) => e.type)).toEqual(
+      sheetBundle.manifest.contributes?.editContexts?.map((e) => e.type),
     );
   });
 

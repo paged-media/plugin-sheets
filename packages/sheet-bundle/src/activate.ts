@@ -13,6 +13,7 @@
 
 import type { BundleHandle, BundleHost } from "@paged-media/plugin-api";
 import { contributePanel } from "@paged-media/plugin-sdk";
+import { parseBinding } from "@paged-media/sheet-host-model";
 
 import manifest from "../manifest.json";
 
@@ -23,6 +24,16 @@ import { makeGridPanel } from "./panels/grid-panel";
 
 const PANEL_ID = "media.paged.sheet.panel.workbook";
 const GRID_PANEL_ID = "media.paged.sheet.panel.grid";
+
+/** The raw id string of a frame-like `ElementId` (textFrame / rectangle
+ *  carry a string `id`), or null. Structural so it needs no wire import. */
+function frameIdOf(id: unknown): string | null {
+  if (typeof id === "object" && id !== null) {
+    const e = id as { id?: unknown };
+    if (typeof e.id === "string") return e.id;
+  }
+  return null;
+}
 
 export function activate(host: BundleHost): BundleHandle {
   const session = createWorkbookSession(host);
@@ -104,6 +115,35 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => session.hideGridInFrame(),
   });
+
+  // K-1 entry — double-click a lowered sheet frame to ENTER "sheet" mode:
+  // the live in-frame grid renders (C-1 sceneLayer); Esc / exit clears it.
+  // The objectType marks a frame as a sheet by its OWN binding metadata
+  // (x-paged:media.paged.sheet — the host resolves the candidate's
+  // metadata from this plugin's envelope, so `parseBinding` validates it)
+  // and routes the double-click to the "sheet" context instead of group
+  // descent. The cell-pointer editing channel (onContentPointerDown +
+  // selectCell) lands with the editor's content-pointer delivery (K-1
+  // ViewportCanvas wire) — see k1-modal-session-plan.md.
+  if (host.supports("contribute.objectType@1")) {
+    host.contribute.objectType({
+      type: "sheetFrame",
+      bakedFallback: "rectangle",
+      matches: (c) => parseBinding(c.metadata) !== null,
+      editContextType: "sheet",
+    });
+  }
+  if (host.supports("contribute.editContext@1")) {
+    host.contribute.editContext({
+      type: "sheet",
+      entry: "doubleClick",
+      onEnter: (ctx) => {
+        const id = frameIdOf(ctx.id);
+        if (id) void session.showGridInFrame(id);
+      },
+      onExit: () => session.hideGridInFrame(),
+    });
+  }
 
   // K-2 / S-06 — register the .xlsx IMPORTER so opening a spreadsheet
   // through the editor's File/Open or drag-drop routes its bytes HERE (the

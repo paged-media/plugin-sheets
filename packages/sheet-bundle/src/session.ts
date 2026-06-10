@@ -89,13 +89,14 @@ export interface WorkbookSession {
   /** Lower the active sheet's selected range to a new page frame
    *  (the two-phase flow in lower.ts). Returns the created frame id. */
   lowerSelection(): Promise<string | null>;
-  /** C-1 / S-02 — render the active sheet's grid INSIDE the last-lowered
-   *  frame as a live vector layer (`host.contribute.sceneLayer()`):
-   *  gridlines + cell fills + cell values, clipped to the frame's content
-   *  box by core. Returns false when there is no lowered frame, no scene
-   *  channel (`supports("rendering.sceneLayer@1")`), or no engine. The
-   *  layer is EPHEMERAL (re-submitted; not document content). */
-  showGridInFrame(): Promise<boolean>;
+  /** C-1 / S-02 — render the active sheet's grid INSIDE a frame as a live
+   *  vector layer (`host.contribute.sceneLayer()`): gridlines + cell fills
+   *  + cell values, clipped to the frame's content box by core. `frameId`
+   *  targets a specific frame (e.g. the one a sheet edit-context entered
+   *  on); omitted ⇒ the last-lowered frame. Returns false when there is no
+   *  target frame, no scene channel (`supports("rendering.sceneLayer@1")`),
+   *  or no engine. The layer is EPHEMERAL (re-submitted; not doc content). */
+  showGridInFrame(frameId?: string): Promise<boolean>;
   /** Clear the in-frame grid layer (the frame returns to its native
    *  lowered content). */
   hideGridInFrame(): void;
@@ -318,11 +319,13 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       return id;
     },
 
-    async showGridInFrame() {
-      if (!lastFrameId) {
-        host.log.warn("showGridInFrame: no lowered frame — lower a range first");
+    async showGridInFrame(frameId?: string) {
+      const target = frameId ?? lastFrameId;
+      if (!target) {
+        host.log.warn("showGridInFrame: no target frame — lower a range first");
         return false;
       }
+      lastFrameId = target; // the in-frame grid + hide now track this frame
       const surface = sceneChannel();
       if (!surface) {
         host.log.warn(
