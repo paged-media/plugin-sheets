@@ -39,6 +39,8 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.lowerToFrame",
       "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid",
+      "media.paged.sheet.command.showGridInFrame",
+      "media.paged.sheet.command.hideGridInFrame",
     ]);
   });
 

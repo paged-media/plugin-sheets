@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_GRID_SVG_OPTIONS,
   cellEditorRect,
+  cssColorToScenePaint,
+  gridSceneToSceneLayer,
   gridSceneToSvg,
   hitCell,
   selectionRect,
@@ -292,5 +294,69 @@ describe("sheet_grid_panel_edit_contract: hit-test + editor rect", () => {
     scene.viewport.firstCol = 3;
     // Absolute (6,4) → band (1,1) → col1/row1 span [40,80]×[20,40].
     expect(cellEditorRect(scene, 6, 4)).toEqual([40, 20, 40, 20]);
+  });
+});
+
+describe("sheet_grid_scene_to_scene_layer: in-frame C-1 lowering", () => {
+  it("lowers fills + gridlines + text to SceneItems (fills→lines→text order)", () => {
+    const scene = scene2x2(); // 2 text cells, no fills, 3h+3v gridlines
+    const layer = gridSceneToSceneLayer(scene);
+    const kinds = layer.items.map((i) => i.kind);
+    // 0 fills (default style has no fillRgb) + 6 strokes + 2 text.
+    expect(kinds.filter((k) => k === "fillPath").length).toBe(0);
+    expect(kinds.filter((k) => k === "strokePath").length).toBe(6);
+    expect(kinds.filter((k) => k === "text").length).toBe(2);
+    // A gridline is a 2-point stroke at the rule's coordinates (h at y=20).
+    const hLine = layer.items.find(
+      (i) => i.kind === "strokePath" && i.path[0].op === "moveTo" && i.path[0].y === 20,
+    );
+    expect(hLine).toBeDefined();
+  });
+
+  it("positions cell text at the cell's leading edge + baseline", () => {
+    const scene = scene2x2();
+    const layer = gridSceneToSceneLayer(scene);
+    const name = layer.items.find((i) => i.kind === "text" && i.text === "Name");
+    expect(name).toBeDefined();
+    if (name && name.kind === "text") {
+      // col0 leading edge (0) + pad; row0 top (0) + baseline.
+      expect(name.x).toBe(DEFAULT_GRID_SVG_OPTIONS.pad);
+      expect(name.y).toBe(DEFAULT_GRID_SVG_OPTIONS.baseline);
+    }
+  });
+
+  it("lowers a style fill to a FillPath rect over the cell", () => {
+    const scene = scene2x2();
+    scene.styles = [{ ...defaultStyle(), key: 1, fillRgb: "#ffeeaa" }];
+    scene.cells = [{ row: 0, col: 0, text: "C", align: "left", styleKey: 1 }];
+    const layer = gridSceneToSceneLayer(scene);
+    const fill = layer.items.find((i) => i.kind === "fillPath");
+    expect(fill).toBeDefined();
+    if (fill && fill.kind === "fillPath") {
+      // rect over [0,40]×[0,20]: moveTo(0,0) → lineTo(40,0) → (40,20) → (0,20).
+      expect(fill.path[0]).toEqual({ op: "moveTo", x: 0, y: 0 });
+      expect(fill.path[1]).toEqual({ op: "lineTo", x: 40, y: 0 });
+      expect(fill.path[2]).toEqual({ op: "lineTo", x: 40, y: 20 });
+      // #ffeeaa → sRGB (1.0, ~0.933, ~0.667).
+      expect(fill.paint.r).toBeCloseTo(1.0, 3);
+      expect(fill.paint.g).toBeCloseTo(0xee / 255, 3);
+      expect(fill.paint.b).toBeCloseTo(0xaa / 255, 3);
+      expect(fill.paint.a).toBe(1);
+    }
+  });
+
+  it("parses css colours (hex short/long, rgb, rgba) and falls back to black", () => {
+    expect(cssColorToScenePaint("#fff")).toEqual({ r: 1, g: 1, b: 1, a: 1 });
+    expect(cssColorToScenePaint("#000000")).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+    const rgba = cssColorToScenePaint("rgba(255, 0, 0, 0.5)");
+    expect(rgba.r).toBe(1);
+    expect(rgba.a).toBe(0.5);
+    // A token / unparseable value → opaque black (never silently invisible).
+    expect(cssColorToScenePaint("var(--pg-border)")).toEqual({
+      r: 0,
+      g: 0,
+      b: 0,
+      a: 1,
+    });
   });
 });

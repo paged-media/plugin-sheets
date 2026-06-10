@@ -59,6 +59,8 @@ export {
 export {
   DEFAULT_GRID_SVG_OPTIONS,
   cellEditorRect,
+  cssColorToScenePaint,
+  gridSceneToSceneLayer,
   gridSceneToSvg,
   hitCell,
   selectionRect,

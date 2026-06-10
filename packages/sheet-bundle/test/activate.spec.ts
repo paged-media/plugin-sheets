@@ -90,7 +90,7 @@ describe("sheet_plugin_bundle_activate", () => {
     expect(fake.panels[1].defaultDock).toBe("right");
   });
 
-  it("registers the four commands under their declared ids", () => {
+  it("registers the commands under their declared ids", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     expect(fake.commands.map((c) => c.id)).toEqual([
@@ -98,6 +98,8 @@ describe("sheet_plugin_bundle_activate", () => {
       "media.paged.sheet.command.lowerToFrame",
       "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid",
+      "media.paged.sheet.command.showGridInFrame",
+      "media.paged.sheet.command.hideGridInFrame",
     ]);
   });
 

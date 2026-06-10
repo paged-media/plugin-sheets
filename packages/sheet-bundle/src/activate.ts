@@ -87,6 +87,23 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => host.shell.openPanel(GRID_PANEL_ID),
   });
+  // C-1 / S-02 — render the live grid INSIDE the lowered frame on the
+  // canvas (gridlines + cell fills + values) via host.contribute
+  // .sceneLayer(). The honest companion to the lowered native table:
+  // "show me the editable grid in place." Needs rendering ∋ sceneLayer
+  // (declared) + the host's scene channel; degrades with a logged warning.
+  host.contribute.command({
+    id: "media.paged.sheet.command.showGridInFrame",
+    title: "Show grid in frame",
+    category: "Sheet",
+    handler: () => void session.showGridInFrame(),
+  });
+  host.contribute.command({
+    id: "media.paged.sheet.command.hideGridInFrame",
+    title: "Hide grid in frame",
+    category: "Sheet",
+    handler: () => session.hideGridInFrame(),
+  });
 
   // K-2 / S-06 — register the .xlsx IMPORTER so opening a spreadsheet
   // through the editor's File/Open or drag-drop routes its bytes HERE (the

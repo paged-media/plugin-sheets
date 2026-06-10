@@ -9,7 +9,7 @@
       "read": "broad",
       "write": "scoped"
     },
-    "rendering": ["hitTest"],
+    "rendering": ["hitTest", "sceneLayer"],
     "network": false,
     "clipboard": "none",
     "storage": {
@@ -34,7 +34,9 @@
       "media.paged.sheet.command.importXlsx",
       "media.paged.sheet.command.lowerToFrame",
       "media.paged.sheet.command.lowerChartToFrame",
-      "media.paged.sheet.command.openGrid"
+      "media.paged.sheet.command.openGrid",
+      "media.paged.sheet.command.showGridInFrame",
+      "media.paged.sheet.command.hideGridInFrame"
     ],
     "importers": [
       "media.paged.sheet.importer.xlsx"

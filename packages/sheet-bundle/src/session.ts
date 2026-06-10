@@ -5,8 +5,12 @@
 // panel subscribes to. All spreadsheet work is the engine's; this is
 // session bookkeeping + the host write path.
 
-import type { BundleHost } from "@paged-media/plugin-api";
-import type { GridScene, GridSelection } from "@paged-media/sheet-host-model";
+import type { BundleHost, SceneLayerSurface } from "@paged-media/plugin-api";
+import {
+  gridSceneToSceneLayer,
+  type GridScene,
+  type GridSelection,
+} from "@paged-media/sheet-host-model";
 
 import {
   bootEngine,
@@ -85,6 +89,16 @@ export interface WorkbookSession {
   /** Lower the active sheet's selected range to a new page frame
    *  (the two-phase flow in lower.ts). Returns the created frame id. */
   lowerSelection(): Promise<string | null>;
+  /** C-1 / S-02 — render the active sheet's grid INSIDE the last-lowered
+   *  frame as a live vector layer (`host.contribute.sceneLayer()`):
+   *  gridlines + cell fills + cell values, clipped to the frame's content
+   *  box by core. Returns false when there is no lowered frame, no scene
+   *  channel (`supports("rendering.sceneLayer@1")`), or no engine. The
+   *  layer is EPHEMERAL (re-submitted; not document content). */
+  showGridInFrame(): Promise<boolean>;
+  /** Clear the in-frame grid layer (the frame returns to its native
+   *  lowered content). */
+  hideGridInFrame(): void;
   /** Enumerate the workbook's parsed charts (M2 charts track, spec §8.4).
    *  Empty when there is no engine / no charts. */
   listCharts(): ChartInfo[];
@@ -156,12 +170,49 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     gridSelection: null,
   };
 
+  // C-1 / S-02 — the last frame this session lowered into (the target for
+  // the in-frame grid) + the lazily-obtained scene-layer surface.
+  let lastFrameId: string | null = null;
+  let sceneSurface: SceneLayerSurface | null = null;
+  const sceneChannel = (): SceneLayerSurface | null => {
+    if (!host.supports("rendering.sceneLayer@1")) return null;
+    if (!sceneSurface) sceneSurface = host.contribute.sceneLayer();
+    return sceneSurface;
+  };
+
   function defaultRangeForActive(): void {
     if (!state.engine || state.activeSheet === null) return;
     const sheet = state.engine
       .listSheets()
       .find((s) => s.id === state.activeSheet);
     if (sheet) state.selectedRange = usedRangeA1(sheet.rows, sheet.cols);
+  }
+
+  /** Window the active sheet into a GridScene + overlay the session
+   *  selection. Shared by the `gridScene` door and `showGridInFrame`. */
+  function computeGridScene(
+    firstRow: number,
+    firstCol: number,
+    wPt: number,
+    hPt: number,
+  ): GridScene | null {
+    if (!state.engine || state.activeSheet === null) return null;
+    let scene: GridScene;
+    try {
+      scene = state.engine.getGridScene(
+        state.activeSheet,
+        firstRow,
+        firstCol,
+        wPt,
+        hPt,
+        { includeGridlines: true },
+      );
+    } catch (err) {
+      host.log.warn("gridScene: engine windowing failed", err);
+      return null;
+    }
+    if (state.gridSelection) scene.selection = state.gridSelection;
+    return scene;
   }
 
   /** S-08: persist the imported bytes + name to `host.blob` (best-effort —
@@ -257,12 +308,64 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("lowerSelection: no workbook / sheet / range");
         return null;
       }
-      return lowerSelectionToFrame(
+      const id = await lowerSelectionToFrame(
         host,
         state.engine,
         state.activeSheet,
         state.selectedRange,
       );
+      if (id) lastFrameId = id; // remember the in-frame grid target (S-02)
+      return id;
+    },
+
+    async showGridInFrame() {
+      if (!lastFrameId) {
+        host.log.warn("showGridInFrame: no lowered frame — lower a range first");
+        return false;
+      }
+      const surface = sceneChannel();
+      if (!surface) {
+        host.log.warn(
+          "showGridInFrame: no scene channel (supports('rendering.sceneLayer@1') is false)",
+        );
+        return false;
+      }
+      if (!state.engine || state.activeSheet === null) {
+        host.log.warn("showGridInFrame: no workbook / sheet");
+        return false;
+      }
+      // Size the grid window to the frame's content box (core clips to it).
+      let wPt = 480;
+      let hPt = 640;
+      try {
+        const geom = await host.document.elementGeometry([
+          { kind: "textFrame", id: lastFrameId } as never,
+        ]);
+        const bounds = geom[0]?.bounds;
+        if (bounds) {
+          const [top, left, bottom, right] = bounds;
+          wPt = Math.max(right - left, 0);
+          hPt = Math.max(bottom - top, 0);
+        }
+      } catch (err) {
+        host.log.debug("showGridInFrame: frame geometry read failed", err);
+      }
+      const scene = computeGridScene(0, 0, wPt, hPt);
+      if (!scene) {
+        host.log.warn("showGridInFrame: grid windowing failed");
+        return false;
+      }
+      try {
+        await surface.submit(lastFrameId, gridSceneToSceneLayer(scene));
+      } catch (err) {
+        host.log.error("showGridInFrame: submit failed", err);
+        return false;
+      }
+      return true;
+    },
+
+    hideGridInFrame() {
+      if (lastFrameId) void sceneSurface?.clear(lastFrameId);
     },
 
     listCharts() {
@@ -284,25 +387,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     gridScene(firstRow, firstCol, wPt, hPt) {
-      if (!state.engine || state.activeSheet === null) return null;
-      let scene: GridScene;
-      try {
-        scene = state.engine.getGridScene(
-          state.activeSheet,
-          firstRow,
-          firstCol,
-          wPt,
-          hPt,
-          { includeGridlines: true },
-        );
-      } catch (err) {
-        host.log.warn("gridScene: engine windowing failed", err);
-        return null;
-      }
-      // Overlay the session selection so the SVG draws selection chrome
-      // (until the JOINS-phase wasm carries selection on the scene itself).
-      if (state.gridSelection) scene.selection = state.gridSelection;
-      return scene;
+      return computeGridScene(firstRow, firstCol, wPt, hPt);
     },
 
     setGridSelection(anchorRow, anchorCol, rows, cols) {
@@ -358,6 +443,14 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     dispose() {
+      // Disposing the scene-layer surface clears any in-frame grid it
+      // submitted (the surface tracks + clears on dispose).
+      try {
+        sceneSurface?.dispose();
+      } catch (err) {
+        host.log.warn("scene-layer surface dispose failed", err);
+      }
+      sceneSurface = null;
       try {
         state.engine?.dispose();
       } catch (err) {

@@ -21,6 +21,13 @@
 // reads identically on both surfaces (spec §8.3). `styleKey` on a cell
 // indexes into `styles`.
 
+import type {
+  SceneItem,
+  SceneLayer,
+  ScenePaint,
+  ScenePathSeg,
+} from "@paged-media/plugin-api";
+
 import type { Align, LoweredStyle, Rule, Rules } from "./lowered";
 
 /** The viewport window: the first visible `(row, col)`, how many of each
@@ -334,6 +341,145 @@ export function gridSceneToSvg(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" ` +
     `width="${w}" height="${h}" data-grid-svg>${body}</svg>`
   );
+}
+
+// ── in-frame grid (C-1 sceneLayer, S-02) ────────────────────────────────────
+// The SAME windowed geometry `gridSceneToSvg` paints in the panel, lowered to
+// the engine's `SceneLayer` IR so the grid renders INSIDE a frame on the
+// canvas through `host.contribute.sceneLayer()` — one geometry, two surfaces
+// (the panel SVG + the in-frame vector layer). Coordinates are viewport-local
+// content points (the engine already windowed them); core applies the frame's
+// ItemTransform + content-box clip. v1: cell text is positioned at the cell's
+// leading edge (left); right/centre alignment in the in-frame grid is a
+// follow-on (the print lowering already aligns natively, §8.3). Colours are
+// the concrete RGB the engine/style table carry (or the sober defaults); CSS
+// `var(--…)` tokens don't parse and fall back to the default.
+
+/** Parse a CSS colour string (`#rgb`, `#rrggbb`, `rgb(...)`, `rgba(...)`) to a
+ *  sRGB [`ScenePaint`]. Falls back to opaque black on anything else (e.g. a
+ *  `var(--…)` token), so the layer is never silently invisible. */
+export function cssColorToScenePaint(css: string): ScenePaint {
+  const s = css.trim();
+  const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(s);
+  if (hex) {
+    const h = hex[1];
+    const full =
+      h.length === 3
+        ? h
+            .split("")
+            .map((c) => c + c)
+            .join("")
+        : h;
+    return {
+      r: parseInt(full.slice(0, 2), 16) / 255,
+      g: parseInt(full.slice(2, 4), 16) / 255,
+      b: parseInt(full.slice(4, 6), 16) / 255,
+      a: 1,
+    };
+  }
+  const rgb = /^rgba?\(([^)]+)\)$/.exec(s);
+  if (rgb) {
+    const p = rgb[1].split(",").map((v) => parseFloat(v.trim()));
+    if (p.length >= 3 && p.every((v) => Number.isFinite(v))) {
+      return {
+        r: p[0] / 255,
+        g: p[1] / 255,
+        b: p[2] / 255,
+        a: p.length >= 4 ? p[3] : 1,
+      };
+    }
+  }
+  return { r: 0, g: 0, b: 0, a: 1 };
+}
+
+function rectPath(x0: number, y0: number, x1: number, y1: number): ScenePathSeg[] {
+  return [
+    { op: "moveTo", x: x0, y: y0 },
+    { op: "lineTo", x: x1, y: y0 },
+    { op: "lineTo", x: x1, y: y1 },
+    { op: "lineTo", x: x0, y: y1 },
+    { op: "close" },
+  ];
+}
+
+/** Lower a [`GridScene`] to a [`SceneLayer`] (cell fills + gridlines + cell
+ *  text) for in-frame rendering via `host.contribute.sceneLayer()` (C-1 /
+ *  S-02). The submission order — fills, then lines, then text — paints text
+ *  over fills over lines. */
+export function gridSceneToSceneLayer(
+  scene: GridScene,
+  opts: Partial<GridSvgOptions> = {},
+): SceneLayer {
+  const o: GridSvgOptions = { ...DEFAULT_GRID_SVG_OPTIONS, ...opts };
+  const vp = scene.viewport;
+  const inView = (cell: GridCell): boolean => {
+    const ci = cell.col - vp.firstCol;
+    const ri = cell.row - vp.firstRow;
+    return ci >= 0 && ci < vp.cols && ri >= 0 && ri < vp.rows;
+  };
+  const items: SceneItem[] = [];
+
+  // 1 — cell background fills.
+  for (const cell of scene.cells) {
+    if (!inView(cell)) continue;
+    const fill = styleOf(scene, cell.styleKey)?.fillRgb;
+    if (!fill) continue;
+    const ci = cell.col - vp.firstCol;
+    const ri = cell.row - vp.firstRow;
+    items.push({
+      kind: "fillPath",
+      path: rectPath(
+        vp.xOffsets[ci],
+        vp.yOffsets[ri],
+        vp.xOffsets[ci + 1],
+        vp.yOffsets[ri + 1],
+      ),
+      paint: cssColorToScenePaint(fill),
+    });
+  }
+
+  // 2 — gridlines (h run along x at `at`; v run along y at `at`).
+  const gridPaint = cssColorToScenePaint(o.gridColor);
+  for (const r of scene.gridlines.h) {
+    items.push({
+      kind: "strokePath",
+      path: [
+        { op: "moveTo", x: r.from, y: r.at },
+        { op: "lineTo", x: r.to, y: r.at },
+      ],
+      paint: gridPaint,
+      width: o.gridWidth,
+    });
+  }
+  for (const r of scene.gridlines.v) {
+    items.push({
+      kind: "strokePath",
+      path: [
+        { op: "moveTo", x: r.at, y: r.from },
+        { op: "lineTo", x: r.at, y: r.to },
+      ],
+      paint: gridPaint,
+      width: o.gridWidth,
+    });
+  }
+
+  // 3 — cell text (v1: leading-edge / left).
+  for (const cell of scene.cells) {
+    if (!inView(cell) || cell.text.length === 0) continue;
+    const style = styleOf(scene, cell.styleKey);
+    const ci = cell.col - vp.firstCol;
+    const ri = cell.row - vp.firstRow;
+    items.push({
+      kind: "text",
+      x: vp.xOffsets[ci] + o.pad,
+      y: vp.yOffsets[ri] + o.baseline,
+      text: cell.text,
+      size: style?.fontSizePt ?? o.fontSizePt,
+      paint: cssColorToScenePaint(style?.textRgb ?? o.textColor),
+    });
+  }
+
+  return { items };
 }
 
 /**
