@@ -9,6 +9,7 @@ import type { BundleHost, SceneLayerSurface } from "@paged-media/plugin-api";
 import {
   gridSceneToSceneLayer,
   hitCell,
+  type GridCell,
   type GridScene,
   type GridSelection,
 } from "@paged-media/sheet-host-model";
@@ -104,6 +105,22 @@ export interface WorkbookSession {
    *  last rendered grid — no engine round-trip for the hit. Returns false
    *  when no grid is shown or the point falls outside the windowed cells. */
   selectCellInFrame(contentX: number, contentY: number): boolean;
+  /** K-1 — is an in-frame cell edit in progress? (Drives the edit context's
+   *  `isDirty` so the shell routes Enter/Esc to the cell, not the context.) */
+  isCellEditing(): boolean;
+  /** K-1 — a printable key in-frame: begin a fresh replace-mode edit on the
+   *  selected cell, or append to the open one. Re-renders with the buffer.
+   *  Returns false when there's no selected cell / not a single char. */
+  typeCellChar(ch: string): boolean;
+  /** K-1 — Backspace in-frame: open from the cell's current value if not
+   *  editing, then drop the last char. Returns false when no cell selected. */
+  backspaceCellEdit(): boolean;
+  /** K-1 — commit the in-frame cell edit (Enter): write the buffer via the
+   *  engine + re-render. Returns whether an edit was committed. */
+  commitCellEdit(): boolean;
+  /** K-1 — abandon the in-frame cell edit (Esc): drop the buffer + re-render
+   *  the committed value. */
+  cancelCellEdit(): void;
   /** Clear the in-frame grid layer (the frame returns to its native
    *  lowered content). */
   hideGridInFrame(): void;
@@ -197,6 +214,12 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     | null = null;
   let lastGridScene: GridScene | null = null;
 
+  // K-1 — the in-frame cell EDITOR buffer (a keystroke edit, no DOM
+  // overlay): the cell being typed into + its in-progress text. The grid
+  // re-renders with this text overlaid until commit (→ engine.setCell) or
+  // cancel. `null` ⇒ not editing (the context is not "dirty").
+  let cellEdit: { row: number; col: number; text: string } | null = null;
+
   /** Record the grid selection (engine + session) so the next windowing
    *  paints it. Shared by the panel's `setGridSelection` door and K-1's
    *  in-frame click-to-select. Pure state + signal — never throws. */
@@ -240,6 +263,9 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       lastGridWindow.hPt,
     );
     if (!scene) return false;
+    // K-1 — overlay the in-progress cell-edit text on its cell (the engine
+    // scene still shows the COMMITTED value; the buffer is uncommitted).
+    if (cellEdit) overlayCellText(scene, cellEdit.row, cellEdit.col, cellEdit.text);
     lastGridScene = scene;
     try {
       await surface.submit(lastFrameId, gridSceneToSceneLayer(scene));
@@ -248,6 +274,36 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       return false;
     }
     return true;
+  }
+
+  /** Override the rendered text of `(row, col)` in `scene` (mutates it) —
+   *  the uncommitted cell-edit buffer. Replaces the cell if present in the
+   *  window, else appends a left-aligned one so an edit on an empty cell
+   *  still shows. */
+  function overlayCellText(
+    scene: GridScene,
+    row: number,
+    col: number,
+    text: string,
+  ): void {
+    const existing = scene.cells.find((c) => c.row === row && c.col === col);
+    if (existing) {
+      existing.text = text;
+      return;
+    }
+    const cell: GridCell = { row, col, text, align: "left", styleKey: 0 };
+    scene.cells.push(cell);
+  }
+
+  /** The display value of `(row, col)` on the active sheet, or "" — the
+   *  seed when an edit OPENS on a populated cell (F2-style). Never throws. */
+  function cellDisplay(row: number, col: number): string {
+    if (!state.engine || state.activeSheet === null) return "";
+    try {
+      return state.engine.getCellDisplay(state.activeSheet, row, col) ?? "";
+    } catch {
+      return "";
+    }
   }
 
   function defaultRangeForActive(): void {
@@ -433,16 +489,81 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       // (it inverted the frame's ItemTransform + content offset, §8.5).
       // Hit-test it against the last rendered grid, select that cell, and
       // re-render in-frame so the selection chrome shows. No engine round-
-      // trip for the hit (pure geometry off `lastGridScene`).
+      // trip for the hit (pure geometry off `lastGridScene`). A click ALSO
+      // cancels any in-progress edit on another cell (Excel behavior).
       if (!lastGridScene) return false;
       const hit = hitCell(lastGridScene, contentX, contentY);
       if (!hit) return false;
+      cellEdit = null;
       applyGridSelection(hit.row, hit.col, 1, 1);
       void submitInFrameGrid();
       return true;
     },
 
+    isCellEditing() {
+      return cellEdit !== null;
+    },
+
+    typeCellChar(ch: string) {
+      // K-1 — a printable key in-frame: begin a fresh (replace-mode) edit on
+      // the selected cell, or append to the open one. Returns false when
+      // there's nothing to edit (no selected cell / not a single char).
+      if (ch.length !== 1) return false;
+      if (!cellEdit) {
+        const sel = state.gridSelection;
+        if (!sel) return false;
+        cellEdit = { row: sel.anchorRow, col: sel.anchorCol, text: ch };
+      } else {
+        cellEdit = { ...cellEdit, text: cellEdit.text + ch };
+      }
+      void submitInFrameGrid();
+      return true;
+    },
+
+    backspaceCellEdit() {
+      // Begin from the cell's current value (F2-like) if not already open,
+      // then drop the last char.
+      if (!cellEdit) {
+        const sel = state.gridSelection;
+        if (!sel) return false;
+        cellEdit = {
+          row: sel.anchorRow,
+          col: sel.anchorCol,
+          text: cellDisplay(sel.anchorRow, sel.anchorCol),
+        };
+      }
+      cellEdit = { ...cellEdit, text: cellEdit.text.slice(0, -1) };
+      void submitInFrameGrid();
+      return true;
+    },
+
+    commitCellEdit() {
+      // Write the buffer through the engine (it recomputes the dirty cut),
+      // clear the edit, re-render. Returns whether an edit was committed.
+      // Mirrors `editCell` rather than calling it (no reliance on `this`).
+      if (!cellEdit) return false;
+      const { row, col, text } = cellEdit;
+      cellEdit = null;
+      if (state.engine && state.activeSheet !== null) {
+        try {
+          state.engine.setCell(state.activeSheet, row, col, text);
+        } catch (err) {
+          host.log.error("commitCellEdit: engine setCell failed", err);
+        }
+      }
+      emitter.emit();
+      void submitInFrameGrid();
+      return true;
+    },
+
+    cancelCellEdit() {
+      if (!cellEdit) return;
+      cellEdit = null;
+      void submitInFrameGrid();
+    },
+
     hideGridInFrame() {
+      cellEdit = null;
       if (lastFrameId) void sceneSurface?.clear(lastFrameId);
     },
 

@@ -49,13 +49,16 @@ function scene2x2(): GridScene {
 
 function fakeEngine() {
   const setSelCalls: Array<[number, number, number, number, number]> = [];
+  const setCellCalls: Array<[number, number, number, string]> = [];
   const engine: SheetEngine = {
     loadXlsx() {},
     saveXlsx: () => new Uint8Array(),
-    setCell: (sheet, row, col, input) => ({
-      changed: [{ sheet, row, col, display: input }],
-    }),
-    getCellDisplay: () => "",
+    setCell: (sheet, row, col, input) => {
+      setCellCalls.push([sheet, row, col, input]);
+      return { changed: [{ sheet, row, col, display: input }] };
+    },
+    // A populated B1 so the F2/Backspace-from-value path has a seed.
+    getCellDisplay: (_sheet, row, col) => (row === 0 && col === 1 ? "100" : ""),
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
     paginate: () => [],
     // The fake ignores the window args and always returns the 2×2 scene; the
@@ -69,7 +72,18 @@ function fakeEngine() {
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
   };
-  return { engine, setSelCalls };
+  return { engine, setSelCalls, setCellCalls };
+}
+
+/** The rendered text of `(row, col)` in the last submitted scene layer's
+ *  text items, or undefined. The grid lowers each cell's text at its
+ *  leading edge; we read the buffer back by matching the value. */
+function textsOf(submit: { layer: SceneLayer }): string[] {
+  return submit.layer.items
+    .filter((i): i is Extract<SceneLayer["items"][number], { kind: "text" }> =>
+      i.kind === "text",
+    )
+    .map((i) => i.text);
 }
 
 /** A host that wires the scene-layer channel + a frame geometry read, and
@@ -152,5 +166,80 @@ describe("sheet_scene_layer_in_frame: K-1 click-to-select", () => {
     const { host } = fakeHost();
     const session = bootedSession(host, engine);
     expect(session.selectCellInFrame(10, 10)).toBe(false);
+  });
+});
+
+describe("sheet_scene_layer_in_frame: K-1 cell editor", () => {
+  async function shownSession() {
+    const { engine, setCellCalls } = fakeEngine();
+    const { host, submits } = fakeHost();
+    const session = bootedSession(host, engine);
+    await session.showGridInFrame("frame-1");
+    // Select B1 (col1/row0) — the edit target.
+    session.selectCellInFrame(50, 10);
+    return { session, submits, setCellCalls };
+  }
+
+  it("a printable key begins a replace-mode edit on the selected cell", async () => {
+    const { session, submits } = await shownSession();
+    const before = submits.length;
+    expect(session.typeCellChar("7")).toBe(true);
+    expect(session.isCellEditing()).toBe(true);
+    // Re-rendered with the buffer "7" overlaid on B1 (replacing "100").
+    expect(submits).toHaveLength(before + 1);
+    const texts = textsOf(submits[submits.length - 1]);
+    expect(texts).toContain("7");
+    expect(texts).not.toContain("100");
+  });
+
+  it("appends subsequent chars to the open buffer", async () => {
+    const { session, submits } = await shownSession();
+    session.typeCellChar("4");
+    session.typeCellChar("2");
+    expect(textsOf(submits[submits.length - 1])).toContain("42");
+  });
+
+  it("Backspace opens from the cell value then drops the last char", async () => {
+    const { session, submits } = await shownSession();
+    // Not yet editing → opens from B1's value "100", drops to "10".
+    expect(session.backspaceCellEdit()).toBe(true);
+    expect(textsOf(submits[submits.length - 1])).toContain("10");
+  });
+
+  it("commit writes the buffer through the engine + clears the edit", async () => {
+    const { session, submits, setCellCalls } = await shownSession();
+    session.typeCellChar("9");
+    expect(session.commitCellEdit()).toBe(true);
+    // engine.setCell(sheet0, row0, col1, "9").
+    expect(setCellCalls).toContainEqual([0, 0, 1, "9"]);
+    expect(session.isCellEditing()).toBe(false);
+    // The committed engine value re-renders (fake getGridScene → "100").
+    expect(textsOf(submits[submits.length - 1])).toContain("100");
+  });
+
+  it("cancel drops the buffer with no engine write", async () => {
+    const { session, setCellCalls } = await shownSession();
+    session.typeCellChar("5");
+    session.cancelCellEdit();
+    expect(session.isCellEditing()).toBe(false);
+    expect(setCellCalls).toHaveLength(0);
+  });
+
+  it("a click on another cell cancels an in-progress edit", async () => {
+    const { session } = await shownSession();
+    session.typeCellChar("5");
+    expect(session.isCellEditing()).toBe(true);
+    // Click A1 (col0/row0).
+    session.selectCellInFrame(10, 10);
+    expect(session.isCellEditing()).toBe(false);
+  });
+
+  it("typing with no selected cell is a no-op", async () => {
+    const { engine } = fakeEngine();
+    const { host } = fakeHost();
+    const session = bootedSession(host, engine);
+    await session.showGridInFrame("frame-1"); // grid shown, nothing selected
+    expect(session.typeCellChar("x")).toBe(false);
+    expect(session.isCellEditing()).toBe(false);
   });
 });

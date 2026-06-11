@@ -145,11 +145,24 @@ export function activate(host: BundleHost): BundleHandle {
       // (it owns the page→content inversion via the frame's HitResult
       // bounds + item_transform; §8.5 — the plugin never compensates).
       // Map it to a cell + select it (re-renders the in-frame grid with
-      // the selection chrome). Cell-editor open (double-click / typing)
-      // is the next increment on this same channel.
+      // the selection chrome).
       onContentPointerDown: (e) => {
         session.selectCellInFrame(e.contentPoint[0], e.contentPoint[1]);
       },
+      // K-1 — a printable key types into the selected cell (an in-frame
+      // edit buffer the grid re-renders); Enter commits, Esc cancels,
+      // Backspace deletes. The shell routes Enter/Esc HERE (not to the
+      // context commit/cancel) while `isDirty` is true — so an in-progress
+      // cell edit owns those keys. Cmd/Ctrl combos never reach this.
+      onContentKey: (e) => {
+        if (e.key === "Enter") session.commitCellEdit();
+        else if (e.key === "Escape") session.cancelCellEdit();
+        else if (e.key === "Backspace") session.backspaceCellEdit();
+        else if (e.key.length === 1) session.typeCellChar(e.key);
+      },
+      // The context is "dirty" while a cell edit is open — gates the shell's
+      // Enter/Esc routing (to the cell) + a future discard prompt (§8.0).
+      isDirty: () => session.isCellEditing(),
       onExit: () => session.hideGridInFrame(),
     });
   }
