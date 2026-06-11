@@ -266,12 +266,12 @@ function isNode(): boolean {
   );
 }
 
-/** Load + boot the engine wasm, returning the facade. Browser path
- *  passes the `_bg.wasm` URL to `default()`; Node path reads the bytes
- *  and `initSync`s (mirroring plugin-sdk's wasm-loader.ts). Rejects with
- *  ENGINE_NOT_BUILT-flavoured detail when the artifact is missing so the
- *  panel can surface the honest "not built" state. */
-export async function bootEngine(): Promise<SheetEngine> {
+/** Load + instantiate the engine wasm module (the glue + the `_bg.wasm`),
+ *  branching browser vs Node exactly like `bootEngine`. Split out so both
+ *  the XLSX-load boot and the EMPTY-workbook boot (S-15) share one
+ *  instantiate path. Rejects with ENGINE_NOT_BUILT-flavoured detail when
+ *  the artifact is missing. */
+async function loadModule(): Promise<SheetWasmModule> {
   let mod: SheetWasmModule;
   try {
     // @ts-ignore — the artifact (bin/sheet_js.js, the wasm-bindgen
@@ -296,6 +296,26 @@ export async function bootEngine(): Promise<SheetEngine> {
   } else {
     await mod.default(new URL("./sheet_js_bg.wasm", import.meta.url));
   }
+  return mod;
+}
 
+/** Load + boot the engine wasm, returning the facade. Browser path
+ *  passes the `_bg.wasm` URL to `default()`; Node path reads the bytes
+ *  and `initSync`s (mirroring plugin-sdk's wasm-loader.ts). Rejects with
+ *  ENGINE_NOT_BUILT-flavoured detail when the artifact is missing so the
+ *  panel can surface the honest "not built" state. */
+export async function bootEngine(): Promise<SheetEngine> {
+  const mod = await loadModule();
+  return wrapEngine(new mod.SheetEngine());
+}
+
+/** Boot a FRESH, EMPTY workbook (S-15 — source-a-sheet-from-a-dataset).
+ *  `new SheetEngine()` boots an empty workbook with one sheet "Sheet1"
+ *  (sheet id 0); the caller seeds cells with `setCell`. Identical boot
+ *  path to `bootEngine` — the only difference is no `loadXlsx`, so the
+ *  workbook starts blank rather than parsed from bytes. Same honest
+ *  ENGINE_NOT_BUILT rejection when the artifact is absent. */
+export async function bootEmptyEngine(): Promise<SheetEngine> {
+  const mod = await loadModule();
   return wrapEngine(new mod.SheetEngine());
 }

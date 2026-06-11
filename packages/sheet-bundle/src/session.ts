@@ -5,7 +5,12 @@
 // panel subscribes to. All spreadsheet work is the engine's; this is
 // session bookkeeping + the host write path.
 
-import type { BundleHost, SceneLayerSurface } from "@paged-media/plugin-api";
+import type {
+  BundleHost,
+  DataProviderInfo,
+  ProviderRecordSet,
+  SceneLayerSurface,
+} from "@paged-media/plugin-api";
 import {
   gridSceneToSceneLayer,
   hitCell,
@@ -15,6 +20,7 @@ import {
 } from "@paged-media/sheet-host-model";
 
 import {
+  bootEmptyEngine,
   bootEngine,
   ENGINE_NOT_BUILT,
   type ChartInfo,
@@ -66,6 +72,13 @@ export interface SessionState {
    *  the SVG draws the selection chrome (the engine also gets told via
    *  `setGridSelection` so the JOINS-phase wasm can carry it natively). */
   gridSelection: GridSelection | null;
+  /** S-15 — when the active workbook was sourced from a governed dataset
+   *  (`sourceFromDataset`), the linked provider id + the revision the cells
+   *  were seeded from, and whether the provider has since announced a newer
+   *  revision (`stale`). Null when the workbook was hand-entered / imported
+   *  from XLSX (the snapshot is committed content either way — §1.1 honesty:
+   *  no auto-refetch; a refresh is an explicit re-source). */
+  dataSource: { providerId: string; revision: string; stale: boolean } | null;
 }
 
 export interface WorkbookSession {
@@ -160,8 +173,52 @@ export interface WorkbookSession {
    *  lazy-verbatim re-emit, §10.2). Returns the bytes + a suggested file
    *  name, or null when there is no workbook (nothing to export). */
   saveWorkbook(): { bytes: Uint8Array; fileName: string } | null;
+  /** S-15 — enumerate the governed datasets the platform offers in the
+   *  `"dataset"` category (`host.dataProviders.discover`), schema + revision
+   *  only, NO rows. The datasets panel lists these so the author can source
+   *  a sheet from one. Returns [] when the `dataProviders` surface is absent
+   *  or no shared registry is wired (`supports("dataProviders@1")` false) —
+   *  the §2.1 graceful-absence posture (paged.data not installed ⇒ no
+   *  sources). Never throws. */
+  discoverDatasets(): readonly DataProviderInfo[];
+  /** S-15 — source the active workbook from a governed dataset: pull the
+   *  provider's resolved snapshot (`host.dataProviders.get`), boot a FRESH
+   *  EMPTY workbook, and seed sheet 0 (row 0 = the schema field names; rows
+   *  1.. = the column-major records). Sets `state.dataSource` to the linked
+   *  `(providerId, revision)` and subscribes to `onDidChange` so a later
+   *  revision marks the sheet stale (logged "re-source to refresh"; NO
+   *  auto-refetch — §1.1 / the RFC). A no-op (logged) when the provider is
+   *  gone, the surface is absent, or the engine cannot boot. */
+  sourceFromDataset(providerId: string): Promise<void>;
   /** Tear down: free the engine, drop listeners. */
   dispose(): void;
+}
+
+/** S-15 — coerce one provider cell value to the string the engine's
+ *  `setCell` ingests (it parses the input back to a typed value in Rust —
+ *  §3: no spreadsheet semantics in TS, this is pure transport).
+ *
+ *  CONTRACT NOTE (forward-compatible): the data-provider RFC's
+ *  `ProviderRecordSet.columns[c][r]` cell MAY arrive as a PLAIN JS value
+ *  (`string | number | boolean | null`) OR as the data engine's TAGGED form
+ *  `{ t: "text"|"number"|"bool"|"date"|"datetime"|"null"|…, v }`. The
+ *  contract (`plugin-api`) does not yet standardize which — a follow-up
+ *  should pin one encoding. We handle BOTH defensively: an object carrying
+ *  a `t`/`v` tag uses its `v`; anything else is used directly. `null` /
+ *  `undefined` (and a null tag's value) lower to "" (a blank cell). */
+export function cellToString(value: unknown): string {
+  // Tagged form `{ t, v }` from the data engine — unwrap to the value.
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "t" in value &&
+    "v" in value
+  ) {
+    return cellToString((value as { v: unknown }).v);
+  }
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  return String(value);
 }
 
 /** Default the range to the whole used extent of a sheet (A1 to the
@@ -193,7 +250,13 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     selectedRange: null,
     bootError: null,
     gridSelection: null,
+    dataSource: null,
   };
+
+  // S-15 — the live `onDidChange` subscription for the currently-linked
+  // dataset (disposed + replaced on each `sourceFromDataset`, and on
+  // `dispose`). Null when the workbook is not dataset-sourced.
+  let dataSourceSub: { dispose(): void } | null = null;
 
   // C-1 / S-02 — the last frame this session lowered into (the target for
   // the in-frame grid) + the lazily-obtained scene-layer surface.
@@ -312,6 +375,47 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       .listSheets()
       .find((s) => s.id === state.activeSheet);
     if (sheet) state.selectedRange = usedRangeA1(sheet.rows, sheet.cols);
+  }
+
+  /** S-15 — seed sheet 0 of a fresh engine from a provider RecordSet: row 0
+   *  = the schema field names (the header); rows 1.. = the column-major
+   *  records (`columns[c][r-1]` → the cell at row r, col c). Every value
+   *  goes in as a STRING via `cellToString` + `engine.setCell` — the engine
+   *  re-types it in Rust (§3: no spreadsheet semantics in TS). Pure transport
+   *  over the engine; tolerant of a per-cell write throwing (logs + skips).
+   */
+  function seedSheetFromRecords(
+    engine: SheetEngine,
+    records: ProviderRecordSet,
+  ): void {
+    const fields = records.schema.fields;
+    // Header row (row 0) — the schema field names.
+    for (let c = 0; c < fields.length; c++) {
+      writeCell(engine, 0, c, fields[c].name);
+    }
+    // Body rows (rows 1..rowCount) — column-major: columns[c][r] is the
+    // cell value for data-row r, which lands on sheet row r + 1.
+    for (let c = 0; c < records.columns.length; c++) {
+      const col = records.columns[c];
+      for (let r = 0; r < records.rowCount; r++) {
+        writeCell(engine, r + 1, c, cellToString(col[r]));
+      }
+    }
+  }
+
+  /** Write one cell through the engine, tolerating a throw (an out-of-range
+   *  or malformed input never aborts the whole seed — it logs + skips). */
+  function writeCell(
+    engine: SheetEngine,
+    row: number,
+    col: number,
+    value: string,
+  ): void {
+    try {
+      engine.setCell(0, row, col, value);
+    } catch (err) {
+      host.log.warn(`sourceFromDataset: setCell(0,${row},${col}) failed`, err);
+    }
   }
 
   /** Window the active sheet into a GridScene + overlay the session
@@ -610,6 +714,105 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       return true;
     },
 
+    discoverDatasets() {
+      // S-15 — only ask the registry when a real one is wired
+      // (`supports("dataProviders@1")`) AND the surface exists; both guard
+      // the §2.1 graceful-absence posture (paged.data absent ⇒ no sources).
+      // The host's gate also requires our `consume` capability; we declared
+      // it, so discover is permitted.
+      if (!host.supports("dataProviders@1") || !host.dataProviders) return [];
+      try {
+        return host.dataProviders.discover("dataset");
+      } catch (err) {
+        host.log.warn("discoverDatasets: discover failed", err);
+        return [];
+      }
+    },
+
+    async sourceFromDataset(providerId: string) {
+      // S-15 — honest defer when no registry is wired (graceful absence,
+      // like the existing honest-missing patterns). No surface ⇒ nothing
+      // to source.
+      if (!host.supports("dataProviders@1") || !host.dataProviders) {
+        host.log.warn(
+          `sourceFromDataset("${providerId}"): no data-provider registry ` +
+            "wired (supports('dataProviders@1') is false) — install/enable " +
+            "paged.data to source a sheet from a governed dataset",
+        );
+        return;
+      }
+
+      // Pull the resolved snapshot (the rows). The consumer NEVER fetches —
+      // it receives an already-resolved RecordSet the platform hands it
+      // (§1.1: paged.data owns the network + the §11 consent).
+      let snapshot;
+      try {
+        snapshot = await host.dataProviders.get(providerId);
+      } catch (err) {
+        host.log.error(`sourceFromDataset("${providerId}"): get failed`, err);
+        return;
+      }
+      if (!snapshot) {
+        host.log.warn(
+          `sourceFromDataset("${providerId}"): provider no longer exists`,
+        );
+        return;
+      }
+
+      // Boot a FRESH, EMPTY workbook (sheet 0 = "Sheet1") — a dataset-sourced
+      // sheet replaces the workbook, it does not merge into the imported one.
+      let engine: SheetEngine;
+      try {
+        engine = await bootEmptyEngine();
+        state.bootError = null;
+      } catch (err) {
+        state.bootError = err instanceof Error ? err.message : ENGINE_NOT_BUILT;
+        host.log.warn("sourceFromDataset: engine boot failed", err);
+        emitter.emit();
+        return;
+      }
+
+      // Tear down any prior workbook engine (we're replacing it).
+      try {
+        state.engine?.dispose();
+      } catch (err) {
+        host.log.warn("sourceFromDataset: prior engine dispose failed", err);
+      }
+
+      seedSheetFromRecords(engine, snapshot.records);
+
+      state.engine = engine;
+      state.activeSheet = 0;
+      state.fileName = providerId;
+      state.gridSelection = null;
+      defaultRangeForActive();
+
+      // Remember the linked (providerId, revision); the seeded values are
+      // committed content (they travel with the document) — §1.1 honesty:
+      // we do NOT auto-refetch. A later revision only MARKS the sheet stale;
+      // re-sourcing is an explicit author action.
+      state.dataSource = {
+        providerId,
+        revision: snapshot.revision,
+        stale: false,
+      };
+
+      // Replace the prior dataset subscription with one for this provider.
+      dataSourceSub?.dispose();
+      dataSourceSub = host.dataProviders.onDidChange(providerId, (revision) => {
+        if (state.dataSource?.providerId !== providerId) return;
+        if (revision === state.dataSource.revision) return;
+        state.dataSource = { ...state.dataSource, stale: true };
+        host.log.info(
+          `dataset "${providerId}" updated (revision ${revision}) — ` +
+            "re-source to refresh (no auto-refetch, §1.1)",
+        );
+        emitter.emit();
+      });
+
+      emitter.emit();
+    },
+
     saveWorkbook() {
       if (!state.engine) {
         host.log.warn("saveWorkbook: no workbook");
@@ -626,6 +829,13 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     dispose() {
+      // S-15 — drop the dataset revision subscription.
+      try {
+        dataSourceSub?.dispose();
+      } catch (err) {
+        host.log.warn("dataset subscription dispose failed", err);
+      }
+      dataSourceSub = null;
       // Disposing the scene-layer surface clears any in-frame grid it
       // submitted (the surface tracks + clears on dispose).
       try {

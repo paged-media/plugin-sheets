@@ -33,6 +33,7 @@ describe("sheet_plugin_manifest_valid", () => {
     expect(manifest.contributes.panels).toEqual([
       "media.paged.sheet.panel.workbook",
       "media.paged.sheet.panel.grid",
+      "media.paged.sheet.panel.datasets",
     ]);
     expect(manifest.contributes.commands).toEqual([
       "media.paged.sheet.command.importXlsx",
@@ -41,6 +42,7 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.openGrid",
       "media.paged.sheet.command.showGridInFrame",
       "media.paged.sheet.command.hideGridInFrame",
+      "media.paged.sheet.command.sheetFromDataset",
     ]);
   });
 
@@ -48,6 +50,14 @@ describe("sheet_plugin_manifest_valid", () => {
     expect(manifest.capabilities.document.read).toBe("broad");
     expect(manifest.capabilities.document.write).toBe("scoped");
     expect(manifest.capabilities.network).toBe(false);
+  });
+
+  it("declares the data-provider CONSUMER capability (S-15) — consume, not publish", () => {
+    // The consumer gate: the host refuses discover/get unless the manifest
+    // declares consume ∋ "dataset". paged.sheet never publishes.
+    expect(manifest.capabilities.dataProviders).toEqual({
+      consume: ["dataset"],
+    });
   });
 
   it("declares the sheet-engine wasm artifact within the 8 MiB budget", () => {

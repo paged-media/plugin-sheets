@@ -36,6 +36,16 @@ grid in the lowered frame). Residual = the editing/interactivity half
 (K-1 modal session + coord-inverted input). Remaining: S-07 (workers),
 S-02 editing residual + S-01 (sheets-MODE), S-09 (owned content), S-04
 named-style write.
+**Platform Wave 5 — data-provider consumer (2026-06-11):** S-15 RESOLVED
+— `host.dataProviders` (the neutral cross-plugin registry; plugin-data
+D-09 / sheets S-15) is LIVE and the sheet CONSUMES it: a `dataProviders:
+{consume:["dataset"]}` capability + a datasets panel +
+`session.discoverDatasets()`/`sourceFromDataset()` source a sheet from a
+governed dataset (header + records seeded from a resolved snapshot; no
+network on the sheet's side, §1.1). §2.1 intact — only the neutral
+contract, never paged.data directly. Remaining: S-07 (workers), S-02
+editing residual + S-01 (sheets-MODE), S-09 (owned content), S-04
+named-style write, S-14 (range clipboard).
 
 ---
 
@@ -404,6 +414,39 @@ Sheets-discovered, beyond the §2.2 table: the wasm-bindgen loader path
   editing of ranges); a forward-looking row owned by the editing-UX
   companion spec (`plugin-sheet-editing-ux`). Resolution: a clipboard
   capability carrying a tabular/range payload shape.
+
+- **S-15 · 2026-06-10 · data-provider consumer · RESOLVED (2026-06-11)**
+  — source a sheet from a governed external dataset (plugin-data §7.1;
+  the "sheet over a governed query → print" composition). Needed a
+  `dataProviders:{consume}` capability + `host.dataProviders.discover/
+  get/onDidChange`. Consumer-only: pull a resolved `ProviderRecordSet`
+  snapshot (no network on the sheet's side — `paged.data` owns the fetch
+  + §11 consent; the sheet receives cached data, §1.1-consistent, NOT an
+  external-workbook link). **The SDK door is LIVE** (plugin-api
+  `DataProvidersSurface`; the editor injects a shared registry) and the
+  consumer is BUILT here: the manifest declares
+  `capabilities.dataProviders.consume: ["dataset"]`; the bundle adds a
+  **datasets panel** (`media.paged.sheet.panel.datasets`) + a
+  **`sheetFromDataset`** command; `WorkbookSession.discoverDatasets()`
+  lists the governed datasets and `sourceFromDataset(id)` pulls the
+  snapshot, boots a fresh EMPTY workbook, and seeds sheet 0 (row 0 =
+  schema field names; rows 1.. = the column-major records). The linked
+  `(providerId, revision)` is remembered + `onDidChange` marks the sheet
+  STALE on a new revision (no auto-refetch — re-sourcing is explicit,
+  §1.1). ISOLATION (§2.1) intact: the consumer touches ONLY
+  `host.dataProviders` — never `paged.data` / any sibling, at build,
+  runtime, or via a side channel (the contract-import guard stays clean);
+  it learns a provider's `id`/`category`/`schema`, never the backing
+  plugin. Graceful absence: no registry wired ⇒ `discover()` is empty +
+  the panel shows an honest empty state. **Joint with plugin-data D-09**
+  (the provider side built there; shared core contract). RFCs:
+  `thoughts/docs/paged/plugin-sheets/rfc-data-provider-consumer.md`
+  (consumer) + `…/plugin-data/rfc-data-provider.md` (provider/contract).
+  **CONTRACT GAP (follow-up, NOT a blocker):** the contract leaves the
+  per-cell value ENCODING under-specified — `columns[c][r]` may be a
+  PLAIN JS value (`string|number|boolean|null`) OR the data engine's
+  tagged `{ t, v }` form. The consumer's `cellToString` handles BOTH
+  defensively; a contract amendment should standardize one encoding.
 
 ---
 

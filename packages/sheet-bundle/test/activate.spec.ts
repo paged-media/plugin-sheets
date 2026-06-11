@@ -94,17 +94,20 @@ function fakeHost() {
 }
 
 describe("sheet_plugin_bundle_activate", () => {
-  it("registers the workbook + grid panels under their declared ids", () => {
+  it("registers the workbook + grid + datasets panels under their declared ids", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     expect(fake.panels.map((p) => p.id)).toEqual([
       "media.paged.sheet.panel.workbook",
       "media.paged.sheet.panel.grid",
+      "media.paged.sheet.panel.datasets",
     ]);
     expect(fake.panels[0].title).toBe("Workbook");
     expect(fake.panels[0].defaultDock).toBe("right");
     expect(fake.panels[1].title).toBe("Grid");
     expect(fake.panels[1].defaultDock).toBe("right");
+    expect(fake.panels[2].title).toBe("Datasets");
+    expect(fake.panels[2].defaultDock).toBe("right");
   });
 
   it("registers the commands under their declared ids", () => {
@@ -117,6 +120,7 @@ describe("sheet_plugin_bundle_activate", () => {
       "media.paged.sheet.command.openGrid",
       "media.paged.sheet.command.showGridInFrame",
       "media.paged.sheet.command.hideGridInFrame",
+      "media.paged.sheet.command.sheetFromDataset",
     ]);
   });
 
@@ -126,6 +130,14 @@ describe("sheet_plugin_bundle_activate", () => {
     const openCmd = fake.commands.find((c) => c.id.endsWith("openGrid"));
     openCmd?.handler(undefined);
     expect(fake.openedPanels).toEqual(["media.paged.sheet.panel.grid"]);
+  });
+
+  it("sheetFromDataset command opens the datasets panel (S-15)", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    const cmd = fake.commands.find((c) => c.id.endsWith("sheetFromDataset"));
+    cmd?.handler(undefined);
+    expect(fake.openedPanels).toEqual(["media.paged.sheet.panel.datasets"]);
   });
 
   it("registered ids match the manifest's contributes declaration", () => {

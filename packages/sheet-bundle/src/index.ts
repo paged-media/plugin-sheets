@@ -13,11 +13,17 @@ export const sheetBundle = defineBundle({
   activate,
 });
 
-export { activate, PANEL_ID, GRID_PANEL_ID } from "./activate";
+export {
+  activate,
+  PANEL_ID,
+  GRID_PANEL_ID,
+  DATASETS_PANEL_ID,
+} from "./activate";
 
 // The engine facade + boot (S-10), exported for the engine spec.
 export {
   bootEngine,
+  bootEmptyEngine,
   wrapEngine,
   ENGINE_NOT_BUILT,
   type CellChange,
@@ -35,6 +41,7 @@ export {
 // The in-memory workbook session (S-08), exported for the flow spec.
 export {
   createWorkbookSession,
+  cellToString,
   columnLabel,
   usedRangeA1,
   type SessionState,
@@ -55,3 +62,4 @@ export { lowerChartToFrame } from "./lower-chart";
 export { importXlsx } from "./import-xlsx";
 export { makeWorkbookPanel } from "./panels/workbook-panel";
 export { makeGridPanel } from "./panels/grid-panel";
+export { makeDatasetsPanel } from "./panels/datasets-panel";

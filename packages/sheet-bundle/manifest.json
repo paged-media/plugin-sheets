@@ -11,6 +11,9 @@
     },
     "rendering": ["hitTest", "sceneLayer"],
     "network": false,
+    "dataProviders": {
+      "consume": ["dataset"]
+    },
     "clipboard": "none",
     "storage": {
       "blob": true,
@@ -28,7 +31,8 @@
   "contributes": {
     "panels": [
       "media.paged.sheet.panel.workbook",
-      "media.paged.sheet.panel.grid"
+      "media.paged.sheet.panel.grid",
+      "media.paged.sheet.panel.datasets"
     ],
     "commands": [
       "media.paged.sheet.command.importXlsx",
@@ -36,7 +40,8 @@
       "media.paged.sheet.command.lowerChartToFrame",
       "media.paged.sheet.command.openGrid",
       "media.paged.sheet.command.showGridInFrame",
-      "media.paged.sheet.command.hideGridInFrame"
+      "media.paged.sheet.command.hideGridInFrame",
+      "media.paged.sheet.command.sheetFromDataset"
     ],
     "importers": [
       "media.paged.sheet.importer.xlsx"

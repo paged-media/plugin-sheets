@@ -21,9 +21,11 @@ import { pickAndImport, XLSX_MIME } from "./import-xlsx";
 import { createWorkbookSession } from "./session";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
 import { makeGridPanel } from "./panels/grid-panel";
+import { makeDatasetsPanel } from "./panels/datasets-panel";
 
 const PANEL_ID = "media.paged.sheet.panel.workbook";
 const GRID_PANEL_ID = "media.paged.sheet.panel.grid";
+const DATASETS_PANEL_ID = "media.paged.sheet.panel.datasets";
 
 /** The raw id string of a frame-like `ElementId` (textFrame / rectangle
  *  carry a string `id`), or null. Structural so it needs no wire import. */
@@ -58,6 +60,19 @@ export function activate(host: BundleHost): BundleHandle {
     title: "Grid",
     icon: "panel-canvas",
     component: makeGridPanel(host, session),
+    defaultDock: "right",
+  });
+
+  // S-15 — the datasets panel (the data-provider CONSUMER side): lists the
+  // governed datasets the platform offers (host.dataProviders.discover) and
+  // sources a sheet from one (session.sourceFromDataset). Consumes ONLY the
+  // neutral host.dataProviders surface (§2.1 — never paged.data directly);
+  // degrades to an honest empty state when no registry is wired.
+  contributePanel(host, {
+    id: DATASETS_PANEL_ID,
+    title: "Datasets",
+    icon: "panel-canvas",
+    component: makeDatasetsPanel(host, session),
     defaultDock: "right",
   });
 
@@ -114,6 +129,16 @@ export function activate(host: BundleHost): BundleHandle {
     title: "Hide grid in frame",
     category: "Sheet",
     handler: () => session.hideGridInFrame(),
+  });
+  // S-15 — open the datasets panel to source a sheet from a governed
+  // dataset (the consumer flow: discover → pick → seed). The actual
+  // discover/get/seed lives in the session + panel; the command is the
+  // menu/keyboard entry that surfaces the panel.
+  host.contribute.command({
+    id: "media.paged.sheet.command.sheetFromDataset",
+    title: "Sheet from dataset",
+    category: "Sheet",
+    handler: () => host.shell.openPanel(DATASETS_PANEL_ID),
   });
 
   // K-1 entry — double-click a lowered sheet frame to ENTER "sheet" mode:
@@ -206,4 +231,4 @@ export function activate(host: BundleHost): BundleHandle {
   };
 }
 
-export { manifest, PANEL_ID, GRID_PANEL_ID };
+export { manifest, PANEL_ID, GRID_PANEL_ID, DATASETS_PANEL_ID };
