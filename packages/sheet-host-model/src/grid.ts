@@ -479,6 +479,27 @@ export function gridSceneToSceneLayer(
     });
   }
 
+  // 4 — selection rectangle (K-1: click-to-select reads in-frame). A
+  //     translucent wash + stroke, drawn LAST so it reads over the cell
+  //     content. Same geometry the SVG `selectionSvg` draws; the in-frame
+  //     scene-layer path expresses it as a filled + stroked rect.
+  const sel = selectionRect(scene);
+  if (sel) {
+    const [sx, sy, sw, sh] = sel;
+    const seg = rectPath(sx, sy, sx + sw, sy + sh);
+    items.push({
+      kind: "fillPath",
+      path: seg,
+      paint: cssColorToScenePaint(o.selectionFill),
+    });
+    items.push({
+      kind: "strokePath",
+      path: seg,
+      paint: cssColorToScenePaint(o.selectionColor),
+      width: o.selectionWidth,
+    });
+  }
+
   return { items };
 }
 

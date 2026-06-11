@@ -141,6 +141,15 @@ export function activate(host: BundleHost): BundleHandle {
         const id = frameIdOf(ctx.id);
         if (id) void session.showGridInFrame(id);
       },
+      // K-1 — the editor delivers a pointer in FRAME-CONTENT coordinates
+      // (it owns the page→content inversion via the frame's HitResult
+      // bounds + item_transform; §8.5 — the plugin never compensates).
+      // Map it to a cell + select it (re-renders the in-frame grid with
+      // the selection chrome). Cell-editor open (double-click / typing)
+      // is the next increment on this same channel.
+      onContentPointerDown: (e) => {
+        session.selectCellInFrame(e.contentPoint[0], e.contentPoint[1]);
+      },
       onExit: () => session.hideGridInFrame(),
     });
   }

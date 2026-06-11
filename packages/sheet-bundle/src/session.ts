@@ -8,6 +8,7 @@
 import type { BundleHost, SceneLayerSurface } from "@paged-media/plugin-api";
 import {
   gridSceneToSceneLayer,
+  hitCell,
   type GridScene,
   type GridSelection,
 } from "@paged-media/sheet-host-model";
@@ -97,6 +98,12 @@ export interface WorkbookSession {
    *  target frame, no scene channel (`supports("rendering.sceneLayer@1")`),
    *  or no engine. The layer is EPHEMERAL (re-submitted; not doc content). */
   showGridInFrame(frameId?: string): Promise<boolean>;
+  /** K-1 — select the cell under a FRAME-CONTENT-space point (the editor
+   *  inverted the frame transform before delivering it) and re-render the
+   *  in-frame grid with the selection chrome. Pure `hitCell` against the
+   *  last rendered grid — no engine round-trip for the hit. Returns false
+   *  when no grid is shown or the point falls outside the windowed cells. */
+  selectCellInFrame(contentX: number, contentY: number): boolean;
   /** Clear the in-frame grid layer (the frame returns to its native
    *  lowered content). */
   hideGridInFrame(): void;
@@ -180,6 +187,68 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     if (!sceneSurface) sceneSurface = host.contribute.sceneLayer();
     return sceneSurface;
   };
+
+  // K-1 — the LAST in-frame grid this session rendered: the window it was
+  // computed with (so a re-render keeps the same viewport) + the resolved
+  // scene (so a content-space pointer can `hitCell` against it without
+  // re-querying the engine). Both null until `showGridInFrame` runs.
+  let lastGridWindow:
+    | { firstRow: number; firstCol: number; wPt: number; hPt: number }
+    | null = null;
+  let lastGridScene: GridScene | null = null;
+
+  /** Record the grid selection (engine + session) so the next windowing
+   *  paints it. Shared by the panel's `setGridSelection` door and K-1's
+   *  in-frame click-to-select. Pure state + signal — never throws. */
+  function applyGridSelection(
+    anchorRow: number,
+    anchorCol: number,
+    rows: number,
+    cols: number,
+  ): void {
+    state.gridSelection = { anchorRow, anchorCol, rows, cols };
+    if (state.engine && state.activeSheet !== null) {
+      try {
+        state.engine.setGridSelection(
+          state.activeSheet,
+          anchorRow,
+          anchorCol,
+          rows,
+          cols,
+        );
+      } catch (err) {
+        // The wasm side lands in JOINS — tolerate its absence; the
+        // session-held selection still drives the overlay.
+        host.log.debug("setGridSelection: engine not ready", err);
+      }
+    }
+    emitter.emit();
+  }
+
+  /** Re-window + submit the in-frame grid for `lastGridWindow` (carrying
+   *  the current selection). Caches `lastGridScene` for the next hit-test.
+   *  Returns false when there is no target frame / scene channel / window
+   *  / engine. Never throws. */
+  async function submitInFrameGrid(): Promise<boolean> {
+    if (!lastFrameId || !lastGridWindow) return false;
+    const surface = sceneChannel();
+    if (!surface) return false;
+    const scene = computeGridScene(
+      lastGridWindow.firstRow,
+      lastGridWindow.firstCol,
+      lastGridWindow.wPt,
+      lastGridWindow.hPt,
+    );
+    if (!scene) return false;
+    lastGridScene = scene;
+    try {
+      await surface.submit(lastFrameId, gridSceneToSceneLayer(scene));
+    } catch (err) {
+      host.log.error("showGridInFrame: submit failed", err);
+      return false;
+    }
+    return true;
+  }
 
   function defaultRangeForActive(): void {
     if (!state.engine || state.activeSheet === null) return;
@@ -353,17 +422,23 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       } catch (err) {
         host.log.debug("showGridInFrame: frame geometry read failed", err);
       }
-      const scene = computeGridScene(0, 0, wPt, hPt);
-      if (!scene) {
-        host.log.warn("showGridInFrame: grid windowing failed");
-        return false;
-      }
-      try {
-        await surface.submit(lastFrameId, gridSceneToSceneLayer(scene));
-      } catch (err) {
-        host.log.error("showGridInFrame: submit failed", err);
-        return false;
-      }
+      lastGridWindow = { firstRow: 0, firstCol: 0, wPt, hPt };
+      const ok = await submitInFrameGrid();
+      if (!ok) host.log.warn("showGridInFrame: grid windowing failed");
+      return ok;
+    },
+
+    selectCellInFrame(contentX: number, contentY: number) {
+      // K-1 — the editor delivers a pointer in FRAME-CONTENT coordinates
+      // (it inverted the frame's ItemTransform + content offset, §8.5).
+      // Hit-test it against the last rendered grid, select that cell, and
+      // re-render in-frame so the selection chrome shows. No engine round-
+      // trip for the hit (pure geometry off `lastGridScene`).
+      if (!lastGridScene) return false;
+      const hit = hitCell(lastGridScene, contentX, contentY);
+      if (!hit) return false;
+      applyGridSelection(hit.row, hit.col, 1, 1);
+      void submitInFrameGrid();
       return true;
     },
 
@@ -394,23 +469,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     setGridSelection(anchorRow, anchorCol, rows, cols) {
-      state.gridSelection = { anchorRow, anchorCol, rows, cols };
-      if (state.engine && state.activeSheet !== null) {
-        try {
-          state.engine.setGridSelection(
-            state.activeSheet,
-            anchorRow,
-            anchorCol,
-            rows,
-            cols,
-          );
-        } catch (err) {
-          // The wasm side lands in JOINS — tolerate its absence; the
-          // session-held selection still drives the overlay.
-          host.log.debug("setGridSelection: engine not ready", err);
-        }
-      }
-      emitter.emit();
+      applyGridSelection(anchorRow, anchorCol, rows, cols);
     },
 
     editCell(sheet, row, col, input) {

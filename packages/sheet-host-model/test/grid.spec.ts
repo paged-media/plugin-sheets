@@ -359,4 +359,30 @@ describe("sheet_grid_scene_to_scene_layer: in-frame C-1 lowering", () => {
       a: 1,
     });
   });
+
+  it("lowers the selection to a fill wash + stroke over the anchored cell (K-1)", () => {
+    const scene = scene2x2();
+    scene.selection = { anchorRow: 0, anchorCol: 1, rows: 1, cols: 1 };
+    const layer = gridSceneToSceneLayer(scene);
+    // selectionRect for col1 = [40, 0, 40, 20]; the wash + stroke are the
+    // LAST two items (drawn over cell content).
+    const sel = layer.items.slice(-2);
+    expect(sel.map((i) => i.kind)).toEqual(["fillPath", "strokePath"]);
+    const [wash, stroke] = sel;
+    if (wash.kind === "fillPath" && stroke.kind === "strokePath") {
+      // rect over [40,80]×[0,20].
+      expect(wash.path[0]).toEqual({ op: "moveTo", x: 40, y: 0 });
+      expect(wash.path[2]).toEqual({ op: "lineTo", x: 80, y: 20 });
+      // The wash carries the translucent selectionFill alpha (0.12).
+      expect(wash.paint.a).toBeCloseTo(0.12, 3);
+      expect(stroke.width).toBe(DEFAULT_GRID_SVG_OPTIONS.selectionWidth);
+    }
+  });
+
+  it("emits no selection items when the scene carries no selection", () => {
+    const layer = gridSceneToSceneLayer(scene2x2());
+    // 6 strokes (gridlines) + 2 text, 0 fills — no selection wash/stroke.
+    expect(layer.items.filter((i) => i.kind === "fillPath").length).toBe(0);
+    expect(layer.items.filter((i) => i.kind === "strokePath").length).toBe(6);
+  });
 });
