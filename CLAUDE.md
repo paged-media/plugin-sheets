@@ -16,7 +16,7 @@ round-trip safety ("Paged never destroys a workbook") is a launch
 property.
 
 Spec (the authority): `thoughts/docs/paged/plugin-sheets/base-idea.md`.
-SDK gap punch list: `BREAKAGE_LOG.md` (S-NN; the §2.2 resolution).
+SDK gap tracker: the cross-repo RFI `thoughts/docs/paged/plugin-platform/rfi-core-sdk-gaps.md` (S-NN ids in §6; per-plugin BREAKAGE_LOG retired 2026-06-12).
 
 Rust crates (Cargo workspace, top level per spec §4): `sheet-core`
 (frozen types + AST), `sheet-parser`, `sheet-calc`, `sheet-fn`,
@@ -58,7 +58,7 @@ half (see "Two-registry split" below).
   is a CORE SDK surface, not a plugin.) TS guard:
   `scripts/check-contract-imports.mjs`; Rust guard: `deny.toml`
   [sources] + the cargo-tree CI guards. SDK gaps become
-  `BREAKAGE_LOG.md` entries / plugin-platform RFCs — NEVER core
+  RFI §6 entries / plugin-platform RFCs — NEVER core
   modifications from this project.
 - **REGISTRY-DRIVEN DISPATCH (§7/§12.2).** The function table is
   generated at build time from `registry/functions/*.yaml`
