@@ -188,7 +188,19 @@ export function activate(host: BundleHost): BundleHandle {
       // The context is "dirty" while a cell edit is open — gates the shell's
       // Enter/Esc routing (to the cell) + a future discard prompt (§8.0).
       isDirty: () => session.isCellEditing(),
-      onExit: () => session.hideGridInFrame(),
+      // ADR-012 Tier 1 — this context OWNS undo while active: the shell
+      // routes Cmd-Z / Cmd-Shift-Z (and Edit/Undo) to the session's
+      // journal of committed cell edits (workbook grain), never the
+      // document stack; the modal exit is the document's one-step grain
+      // (Tier 2). The journal dies with the session (cleared on exit).
+      onUndo: () => session.undoCellEdit(),
+      onRedo: () => session.redoCellEdit(),
+      onCanUndo: () => session.canUndoCellEdit(),
+      onCanRedo: () => session.canRedoCellEdit(),
+      onExit: () => {
+        session.clearCellEditJournal();
+        session.hideGridInFrame();
+      },
     });
   }
 

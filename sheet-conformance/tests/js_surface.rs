@@ -134,6 +134,41 @@ fn sheet_js_set_cell_recalcs_dependents() {
     assert_eq!(s.get_cell_display(0, 4, 0), "26");
 }
 
+// ── sheet.grid.cell-input-reprint ───────────────────────────────────────────
+
+/// `get_cell_input` re-prints the ENTERABLE text of a cell — the faithful
+/// inverse the ADR-012 in-session undo journal stores: a formula cell
+/// re-prints `=`-prefixed (NOT its computed display), values re-print as
+/// literals, empty/OOB as `""`; and re-entering the re-print restores the
+/// exact cell (the round-trip the journal relies on).
+#[test]
+fn sheet_grid_cell_input_reprint_round_trips() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "2").expect("A1");
+    s.set_cell(0, 1, 0, "3").expect("A2");
+    s.set_cell(0, 2, 0, "=SUM(A1:A2)").expect("A3");
+    s.set_cell(0, 0, 1, "Hello").expect("B1");
+    s.set_cell(0, 1, 1, "TRUE").expect("B2");
+
+    // Formula: the INPUT, never the display.
+    assert_eq!(s.get_cell_input(0, 2, 0), "=SUM(A1:A2)");
+    assert_eq!(s.get_cell_display(0, 2, 0), "5");
+    // Literals re-print as entered; empty/OOB are "".
+    assert_eq!(s.get_cell_input(0, 0, 0), "2");
+    assert_eq!(s.get_cell_input(0, 0, 1), "Hello");
+    assert_eq!(s.get_cell_input(0, 1, 1), "TRUE");
+    assert_eq!(s.get_cell_input(0, 9, 9), "");
+    assert_eq!(s.get_cell_input(99, 0, 0), "");
+
+    // The journal's round trip: capture, overwrite, restore via re-entry.
+    let prev = s.get_cell_input(0, 2, 0);
+    s.set_cell(0, 2, 0, "42").expect("overwrite A3");
+    assert_eq!(s.get_cell_display(0, 2, 0), "42");
+    s.set_cell(0, 2, 0, &prev).expect("restore A3");
+    assert_eq!(s.get_cell_input(0, 2, 0), "=SUM(A1:A2)");
+    assert_eq!(s.get_cell_display(0, 2, 0), "5");
+}
+
 /// A malformed formula is a BOUNDARY error (Err), distinct from a calc error
 /// like `#DIV/0!` which is a display string the engine stores.
 #[test]

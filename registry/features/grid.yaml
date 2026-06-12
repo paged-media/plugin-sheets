@@ -47,3 +47,17 @@
     vitest:
       - "packages/sheet-host-model/test/grid.spec.ts"
       - "packages/sheet-bundle/test/grid-panel.spec.ts"
+
+- id: sheet.grid.cell-input-reprint
+  title: get_cell_input re-prints a cell's enterable text (formula =-prefixed, literals verbatim) — the ADR-012 undo journal's faithful inverse
+  status: implemented
+  provenance: ["ADR-012 (K-1 §8.0 undo coalescing, Tier 0/1)", "sheet-js/src/core.rs::get_cell_input"]
+  tests:
+    rust: ["sheet-conformance/tests/js_surface.rs::sheet_grid_cell_input_reprint_round_trips"]
+
+- id: sheet.grid.session-undo-journal
+  title: In-session undo/redo over committed cell edits (ADR-012 Tier 1) — bundle journal of setCell inverses behind editContext onUndo/onRedo; document stack suspended until modal exit
+  status: implemented
+  provenance: ["ADR-012", "plugin-api EditContextContribution.onUndo/onRedo"]
+  tests:
+    vitest: ["packages/sheet-bundle/test/session-undo.spec.ts"]

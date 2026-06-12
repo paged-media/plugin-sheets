@@ -168,6 +168,19 @@ export interface WorkbookSession {
    *  only drives the write + signal. Returns false when there is no engine
    *  / active sheet or the write throws (never throws). */
   editCell(sheet: number, row: number, col: number, input: string): boolean;
+  /** ADR-012 Tier 1 — undo one step of the in-session journal. An OPEN
+   *  cell-edit buffer unwinds first (= cancel, no Operation); then each
+   *  call re-enters the previous INPUT of the latest committed cell edit.
+   *  Returns false when exhausted (the shell does NOT fall through to the
+   *  document stack mid-session). */
+  undoCellEdit(): boolean;
+  /** ADR-012 Tier 1 — re-apply the next journal entry (false when none). */
+  redoCellEdit(): boolean;
+  canUndoCellEdit(): boolean;
+  canRedoCellEdit(): boolean;
+  /** Drop the journal — the modal session boundary (call on exit; Tier 2's
+   *  re-lowered batch owns the document grain from there). */
+  clearCellEditJournal(): void;
   /** Re-emit the loaded workbook as XLSX bytes for the exporter
    *  contribution (S-06). Preservation-first (`engine.saveXlsx` — the
    *  lazy-verbatim re-emit, §10.2). Returns the bytes + a suggested file
@@ -282,6 +295,46 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // re-renders with this text overlaid until commit (→ engine.setCell) or
   // cancel. `null` ⇒ not editing (the context is not "dirty").
   let cellEdit: { row: number; col: number; text: string } | null = null;
+
+  // ADR-012 Tier 1 — the in-session undo JOURNAL: one entry per COMMITTED
+  // cell edit (Tier 0 already coalesced keystrokes into the commit).
+  // `prev`/`next` are re-enterable INPUT texts (engine.getCellInput —
+  // formula-safe; the display is NOT an inverse). Entries [0, cursor) are
+  // undoable, [cursor, length) redoable; a fresh commit truncates the redo
+  // tail (the linear-history rule). Cleared on workbook load/source (the
+  // session boundary) and on modal exit (Tier 2 owns the document grain).
+  let editJournal: {
+    sheet: number;
+    row: number;
+    col: number;
+    prev: string;
+    next: string;
+  }[] = [];
+  let journalCursor = 0;
+
+  /** Write one cell through the engine AND journal it (the shared Tier-1
+   *  capture for `editCell` + the in-frame commit). Returns false when
+   *  there is no engine or the write throws — nothing is journaled then. */
+  function journaledSetCell(
+    sheet: number,
+    row: number,
+    col: number,
+    input: string,
+  ): boolean {
+    if (!state.engine) return false;
+    let prev: string;
+    try {
+      prev = state.engine.getCellInput(sheet, row, col);
+      state.engine.setCell(sheet, row, col, input);
+    } catch (err) {
+      host.log.error("setCell failed", err);
+      return false;
+    }
+    editJournal.length = journalCursor; // drop any redo tail
+    editJournal.push({ sheet, row, col, prev, next: input });
+    journalCursor = editJournal.length;
+    return true;
+  }
 
   /** Record the grid selection (engine + session) so the next windowing
    *  paints it. Shared by the panel's `setGridSelection` door and K-1's
@@ -482,6 +535,8 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       state.engine.loadXlsx(bytes);
       state.fileName = name;
       state.gridSelection = null;
+      editJournal = [];
+      journalCursor = 0;
       const sheets = state.engine.listSheets();
       state.activeSheet = sheets.length > 0 ? sheets[0].id : null;
       defaultRangeForActive();
@@ -649,11 +704,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       const { row, col, text } = cellEdit;
       cellEdit = null;
       if (state.engine && state.activeSheet !== null) {
-        try {
-          state.engine.setCell(state.activeSheet, row, col, text);
-        } catch (err) {
-          host.log.error("commitCellEdit: engine setCell failed", err);
-        }
+        journaledSetCell(state.activeSheet, row, col, text);
       }
       emitter.emit();
       void submitInFrameGrid();
@@ -702,16 +753,65 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("editCell: no workbook / sheet");
         return false;
       }
-      try {
-        state.engine.setCell(sheet, row, col, input);
-      } catch (err) {
-        host.log.error("editCell: engine setCell failed", err);
-        return false;
-      }
+      if (!journaledSetCell(sheet, row, col, input)) return false;
       // The dirty cut recomputed in Rust; refresh the panel (it re-requests
       // the windowed scene on the next render).
       emitter.emit();
       return true;
+    },
+
+    undoCellEdit() {
+      // An open buffer unwinds first — Cmd-Z mid-typing = cancel the
+      // in-flight edit (no Operation was committed for it).
+      if (cellEdit !== null) {
+        cellEdit = null;
+        emitter.emit();
+        void submitInFrameGrid();
+        return true;
+      }
+      if (journalCursor === 0 || !state.engine) return false;
+      const entry = editJournal[journalCursor - 1];
+      try {
+        state.engine.setCell(entry.sheet, entry.row, entry.col, entry.prev);
+      } catch (err) {
+        host.log.error("undoCellEdit: engine setCell failed", err);
+        return false;
+      }
+      journalCursor -= 1;
+      emitter.emit();
+      void submitInFrameGrid();
+      return true;
+    },
+
+    redoCellEdit() {
+      if (cellEdit !== null || journalCursor >= editJournal.length) {
+        return false;
+      }
+      if (!state.engine) return false;
+      const entry = editJournal[journalCursor];
+      try {
+        state.engine.setCell(entry.sheet, entry.row, entry.col, entry.next);
+      } catch (err) {
+        host.log.error("redoCellEdit: engine setCell failed", err);
+        return false;
+      }
+      journalCursor += 1;
+      emitter.emit();
+      void submitInFrameGrid();
+      return true;
+    },
+
+    canUndoCellEdit() {
+      return cellEdit !== null || journalCursor > 0;
+    },
+
+    canRedoCellEdit() {
+      return cellEdit === null && journalCursor < editJournal.length;
+    },
+
+    clearCellEditJournal() {
+      editJournal = [];
+      journalCursor = 0;
     },
 
     discoverDatasets() {

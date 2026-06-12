@@ -83,6 +83,7 @@ function fakeEngine() {
       return { changed: [{ sheet, row, col, display: input }] };
     },
     getCellDisplay: () => "",
+    getCellInput: () => "",
     getRangeLowered: () => ({
       cols: [],
       rows: [],

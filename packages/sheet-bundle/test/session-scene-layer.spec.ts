@@ -59,6 +59,7 @@ function fakeEngine() {
     },
     // A populated B1 so the F2/Backspace-from-value path has a seed.
     getCellDisplay: (_sheet, row, col) => (row === 0 && col === 1 ? "100" : ""),
+    getCellInput: (_sheet, row, col) => (row === 0 && col === 1 ? "100" : ""),
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
     paginate: () => [],
     // The fake ignores the window args and always returns the 2×2 scene; the

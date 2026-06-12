@@ -55,6 +55,10 @@ function fakeWasm() {
       calls.push({ method: "set_cell", args: [sheet, row, col, inputStr] });
       return { changed: [{ sheet, row, col, display: inputStr }] };
     },
+    get_cell_input(sheet, row, col) {
+      calls.push({ method: "get_cell_input", args: [sheet, row, col] });
+      return "=A1+1";
+    },
     get_cell_display(sheet, row, col) {
       calls.push({ method: "get_cell_display", args: [sheet, row, col] });
       return "42";

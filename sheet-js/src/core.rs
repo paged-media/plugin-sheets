@@ -425,6 +425,38 @@ impl SheetSession {
         cell_display(model, sheet, row, col, &mut cache, &ctx)
     }
 
+    /// The cell's re-enterable INPUT text (ADR-012 — the in-session undo
+    /// journal's faithful inverse): a formula cell re-prints as
+    /// `"=" + print(AST)` (exactly what `set_cell` accepts back); a value
+    /// cell re-prints its literal (number / text / TRUE / FALSE; an error
+    /// its `#…!` code); an empty or out-of-range cell `""`. The DISPLAY
+    /// string is NOT a valid inverse — re-entering a formula's display
+    /// would bake the computed value over the formula.
+    pub fn get_cell_input(&self, sheet: u16, row: u32, col: u32) -> String {
+        let model = self.engine.as_ref().expect("engine present").model();
+        let Some(ws) = model.sheet(sheet) else {
+            return String::new();
+        };
+        let Some(cell) = ws.cell(row, col) else {
+            return String::new();
+        };
+        if let Some(fid) = cell.formula {
+            if let Some(formula) = model.formula(fid) {
+                let names = ModelSheetNames { model };
+                return format!("={}", print(formula, sheet, &names));
+            }
+        }
+        match &cell.value {
+            CellValue::Empty => String::new(),
+            // Shortest round-trip float text — `Engine::enter` parses it
+            // back to the same f64.
+            CellValue::Number(n) => n.to_string(),
+            CellValue::Text(t) => t.to_string(),
+            CellValue::Bool(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+            CellValue::Error(e) => e.as_str().to_string(),
+        }
+    }
+
     /// Lower a range (`"A1:D9"` or a single cell `"A1"`) to the
     /// [`sheet_lower::LoweredContent`] IR the host-model translator consumes
     /// (spec §8.2). Junk endpoints are a boundary error.

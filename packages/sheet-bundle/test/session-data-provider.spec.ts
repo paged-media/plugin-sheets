@@ -54,6 +54,7 @@ function makeFakeEngine(): SheetEngine {
       return { changed: [{ sheet, row, col, display: input }] };
     },
     getCellDisplay: () => "",
+    getCellInput: () => "",
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
     paginate: () => [],
     getGridScene: () => ({

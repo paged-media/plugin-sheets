@@ -32,6 +32,7 @@ function fakeEngine(): SheetEngine {
     saveXlsx: () => new Uint8Array(),
     setCell: () => ({ changed: [] }),
     getCellDisplay: () => "",
+    getCellInput: () => "",
     getRangeLowered: () => ({
       cols: [
         { index: 0, widthPt: 50 },

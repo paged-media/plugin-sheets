@@ -99,6 +99,12 @@ mod wasm {
             self.session.get_cell_display(sheet, row, col)
         }
 
+        /// The cell's re-enterable INPUT text (`"=…"` for a formula cell;
+        /// `""` for empty/OOB) — the ADR-012 undo journal's faithful inverse.
+        pub fn get_cell_input(&self, sheet: u16, row: u32, col: u32) -> String {
+            self.session.get_cell_input(sheet, row, col)
+        }
+
         /// Lower a range (`"A1:D9"` or `"A1"`) to the `LoweredContent` IR.
         pub fn get_range_lowered(
             &self,

@@ -107,6 +107,10 @@ export interface SheetEngine {
   ): { changed: CellChange[] };
   /** The current formatted display of one cell. */
   getCellDisplay(sheet: number, row: number, col: number): string;
+  /** The cell's re-enterable INPUT text (`"=…"` for a formula cell; `""`
+   *  for empty/OOB) — the ADR-012 undo journal's faithful inverse (the
+   *  display is NOT re-enterable for formula cells). */
+  getCellInput(sheet: number, row: number, col: number): string;
   /** Lower a range to the IR the host-model translator consumes (spec
    *  §8.2). All geometry/formatting decided in Rust. */
   getRangeLowered(
@@ -179,6 +183,7 @@ export interface SheetWasmEngine {
     input: string,
   ): { changed: CellChange[] };
   get_cell_display(sheet: number, row: number, col: number): string;
+  get_cell_input(sheet: number, row: number, col: number): string;
   get_range_lowered(
     sheet: number,
     range: string,
@@ -233,6 +238,7 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.set_cell(sheet, row, col, input),
     getCellDisplay: (sheet, row, col) =>
       wasm.get_cell_display(sheet, row, col),
+    getCellInput: (sheet, row, col) => wasm.get_cell_input(sheet, row, col),
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
     paginate: (sheet, range, frames, opts) =>
