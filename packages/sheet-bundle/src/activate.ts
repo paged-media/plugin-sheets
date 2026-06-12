@@ -131,6 +131,22 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => session.hideGridInFrame(),
   });
+  // Phase 4b — "Sort range…" / "Find & replace…": both lead to the workbook
+  // panel, where the minimal controls live (key column / direction / header;
+  // needle / replacement / match toggles). The actual semantics are the
+  // engine's (sheet.edit.*); the session routes + journals.
+  host.contribute.command({
+    id: "media.paged.sheet.command.sortRange",
+    title: "Sort range…",
+    category: "Sheet",
+    handler: () => host.shell.openPanel(PANEL_ID),
+  });
+  host.contribute.command({
+    id: "media.paged.sheet.command.findReplace",
+    title: "Find & replace…",
+    category: "Sheet",
+    handler: () => host.shell.openPanel(PANEL_ID),
+  });
   // S-15 — open the datasets panel to source a sheet from a governed
   // dataset (the consumer flow: discover → pick → seed). The actual
   // discover/get/seed lives in the session + panel; the command is the

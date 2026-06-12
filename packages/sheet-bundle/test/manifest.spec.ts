@@ -42,6 +42,8 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.openGrid",
       "media.paged.sheet.command.showGridInFrame",
       "media.paged.sheet.command.hideGridInFrame",
+      "media.paged.sheet.command.sortRange",
+      "media.paged.sheet.command.findReplace",
       "media.paged.sheet.command.sheetFromDataset",
     ]);
   });

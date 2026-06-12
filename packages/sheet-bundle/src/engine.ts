@@ -76,6 +76,62 @@ export interface PaginateOptions {
   keepRowsTogether?: [number, number][];
 }
 
+/** One cell rewritten by a bulk edit op (sort / replace) — BOTH
+ *  re-enterable INPUT texts (the ADR-012 journal's inverse pair), straight
+ *  from the engine so the session can journal the whole op as one grouped
+ *  undo step. */
+export interface CellEditRecord {
+  sheet: number;
+  row: number;
+  col: number;
+  prevInput: string;
+  nextInput: string;
+}
+
+/** The engine's range-sort result: recomputed displays + the per-cell
+ *  input rewrites (journal lane). All sort semantics (stable order, typed
+ *  ranks, blanks-last, the formula-refusal boundary) are decided in Rust. */
+export interface SortResult {
+  changed: CellChange[];
+  edits: CellEditRecord[];
+}
+
+/** Options for find/replace (forwarded verbatim to wasm; matching/collation
+ *  semantics are decided in Rust — documented on the registry rows). */
+export interface FindOptions {
+  matchCase?: boolean;
+  entireCell?: boolean;
+  inFormulas?: boolean;
+}
+
+/** One find hit: the address + a truncated excerpt of the matched text
+ *  (display or input per `inFormulas`). */
+export interface FindMatch {
+  sheet: number;
+  row: number;
+  col: number;
+  excerpt: string;
+}
+
+/** One cell replace_all matched but did not rewrite (parse-failed
+ *  replacement or engine-owned spill output) — reported, never corrupted. */
+export interface SkippedCell {
+  sheet: number;
+  row: number;
+  col: number;
+  reason: string;
+}
+
+/** The engine's replace-all result: spliced-occurrence count, recomputed
+ *  displays, the per-cell input rewrites (journal lane), and the skip
+ *  report. */
+export interface ReplaceResult {
+  occurrences: number;
+  changed: CellChange[];
+  edits: CellEditRecord[];
+  skipped: SkippedCell[];
+}
+
 /** One chart in the workbook (M2 charts track, spec §8.4) — the engine's
  *  parsed-chart summary for the panel's chart list. `index` is the handle
  *  `getChartGeometry` takes. */
@@ -111,6 +167,33 @@ export interface SheetEngine {
    *  for empty/OOB) — the ADR-012 undo journal's faithful inverse (the
    *  display is NOT re-enterable for formula cells). */
   getCellInput(sheet: number, row: number, col: number): string;
+  /** Stable sort of a range's rows by a key column (0-based, RELATIVE to
+   *  the range). VALUES-ONLY ranges sort fully; a range containing formula
+   *  cells THROWS the honest boundary error ("sort over formulas not yet
+   *  supported") — all semantics in Rust (sheet.edit.sort.*). */
+  sortRange(
+    sheet: number,
+    range: string,
+    keyCol: number,
+    ascending: boolean,
+    hasHeader: boolean,
+  ): SortResult;
+  /** Find every populated cell matching `needle`; `sheet` scopes to one
+   *  sheet, `undefined` scans the whole workbook (sheet.edit.find.*). */
+  findAll(
+    sheet: number | undefined,
+    needle: string,
+    opts?: FindOptions,
+  ): FindMatch[];
+  /** Replace every occurrence over the scope, operating on cell INPUT
+   *  texts via the normal set-cell lane; parse-failing replacements are
+   *  SKIPPED + reported, never half-applied (sheet.edit.replace.*). */
+  replaceAll(
+    sheet: number | undefined,
+    needle: string,
+    replacement: string,
+    opts?: FindOptions,
+  ): ReplaceResult;
   /** Lower a range to the IR the host-model translator consumes (spec
    *  §8.2). All geometry/formatting decided in Rust. */
   getRangeLowered(
@@ -184,6 +267,24 @@ export interface SheetWasmEngine {
   ): { changed: CellChange[] };
   get_cell_display(sheet: number, row: number, col: number): string;
   get_cell_input(sheet: number, row: number, col: number): string;
+  sort_range(
+    sheet: number,
+    range: string,
+    key_col: number,
+    ascending: boolean,
+    has_header: boolean,
+  ): SortResult;
+  find_all(
+    sheet: number | undefined,
+    needle: string,
+    opts?: FindOptions,
+  ): FindMatch[];
+  replace_all(
+    sheet: number | undefined,
+    needle: string,
+    replacement: string,
+    opts?: FindOptions,
+  ): ReplaceResult;
   get_range_lowered(
     sheet: number,
     range: string,
@@ -239,6 +340,11 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
     getCellDisplay: (sheet, row, col) =>
       wasm.get_cell_display(sheet, row, col),
     getCellInput: (sheet, row, col) => wasm.get_cell_input(sheet, row, col),
+    sortRange: (sheet, range, keyCol, ascending, hasHeader) =>
+      wasm.sort_range(sheet, range, keyCol, ascending, hasHeader),
+    findAll: (sheet, needle, opts) => wasm.find_all(sheet, needle, opts),
+    replaceAll: (sheet, needle, replacement, opts) =>
+      wasm.replace_all(sheet, needle, replacement, opts),
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
     paginate: (sheet, range, frames, opts) =>

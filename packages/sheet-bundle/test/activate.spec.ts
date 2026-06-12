@@ -120,7 +120,20 @@ describe("sheet_plugin_bundle_activate", () => {
       "media.paged.sheet.command.openGrid",
       "media.paged.sheet.command.showGridInFrame",
       "media.paged.sheet.command.hideGridInFrame",
+      "media.paged.sheet.command.sortRange",
+      "media.paged.sheet.command.findReplace",
       "media.paged.sheet.command.sheetFromDataset",
+    ]);
+  });
+
+  it("sortRange / findReplace commands open the workbook panel (the controls live there)", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    fake.commands.find((c) => c.id.endsWith("sortRange"))?.handler(undefined);
+    fake.commands.find((c) => c.id.endsWith("findReplace"))?.handler(undefined);
+    expect(fake.openedPanels).toEqual([
+      "media.paged.sheet.panel.workbook",
+      "media.paged.sheet.panel.workbook",
     ]);
   });
 

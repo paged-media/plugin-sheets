@@ -50,3 +50,17 @@
   tests:
     vitest: ["packages/sheet-bundle/test/manifest.spec.ts"]
     cli: ["pnpm validate:manifest"]
+
+- id: sheet.plugin.sort.command
+  title: "Sort range… — workbook-panel controls (key column, asc/desc, header checkbox) over the selected range; the session journals the engine's per-cell edits as ONE grouped ADR-012 undo step"
+  status: implemented
+  provenance: ["sheet-js sort_range (sheet.edit.sort.*)", "ADR-012 Tier 1 batch grouping"]
+  tests:
+    vitest: ["packages/sheet-bundle/test/sort-find.spec.ts"]
+
+- id: sheet.plugin.find-replace.panel
+  title: "Find & replace — workbook-panel section: find lists hits (click selects the cell in the grid), replace-all reports occurrence/skip counts; thin glue over sheet-js find_all/replace_all, replace journaled as one grouped step"
+  status: implemented
+  provenance: ["sheet-js find_all/replace_all (sheet.edit.find.* / replace.*)"]
+  tests:
+    vitest: ["packages/sheet-bundle/test/sort-find.spec.ts"]

@@ -84,6 +84,9 @@ function fakeEngine() {
     },
     getCellDisplay: () => "",
     getCellInput: () => "",
+    sortRange: () => ({ changed: [], edits: [] }),
+    findAll: () => [],
+    replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({
       cols: [],
       rows: [],

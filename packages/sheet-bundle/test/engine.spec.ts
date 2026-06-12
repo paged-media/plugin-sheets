@@ -63,6 +63,24 @@ function fakeWasm() {
       calls.push({ method: "get_cell_display", args: [sheet, row, col] });
       return "42";
     },
+    sort_range(sheet, range, keyCol, ascending, hasHeader) {
+      calls.push({
+        method: "sort_range",
+        args: [sheet, range, keyCol, ascending, hasHeader],
+      });
+      return { changed: [], edits: [] };
+    },
+    find_all(sheet, needle, opts) {
+      calls.push({ method: "find_all", args: [sheet, needle, opts] });
+      return [{ sheet: 0, row: 1, col: 2, excerpt: "hit" }];
+    },
+    replace_all(sheet, needle, replacement, opts) {
+      calls.push({
+        method: "replace_all",
+        args: [sheet, needle, replacement, opts],
+      });
+      return { occurrences: 1, changed: [], edits: [], skipped: [] };
+    },
     get_range_lowered(sheet, range, opts) {
       calls.push({ method: "get_range_lowered", args: [sheet, range, opts] });
       return lowered;

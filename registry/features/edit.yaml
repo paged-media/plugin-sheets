@@ -1,0 +1,95 @@
+# sheet.edit.* — bulk edit operations on the session surface (range sort +
+# find/replace). ALL semantics live in Rust (sheet-js SheetSession; the wasm
+# shim only forwards); the bundle journals the returned per-cell input
+# rewrites (ADR-012) and renders the controls. Headline rulings:
+#
+# - SORT is the honest VALUES-ONLY subset: a range containing formula cells
+#   (or engine-owned spill output) REFUSES with a boundary error — the
+#   engine's only reference rewrite is the structural insert/delete pass;
+#   the $-honouring copy/move rewrite (sheet-parser rewrite_fill) is an
+#   unimplemented T1 stub, so a reference-adjusted row move cannot be built
+#   without silently corrupting references. Never corrupt > partially work.
+# - COLLATION is documented, not pretended: char-wise Unicode default case
+#   folding (char::to_lowercase) in code-point order, ties by exact text;
+#   NO locale tailoring, NO ICU dependency ("ä" sorts after "z"; "ß" ≠ "SS").
+# - REPLACE operates on re-enterable INPUT texts through the normal set_cell
+#   lane; a replacement that fails to parse SKIPS that cell (reported,
+#   untouched — Engine::enter parses before mutating, so never half-applied).
+# Schema: id/title/status/provenance/tests.
+
+- id: sheet.edit.sort.values
+  title: Stable range sort by a key column — numbers numerically before text/bools/errors, payload rows move whole, external dependents recalc, per-cell prev/next input edits returned
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::sort_range", "Phase 4b no-wire slice"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_values"]
+
+- id: sheet.edit.sort.header
+  title: has_header pins the range's first row (it never moves; the body sorts beneath it)
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::sort_range"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_header"]
+
+- id: sheet.edit.sort.blanks-last
+  title: Blank key cells sink to the end in BOTH directions (Excel's blanks rule; descending never floats blanks)
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::sort_key_cmp", "Excel sort blanks behavior (public docs)"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_blanks_last"]
+
+- id: sheet.edit.sort.collation
+  title: "Honest text collation ruling: char-wise Unicode default case folding, code-point order, exact-text tiebreak — no locale tailoring, no ICU (T2 decision)"
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::ci_text_cmp (the documented bounds)"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_collation"]
+
+- id: sheet.edit.sort.formula-boundary
+  title: Sort over formula cells or spill output REFUSES with a boundary error, model untouched (no copy/move ref rewrite exists — rewrite_fill is a T1 stub; silent reference corruption is never an option)
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::sort_range", "sheet-parser/src/rewrite.rs::rewrite_fill (T1 stub)"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_formula_boundary"]
+
+- id: sheet.edit.find.values
+  title: find_all matches the formatted DISPLAY text by default (a formula cell is found by its computed display); row-major hits with excerpts; empty needle is a boundary error
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::find_all"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_find_values"]
+
+- id: sheet.edit.find.formulas
+  title: in_formulas switches the match surface to the re-enterable INPUT text (so "SUM" finds =SUM(…) cells)
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::find_all", "Excel Find 'Look in: Formulas/Values'"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_find_formulas"]
+
+- id: sheet.edit.find.case
+  title: match_case toggles case sensitivity; the default fold is char-wise Unicode case folding (same honest bounds as the sort collation)
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::fold_match_at"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_find_case"]
+
+- id: sheet.edit.find.entire-cell
+  title: entire_cell requires the needle to equal the whole cell text (Excel "Match entire cell contents"), composing with the case toggle
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::text_matches"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_find_entire_cell"]
+
+- id: sheet.edit.replace.inputs
+  title: replace_all rewrites cell INPUT texts through the normal set_cell lane (formula text editable via in_formulas; formula cells excluded without it); occurrence count + per-cell edits + final displays returned
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::replace_all"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_replace_inputs"]
+
+- id: sheet.edit.replace.skip
+  title: A replacement that fails to parse SKIPS that cell (reported with a reason, cell untouched, never half-applied); engine-owned spill output is skipped, never shadowed
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::replace_all", "Engine::enter parses before mutating"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_replace_skip"]

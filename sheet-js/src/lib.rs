@@ -43,7 +43,8 @@ pub mod core;
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use crate::core::{
-        FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg, SheetSession,
+        FindOptions, FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg,
+        SheetSession,
     };
     use wasm_bindgen::prelude::*;
 
@@ -103,6 +104,74 @@ mod wasm {
         /// `""` for empty/OOB) — the ADR-012 undo journal's faithful inverse.
         pub fn get_cell_input(&self, sheet: u16, row: u32, col: u32) -> String {
             self.session.get_cell_input(sheet, row, col)
+        }
+
+        /// Stable publishing-grade sort of a range's rows by `key_col`
+        /// (0-based, RELATIVE to the range). VALUES-ONLY ranges sort fully;
+        /// a range containing formula cells (or spill output) REFUSES with a
+        /// boundary error (the honest subset — no silent reference
+        /// corruption; semantics documented on the session method). Returns
+        /// `{changed,circular,edits}` — `edits` carries the per-cell
+        /// prev/next inputs for the bundle's ADR-012 journal.
+        pub fn sort_range(
+            &mut self,
+            sheet: u16,
+            range: &str,
+            key_col: u32,
+            ascending: bool,
+            has_header: bool,
+        ) -> Result<JsValue, JsValue> {
+            let result = self
+                .session
+                .sort_range(sheet, range, key_col, ascending, has_header)
+                .map_err(map_err)?;
+            to_js(&result)
+        }
+
+        /// Find every populated cell matching `needle`. `sheet` scopes to
+        /// one sheet; `undefined` scans the whole workbook. `opts` is
+        /// `{matchCase?, entireCell?, inFormulas?}` (undefined/partial
+        /// accepted). Returns `[{sheet,row,col,excerpt}]` in row-major
+        /// order. An empty needle is a boundary error.
+        pub fn find_all(
+            &self,
+            sheet: Option<u16>,
+            needle: &str,
+            opts: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let opts: FindOptions = if opts.is_undefined() || opts.is_null() {
+                FindOptions::default()
+            } else {
+                serde_wasm_bindgen::from_value(opts)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let hits = self.session.find_all(sheet, needle, opts).map_err(map_err)?;
+            to_js(&hits)
+        }
+
+        /// Replace every occurrence of `needle` with `replacement` over the
+        /// scope, operating on cell INPUT texts re-entered through the
+        /// normal `set_cell` lane (a replacement that fails to parse SKIPS
+        /// that cell — reported, never half-applied). Returns
+        /// `{occurrences,changed,circular,edits,skipped}`.
+        pub fn replace_all(
+            &mut self,
+            sheet: Option<u16>,
+            needle: &str,
+            replacement: &str,
+            opts: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let opts: FindOptions = if opts.is_undefined() || opts.is_null() {
+                FindOptions::default()
+            } else {
+                serde_wasm_bindgen::from_value(opts)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let result = self
+                .session
+                .replace_all(sheet, needle, replacement, opts)
+                .map_err(map_err)?;
+            to_js(&result)
         }
 
         /// Lower a range (`"A1:D9"` or `"A1"`) to the `LoweredContent` IR.

@@ -35,6 +35,9 @@ function fakeEngine(): SheetEngine {
     setCell: () => ({ changed: [] }),
     getCellDisplay: () => "",
     getCellInput: () => "",
+    sortRange: () => ({ changed: [], edits: [] }),
+    findAll: () => [],
+    replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({
       cols: [
         { index: 0, widthPt: 50 },

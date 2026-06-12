@@ -27,6 +27,9 @@ function statefulEngine() {
     },
     getCellDisplay: (sheet, row, col) => cells.get(key(sheet, row, col)) ?? "",
     getCellInput: (sheet, row, col) => cells.get(key(sheet, row, col)) ?? "",
+    sortRange: () => ({ changed: [], edits: [] }),
+    findAll: () => [],
+    replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({
       cols: [],
       rows: [],

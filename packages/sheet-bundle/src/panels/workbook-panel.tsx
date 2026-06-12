@@ -21,8 +21,9 @@ import {
 
 import type { BundleHost } from "@paged-media/plugin-api";
 
+import type { FindMatch } from "../engine";
 import { XLSX_MIME } from "../import-xlsx";
-import type { WorkbookSession } from "../session";
+import { columnLabel, type WorkbookSession } from "../session";
 
 // ---------------------------------------------------------------- styles
 
@@ -109,6 +110,57 @@ export function makeWorkbookPanel(
     const onLower = useCallback(() => {
       void session.lowerSelection();
     }, []);
+
+    // Sort-range controls (thin glue — the engine owns the sort semantics;
+    // sheet.plugin.sort.command). Key column is 1-based in the UI.
+    const [sortKey, setSortKey] = useState(1);
+    const [sortAsc, setSortAsc] = useState(true);
+    const [sortHeader, setSortHeader] = useState(false);
+    const [sortMsg, setSortMsg] = useState<string | null>(null);
+    const onSort = useCallback(() => {
+      const res = session.sortRange(
+        Math.max(0, Math.floor(sortKey) - 1),
+        sortAsc,
+        sortHeader,
+      );
+      setSortMsg(res.ok ? "Sorted." : res.message);
+    }, [sortKey, sortAsc, sortHeader]);
+
+    // Find & replace controls (sheet.plugin.find-replace.panel). Hits are a
+    // snapshot — a later edit/replace invalidates them, so actions clear it.
+    const [needle, setNeedle] = useState("");
+    const [replacement, setReplacement] = useState("");
+    const [matchCase, setMatchCase] = useState(false);
+    const [entireCell, setEntireCell] = useState(false);
+    const [inFormulas, setInFormulas] = useState(false);
+    const [hits, setHits] = useState<FindMatch[] | null>(null);
+    const [findMsg, setFindMsg] = useState<string | null>(null);
+    const onFind = useCallback(() => {
+      if (!needle) return;
+      const found = session.findAll(
+        needle,
+        { matchCase, entireCell, inFormulas },
+        "sheet",
+      );
+      setHits(found);
+      setFindMsg(`${found.length} hit${found.length === 1 ? "" : "s"}.`);
+    }, [needle, matchCase, entireCell, inFormulas]);
+    const onReplaceAll = useCallback(() => {
+      if (!needle) return;
+      const res = session.replaceAll(
+        needle,
+        replacement,
+        { matchCase, entireCell, inFormulas },
+        "sheet",
+      );
+      setHits(null); // stale after a replace
+      setFindMsg(
+        "error" in res
+          ? res.error
+          : `Replaced ${res.occurrences} occurrence${res.occurrences === 1 ? "" : "s"} in ${res.replacedCells} cell${res.replacedCells === 1 ? "" : "s"}` +
+              (res.skipped > 0 ? ` (${res.skipped} skipped).` : "."),
+      );
+    }, [needle, replacement, matchCase, entireCell, inFormulas]);
 
     const sheets = st.engine ? st.engine.listSheets() : [];
 
@@ -214,6 +266,201 @@ export function makeWorkbookPanel(
                 Lower to frame
               </button>
             </div>
+
+            {/* Sort range — thin controls over engine.sortRange (the
+             *  values-only honest subset; a formula range refuses and the
+             *  engine's message shows verbatim). */}
+            <div style={kicker}>Sort range</div>
+            <div
+              style={{
+                display: "flex",
+                gap: "var(--space-1, 4px)",
+                alignItems: "center",
+              }}
+            >
+              <input
+                data-sheet-sort-key
+                type="number"
+                min={1}
+                value={sortKey}
+                onChange={(e) => setSortKey(Number(e.target.value))}
+                title="Key column (1 = first column of the range)"
+                style={{ ...input, width: 48 }}
+              />
+              <select
+                data-sheet-sort-dir
+                value={sortAsc ? "asc" : "desc"}
+                onChange={(e) => setSortAsc(e.target.value === "asc")}
+                style={input}
+              >
+                <option value="asc">Ascending</option>
+                <option value="desc">Descending</option>
+              </select>
+              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  data-sheet-sort-header
+                  type="checkbox"
+                  checked={sortHeader}
+                  onChange={(e) => setSortHeader(e.target.checked)}
+                />
+                Header
+              </label>
+            </div>
+            <div style={{ marginTop: "var(--space-1, 4px)" }}>
+              <button
+                type="button"
+                data-sheet-sort
+                onClick={onSort}
+                disabled={!st.selectedRange}
+                style={{
+                  ...primaryButton,
+                  opacity: st.selectedRange ? 1 : 0.5,
+                  cursor: st.selectedRange ? "pointer" : "not-allowed",
+                }}
+              >
+                Sort
+              </button>
+            </div>
+            {sortMsg && (
+              <p data-sheet-sort-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                {sortMsg}
+              </p>
+            )}
+
+            {/* Find & replace — thin glue over engine.findAll/replaceAll
+             *  (active-sheet scope; click a hit to select its cell). */}
+            <div style={kicker}>Find &amp; replace</div>
+            <input
+              data-sheet-find-needle
+              type="text"
+              value={needle}
+              onChange={(e) => setNeedle(e.target.value)}
+              placeholder="Find…"
+              style={input}
+            />
+            <input
+              data-sheet-find-replacement
+              type="text"
+              value={replacement}
+              onChange={(e) => setReplacement(e.target.value)}
+              placeholder="Replace with…"
+              style={{ ...input, marginTop: "var(--space-1, 4px)" }}
+            />
+            <div
+              style={{
+                display: "flex",
+                gap: "var(--space-2, 8px)",
+                marginTop: "var(--space-1, 4px)",
+                flexWrap: "wrap",
+              }}
+            >
+              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  data-sheet-find-case
+                  type="checkbox"
+                  checked={matchCase}
+                  onChange={(e) => setMatchCase(e.target.checked)}
+                />
+                Match case
+              </label>
+              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  data-sheet-find-entire
+                  type="checkbox"
+                  checked={entireCell}
+                  onChange={(e) => setEntireCell(e.target.checked)}
+                />
+                Entire cell
+              </label>
+              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  data-sheet-find-formulas
+                  type="checkbox"
+                  checked={inFormulas}
+                  onChange={(e) => setInFormulas(e.target.checked)}
+                />
+                In formulas
+              </label>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: "var(--space-1, 4px)",
+                marginTop: "var(--space-1, 4px)",
+              }}
+            >
+              <button
+                type="button"
+                data-sheet-find
+                onClick={onFind}
+                disabled={!needle}
+                style={{
+                  ...primaryButton,
+                  opacity: needle ? 1 : 0.5,
+                  cursor: needle ? "pointer" : "not-allowed",
+                }}
+              >
+                Find
+              </button>
+              <button
+                type="button"
+                data-sheet-replace-all
+                onClick={onReplaceAll}
+                disabled={!needle}
+                style={{
+                  ...primaryButton,
+                  opacity: needle ? 1 : 0.5,
+                  cursor: needle ? "pointer" : "not-allowed",
+                }}
+              >
+                Replace all
+              </button>
+            </div>
+            {findMsg && (
+              <p data-sheet-find-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                {findMsg}
+              </p>
+            )}
+            {hits && hits.length > 0 && (
+              <ul
+                data-sheet-find-hits
+                style={{
+                  listStyle: "none",
+                  margin: "var(--space-1, 4px) 0 0",
+                  padding: 0,
+                  maxHeight: 160,
+                  overflowY: "auto",
+                  border: "1px solid var(--pg-border)",
+                  borderRadius: "var(--radius-sm, 4px)",
+                }}
+              >
+                {hits.map((h, i) => (
+                  <li key={`${h.sheet}:${h.row}:${h.col}:${i}`}>
+                    <button
+                      type="button"
+                      data-sheet-find-hit={`${h.row}:${h.col}`}
+                      onClick={() => session.goToCell(h.sheet, h.row, h.col)}
+                      style={{
+                        ...body,
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        background: "none",
+                        border: "none",
+                        padding: "3px 6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ font: "11px var(--font-mono, monospace)" }}>
+                        {columnLabel(h.col)}
+                        {h.row + 1}
+                      </span>{" "}
+                      {h.excerpt}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </>
         )}
 

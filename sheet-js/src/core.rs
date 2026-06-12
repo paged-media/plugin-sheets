@@ -35,11 +35,12 @@
 //! stays usable. The rebuild re-marks everything dirty (no recalc — the cached
 //! values are already correct), so the next edit simply recomputes its cut.
 
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use sheet_calc::{Engine, EngineConfig};
 use sheet_chart::{generate as generate_chart, ChartGeometry, PlotData};
-use sheet_core::{parse_a1, CellValue, DateSystem, RangeRef, SheetId, SheetModel};
+use sheet_core::{parse_a1, CellRef, CellValue, DateSystem, RangeRef, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
 use sheet_lower::{
     lower_range, paginate as lower_paginate, CellRange, FrameBox, Page, ViewOptions,
@@ -76,6 +77,88 @@ pub struct CircularRef {
 pub struct SetCellResult {
     pub changed: Vec<CellChange>,
     pub circular: Vec<CircularRef>,
+}
+
+/// One cell rewritten by a bulk edit op (sort / replace), carrying BOTH
+/// re-enterable INPUT texts (`get_cell_input` semantics — the ADR-012
+/// journal's faithful inverse pair). The bundle journals these so a sort or
+/// replace-all undoes as one grouped step.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CellEdit {
+    pub sheet: u16,
+    pub row: u32,
+    pub col: u32,
+    pub prev_input: String,
+    pub next_input: String,
+}
+
+/// The result of [`SheetSession::sort_range`]: the recomputed display
+/// changes + circular set (like [`SetCellResult`]) plus the per-cell
+/// input rewrites (`edits`) for the bundle's undo journal.
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SortResult {
+    pub changed: Vec<CellChange>,
+    pub circular: Vec<CircularRef>,
+    pub edits: Vec<CellEdit>,
+}
+
+/// Options shared by [`SheetSession::find_all`] / [`SheetSession::replace_all`]
+/// (serde defaults so an absent/partial object is accepted; all default
+/// `false` — case-insensitive substring match over displays).
+#[derive(serde::Deserialize, Debug, Clone, Copy, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FindOptions {
+    /// Case-sensitive matching. When `false` (default) matching is
+    /// char-wise Unicode-case-insensitive (see [`fold_match_at`] for the
+    /// honest collation bounds).
+    pub match_case: bool,
+    /// The needle must equal the WHOLE cell text (Excel "Match entire cell
+    /// contents"), not just occur inside it.
+    pub entire_cell: bool,
+    /// `find_all`: match the cell's re-enterable INPUT text (formula cells
+    /// as `"=…"`) instead of the formatted display. `replace_all`: include
+    /// formula cells in the scan (it ALWAYS edits input text; with this
+    /// `false` formula cells are never touched).
+    pub in_formulas: bool,
+}
+
+/// One [`SheetSession::find_all`] hit: the address plus the matched text
+/// (display or input per [`FindOptions::in_formulas`]), truncated to a
+/// panel-friendly excerpt.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FindMatch {
+    pub sheet: u16,
+    pub row: u32,
+    pub col: u32,
+    pub excerpt: String,
+}
+
+/// One cell [`SheetSession::replace_all`] matched but did NOT rewrite —
+/// the replacement failed to parse (the cell is left untouched, never
+/// half-applied) or the cell is engine-owned spill output.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedCell {
+    pub sheet: u16,
+    pub row: u32,
+    pub col: u32,
+    pub reason: String,
+}
+
+/// The result of [`SheetSession::replace_all`]: total occurrences spliced,
+/// the recomputed display changes + circular set, the per-cell input
+/// rewrites (the journal lane), and the skipped cells (reported, intact).
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceResult {
+    pub occurrences: u32,
+    pub changed: Vec<CellChange>,
+    pub circular: Vec<CircularRef>,
+    pub edits: Vec<CellEdit>,
+    pub skipped: Vec<SkippedCell>,
 }
 
 /// One worksheet's identity + used-range extent (matches TS `SheetInfo`).
@@ -434,27 +517,445 @@ impl SheetSession {
     /// would bake the computed value over the formula.
     pub fn get_cell_input(&self, sheet: u16, row: u32, col: u32) -> String {
         let model = self.engine.as_ref().expect("engine present").model();
-        let Some(ws) = model.sheet(sheet) else {
-            return String::new();
-        };
-        let Some(cell) = ws.cell(row, col) else {
-            return String::new();
-        };
-        if let Some(fid) = cell.formula {
-            if let Some(formula) = model.formula(fid) {
-                let names = ModelSheetNames { model };
-                return format!("={}", print(formula, sheet, &names));
+        cell_input_text(model, sheet, row, col)
+    }
+
+    /// Sort the rows of `range` on `sheet` by `key_col` (0-based, RELATIVE to
+    /// the range) — the publishing-grade range sort (values lane).
+    ///
+    /// Semantics (each a registry ruling, `sheet.edit.sort.*`):
+    /// - **Stable** row sort; equal keys keep their original relative order.
+    /// - **Numbers numerically**, then text, then booleans (FALSE < TRUE),
+    ///   then error values; **blanks last in BOTH directions** (Excel's
+    ///   blanks-sink rule). `descending` reverses only the non-blank order.
+    /// - **Text collation (honest bounds):** char-wise Unicode default case
+    ///   folding (`char::to_lowercase`) compared in code-point order, ties
+    ///   broken by the exact text. NO locale tailoring, NO ICU — `"ä"` sorts
+    ///   after `"z"`, full case folding (`"ß"`/`"SS"`) is not applied. Good
+    ///   enough for publishing tables; a tailored collator is a T2 decision.
+    /// - `has_header` pins the range's first row (it never moves).
+    /// - **Cell VALUES move; per-cell styles stay with their position**
+    ///   (banded/positional formatting is the publishing reading).
+    ///
+    /// **Formula boundary (the honest subset):** VALUES-ONLY ranges sort
+    /// fully. If any movable cell holds a formula — or is engine-owned spill
+    /// output — the sort REFUSES with a boundary error and the model is
+    /// untouched. Excel rewrites relative references when sorting moves a
+    /// formula; the engine's only rewrite machinery today is the structural
+    /// insert/delete pass (`sheet_parser::rewrite`) — the `$`-honouring
+    /// copy/move rewrite (`rewrite_fill`) is an unimplemented T1 stub, so a
+    /// reference-adjusted sort cannot be built without silently corrupting
+    /// references. Refusal is the only honest behavior (never corrupt).
+    ///
+    /// Rows re-enter through the NORMAL `Engine::enter` lane (each moved
+    /// cell's re-enterable input, `get_cell_input` semantics), so the
+    /// dependency graph, dirty propagation, and external formula dependents
+    /// stay coherent. Returns the changed-cell displays + circular set like
+    /// [`set_cell`](Self::set_cell), plus the per-cell input rewrites for
+    /// the bundle's ADR-012 journal.
+    pub fn sort_range(
+        &mut self,
+        sheet: u16,
+        range: &str,
+        key_col: u32,
+        ascending: bool,
+        has_header: bool,
+    ) -> Result<SortResult, SessionError> {
+        let cell_range = parse_range(range)?;
+        self.validate_sheet(sheet)?;
+
+        let (top, bottom) = (
+            cell_range.r0.min(cell_range.r1),
+            cell_range.r0.max(cell_range.r1),
+        );
+        let (left, right) = (
+            cell_range.c0.min(cell_range.c1),
+            cell_range.c0.max(cell_range.c1),
+        );
+        let width = (right - left + 1) as u64;
+        if (key_col as u64) >= width {
+            return Err(SessionError(format!(
+                "key column {key_col} out of range (the range has {width} columns)"
+            )));
+        }
+        // The same T0 materialization cap as lowering (finding-1 discipline):
+        // the sort snapshots every movable cell's input.
+        let area = width * (bottom - top + 1) as u64;
+        if area > T0_LOWER_CELL_CAP {
+            return Err(SessionError(format!(
+                "range exceeds the T0 lowering cap ({T0_LOWER_CELL_CAP} cells)"
+            )));
+        }
+
+        let first_data = if has_header { top + 1 } else { top };
+        if first_data >= bottom {
+            return Ok(SortResult::default()); // 0 or 1 movable rows — no-op
+        }
+
+        // ── boundary scan: refuse formulas / spill-owned cells (never
+        //    silently corrupt references — see the doc comment).
+        {
+            let engine = self.engine.as_ref().expect("engine present");
+            let model = engine.model();
+            let spills = engine.spills();
+            if let Some(ws) = model.sheet(sheet) {
+                for row in first_data..=bottom {
+                    for col in left..=right {
+                        if let Some(cell) = ws.cell(row, col) {
+                            if cell.formula.is_some() {
+                                return Err(SessionError(format!(
+                                    "sort over formulas not yet supported (formula at {})",
+                                    a1_of(row, col)
+                                )));
+                            }
+                        }
+                        let cref = CellRef {
+                            sheet,
+                            row,
+                            col,
+                            row_abs: false,
+                            col_abs: false,
+                        };
+                        if spills.owner_of(cref).is_some() {
+                            return Err(SessionError(format!(
+                                "sort over a spilled region not supported (spilled cell at {} — edit the anchor formula)",
+                                a1_of(row, col)
+                            )));
+                        }
+                    }
+                }
             }
         }
-        match &cell.value {
-            CellValue::Empty => String::new(),
-            // Shortest round-trip float text — `Engine::enter` parses it
-            // back to the same f64.
-            CellValue::Number(n) => n.to_string(),
-            CellValue::Text(t) => t.to_string(),
-            CellValue::Bool(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
-            CellValue::Error(e) => e.as_str().to_string(),
+
+        // ── snapshot every movable row: the key VALUE (typed compare) + the
+        //    re-enterable inputs (the move payload).
+        let rows_snap: Vec<(CellValue, Vec<String>)> = {
+            let model = self.engine.as_ref().expect("engine present").model();
+            (first_data..=bottom)
+                .map(|row| {
+                    let key = model
+                        .sheet(sheet)
+                        .and_then(|ws| ws.cell(row, left + key_col))
+                        .map(|c| c.value.clone())
+                        .unwrap_or(CellValue::Empty);
+                    let inputs = (left..=right)
+                        .map(|col| cell_input_text(model, sheet, row, col))
+                        .collect();
+                    (key, inputs)
+                })
+                .collect()
+        };
+
+        // ── stable order (Vec::sort_by is stable; blanks sink either way).
+        let mut order: Vec<usize> = (0..rows_snap.len()).collect();
+        order.sort_by(|&a, &b| sort_key_cmp(&rows_snap[a].0, &rows_snap[b].0, ascending));
+
+        // ── apply through the NORMAL entry lane (graph/dirty/spill
+        //    bookkeeping intact; external dependents recalc as usual).
+        let mut edits: Vec<CellEdit> = Vec::new();
+        let mut changed_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+        let mut circular_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+        for (i, &src) in order.iter().enumerate() {
+            let dst_row = first_data + i as u32;
+            for (j, col) in (left..=right).enumerate() {
+                let next = &rows_snap[src].1[j];
+                let prev = &rows_snap[i].1[j];
+                if next == prev {
+                    continue;
+                }
+                let engine = self.engine.as_mut().expect("engine present");
+                // Inputs are engine-printed (`get_cell_input` round-trips by
+                // construction), so a parse error here is a bug — surface it
+                // as a boundary error rather than half-apply silently.
+                let res = engine.enter(sheet, dst_row, col, next).map_err(|e| {
+                    SessionError(format!(
+                        "sort re-entry failed at {}: {e}",
+                        a1_of(dst_row, col)
+                    ))
+                })?;
+                self.edited.insert((sheet, dst_row, col));
+                edits.push(CellEdit {
+                    sheet,
+                    row: dst_row,
+                    col,
+                    prev_input: prev.clone(),
+                    next_input: next.clone(),
+                });
+                changed_set.insert((sheet, dst_row, col));
+                for c in &res.changed {
+                    changed_set.insert((c.sheet, c.row, c.col));
+                }
+                for c in &res.circular {
+                    circular_set.insert((c.sheet, c.row, c.col));
+                }
+            }
         }
+
+        let (changed, circular) = self.collect_changes(&changed_set, &circular_set);
+        Ok(SortResult {
+            changed,
+            circular,
+            edits,
+        })
+    }
+
+    /// Find every populated cell matching `needle` (spec: the panel's
+    /// find lane). `sheet = Some(id)` scopes to one sheet (OOB id is a
+    /// boundary error); `None` scans the whole workbook. Matching surface:
+    /// the formatted DISPLAY text, or the re-enterable INPUT text when
+    /// `opts.in_formulas` (so `"SUM"` finds `=SUM(…)` cells). Matching is a
+    /// case-insensitive substring by default; `match_case` / `entire_cell`
+    /// tighten it (collation bounds documented on [`fold_match_at`]). Hits
+    /// come back in `(sheet, row, col)` order with a truncated excerpt of
+    /// the matched text. An empty needle is a boundary error.
+    pub fn find_all(
+        &self,
+        sheet: Option<u16>,
+        needle: &str,
+        opts: FindOptions,
+    ) -> Result<Vec<FindMatch>, SessionError> {
+        if needle.is_empty() {
+            return Err(SessionError("find needle must not be empty".to_string()));
+        }
+        let sheet_ids: Vec<u16> = match sheet {
+            Some(id) => {
+                self.validate_sheet(id)?;
+                vec![id]
+            }
+            None => {
+                let n = self.engine.as_ref().expect("engine present").model().sheets.len();
+                (0..n as u16).collect()
+            }
+        };
+
+        let model = self.engine.as_ref().expect("engine present").model();
+        let mut cache = FormatCache::default();
+        let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
+        let mut out = Vec::new();
+        for sid in sheet_ids {
+            let Some(ws) = model.sheet(sid) else { continue };
+            let mut coords: Vec<(u32, u32)> = ws.iter_cells().map(|(k, _)| *k).collect();
+            coords.sort_unstable(); // deterministic row-major hit order
+            for (row, col) in coords {
+                let hay = if opts.in_formulas {
+                    cell_input_text(model, sid, row, col)
+                } else {
+                    cell_display(model, sid, row, col, &mut cache, &ctx)
+                };
+                if hay.is_empty() {
+                    continue;
+                }
+                if text_matches(&hay, needle, opts.match_case, opts.entire_cell) {
+                    out.push(FindMatch {
+                        sheet: sid,
+                        row,
+                        col,
+                        excerpt: excerpt_of(&hay),
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Replace every occurrence of `needle` with `replacement` across the
+    /// scope (one sheet or, with `None`, the whole workbook), operating on
+    /// cell INPUT texts (the re-enterable `get_cell_input` surface — so a
+    /// formula's TEXT can be edited, and the engine re-types literals).
+    ///
+    /// Rulings (`sheet.edit.replace.*`):
+    /// - Matching is against the INPUT text (what you would type), never the
+    ///   formatted display — replace edits the edit surface.
+    /// - Formula cells are only touched when `opts.in_formulas`; otherwise
+    ///   they are excluded from the scan entirely.
+    /// - Every rewritten input re-enters through the NORMAL `set_cell` lane.
+    ///   A replacement that fails to parse (e.g. it breaks a formula) SKIPS
+    ///   that cell — reported on `skipped`, the cell untouched, never
+    ///   half-applied (`Engine::enter` parses before mutating).
+    /// - Engine-owned spill output (non-anchor spilled cells) is skipped
+    ///   with a reason — editing it would shadow the anchor formula.
+    ///
+    /// Returns the spliced-occurrence count, the recomputed displays +
+    /// circular set, the per-cell input rewrites (the bundle's journal
+    /// lane), and the skip report. An empty needle is a boundary error.
+    pub fn replace_all(
+        &mut self,
+        sheet: Option<u16>,
+        needle: &str,
+        replacement: &str,
+        opts: FindOptions,
+    ) -> Result<ReplaceResult, SessionError> {
+        if needle.is_empty() {
+            return Err(SessionError("replace needle must not be empty".to_string()));
+        }
+        let sheet_ids: Vec<u16> = match sheet {
+            Some(id) => {
+                self.validate_sheet(id)?;
+                vec![id]
+            }
+            None => {
+                let n = self.engine.as_ref().expect("engine present").model().sheets.len();
+                (0..n as u16).collect()
+            }
+        };
+
+        // ── phase 1: immutable scan for candidates (matched on INPUT text).
+        struct Candidate {
+            sheet: u16,
+            row: u32,
+            col: u32,
+            prev: String,
+            next: String,
+            occurrences: u32,
+            spilled: bool,
+        }
+        let mut candidates: Vec<Candidate> = Vec::new();
+        {
+            let engine = self.engine.as_ref().expect("engine present");
+            let model = engine.model();
+            let spills = engine.spills();
+            for &sid in &sheet_ids {
+                let Some(ws) = model.sheet(sid) else { continue };
+                let mut coords: Vec<(u32, u32)> = ws.iter_cells().map(|(k, _)| *k).collect();
+                coords.sort_unstable();
+                for (row, col) in coords {
+                    let is_formula = ws
+                        .cell(row, col)
+                        .map(|c| c.formula.is_some())
+                        .unwrap_or(false);
+                    if is_formula && !opts.in_formulas {
+                        continue;
+                    }
+                    let prev = cell_input_text(model, sid, row, col);
+                    if prev.is_empty() {
+                        continue;
+                    }
+                    let (next, n) = replace_occurrences(
+                        &prev,
+                        needle,
+                        replacement,
+                        opts.match_case,
+                        opts.entire_cell,
+                    );
+                    if n == 0 || next == prev {
+                        continue;
+                    }
+                    let cref = CellRef {
+                        sheet: sid,
+                        row,
+                        col,
+                        row_abs: false,
+                        col_abs: false,
+                    };
+                    candidates.push(Candidate {
+                        sheet: sid,
+                        row,
+                        col,
+                        prev,
+                        next,
+                        occurrences: n,
+                        spilled: spills.is_spilled_non_anchor(cref),
+                    });
+                }
+            }
+        }
+
+        // ── phase 2: apply through the normal entry lane; skip-not-corrupt.
+        let mut result = ReplaceResult::default();
+        let mut changed_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+        let mut circular_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+        for cand in candidates {
+            if cand.spilled {
+                result.skipped.push(SkippedCell {
+                    sheet: cand.sheet,
+                    row: cand.row,
+                    col: cand.col,
+                    reason: "spilled cell — edit the anchor formula".to_string(),
+                });
+                continue;
+            }
+            let engine = self.engine.as_mut().expect("engine present");
+            match engine.enter(cand.sheet, cand.row, cand.col, &cand.next) {
+                Ok(res) => {
+                    self.edited.insert((cand.sheet, cand.row, cand.col));
+                    result.occurrences += cand.occurrences;
+                    changed_set.insert((cand.sheet, cand.row, cand.col));
+                    for c in &res.changed {
+                        changed_set.insert((c.sheet, c.row, c.col));
+                    }
+                    for c in &res.circular {
+                        circular_set.insert((c.sheet, c.row, c.col));
+                    }
+                    result.edits.push(CellEdit {
+                        sheet: cand.sheet,
+                        row: cand.row,
+                        col: cand.col,
+                        prev_input: cand.prev,
+                        next_input: cand.next,
+                    });
+                }
+                Err(e) => {
+                    // The parse failed BEFORE any mutation — the cell keeps
+                    // its old input (never half-applied), and we report it.
+                    result.skipped.push(SkippedCell {
+                        sheet: cand.sheet,
+                        row: cand.row,
+                        col: cand.col,
+                        reason: format!("replacement does not parse: {e}"),
+                    });
+                }
+            }
+        }
+
+        let (changed, circular) = self.collect_changes(&changed_set, &circular_set);
+        result.changed = changed;
+        result.circular = circular;
+        Ok(result)
+    }
+
+    /// Reject an out-of-range sheet id (the FREEZE-AMENDMENT finding-2
+    /// boundary discipline, shared by the bulk edit ops).
+    fn validate_sheet(&self, sheet: u16) -> Result<(), SessionError> {
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
+        if (sheet as usize) >= sheet_count {
+            return Err(SessionError(format!(
+                "sheet id {sheet} out of range ({sheet_count} sheets)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Materialize accumulated change coordinates into the wire shapes,
+    /// formatting each display AGAINST THE FINAL MODEL STATE (a bulk op's
+    /// intermediate displays are stale by the time it finishes).
+    fn collect_changes(
+        &self,
+        changed: &BTreeSet<(u16, u32, u32)>,
+        circular: &BTreeSet<(u16, u32, u32)>,
+    ) -> (Vec<CellChange>, Vec<CircularRef>) {
+        let model = self.engine.as_ref().expect("engine present").model();
+        let mut cache = FormatCache::default();
+        let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
+        let changed = changed
+            .iter()
+            .map(|&(sheet, row, col)| CellChange {
+                sheet,
+                row,
+                col,
+                display: cell_display(model, sheet, row, col, &mut cache, &ctx),
+            })
+            .collect();
+        let circular = circular
+            .iter()
+            .map(|&(sheet, row, col)| CircularRef { sheet, row, col })
+            .collect();
+        (changed, circular)
     }
 
     /// Lower a range (`"A1:D9"` or a single cell `"A1"`) to the
@@ -825,6 +1326,194 @@ fn cell_display(
         Ok(fmt) => sheet_format::format_value(&cell.value, fmt, ctx),
         Err(_) => sheet_format::format_general(&cell.value),
     }
+}
+
+/// A cell's re-enterable INPUT text (ADR-012 — the in-session undo journal's
+/// faithful inverse): a formula cell re-prints as `"=" + print(AST)` (exactly
+/// what `set_cell` accepts back); a value cell re-prints its literal (number /
+/// text / TRUE / FALSE; an error its `#…!` code); an empty or out-of-range
+/// cell `""`. The DISPLAY string is NOT a valid inverse — re-entering a
+/// formula's display would bake the computed value over the formula.
+fn cell_input_text(model: &SheetModel, sheet: SheetId, row: u32, col: u32) -> String {
+    let Some(ws) = model.sheet(sheet) else {
+        return String::new();
+    };
+    let Some(cell) = ws.cell(row, col) else {
+        return String::new();
+    };
+    if let Some(fid) = cell.formula {
+        if let Some(formula) = model.formula(fid) {
+            let names = ModelSheetNames { model };
+            return format!("={}", print(formula, sheet, &names));
+        }
+    }
+    match &cell.value {
+        CellValue::Empty => String::new(),
+        // Shortest round-trip float text — `Engine::enter` parses it
+        // back to the same f64.
+        CellValue::Number(n) => n.to_string(),
+        CellValue::Text(t) => t.to_string(),
+        CellValue::Bool(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+        CellValue::Error(e) => e.as_str().to_string(),
+    }
+}
+
+// ───────────────────────────────────── bulk-edit helpers (sort / find)
+
+/// A1 label for a 0-based `(row, col)` — error-message formatting only.
+fn a1_of(row: u32, col: u32) -> String {
+    let mut n = col as i64;
+    let mut label = String::new();
+    loop {
+        label.insert(0, (b'A' + (n % 26) as u8) as char);
+        n = n / 26 - 1;
+        if n < 0 {
+            break;
+        }
+    }
+    format!("{label}{}", row + 1)
+}
+
+/// Compare two sort KEYS (the `sheet.edit.sort.*` rulings): blanks sink
+/// LAST in both directions; non-blanks rank numbers < text < booleans
+/// (FALSE < TRUE) < errors, numbers by `total_cmp`, text by [`ci_text_cmp`]
+/// (the honest collation), errors by their `#…!` code. `ascending == false`
+/// reverses only the non-blank order. Used with a STABLE sort, so equal
+/// keys keep their original row order.
+fn sort_key_cmp(a: &CellValue, b: &CellValue, ascending: bool) -> Ordering {
+    let blank = |v: &CellValue| matches!(v, CellValue::Empty);
+    match (blank(a), blank(b)) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater, // blanks last, both directions
+        (false, true) => Ordering::Less,
+        (false, false) => {
+            let ord = typed_value_cmp(a, b);
+            if ascending {
+                ord
+            } else {
+                ord.reverse()
+            }
+        }
+    }
+}
+
+/// The non-blank typed ordering behind [`sort_key_cmp`].
+fn typed_value_cmp(a: &CellValue, b: &CellValue) -> Ordering {
+    fn rank(v: &CellValue) -> u8 {
+        match v {
+            CellValue::Number(_) => 0,
+            CellValue::Text(_) => 1,
+            CellValue::Bool(_) => 2,
+            CellValue::Error(_) => 3,
+            CellValue::Empty => 4, // handled by the blank rule; total anyway
+        }
+    }
+    rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
+        (CellValue::Number(x), CellValue::Number(y)) => x.total_cmp(y),
+        (CellValue::Text(x), CellValue::Text(y)) => ci_text_cmp(x, y),
+        (CellValue::Bool(x), CellValue::Bool(y)) => x.cmp(y),
+        (CellValue::Error(x), CellValue::Error(y)) => x.as_str().cmp(y.as_str()),
+        _ => Ordering::Equal,
+    })
+}
+
+/// Case-insensitive text ordering — the HONEST collation (a documented
+/// ruling, `sheet.edit.sort.collation`): char-wise Unicode default case
+/// folding (`char::to_lowercase`) compared in CODE-POINT order, ties broken
+/// by the exact text (determinism). NO locale tailoring, NO ICU dependency:
+/// `"ä"` sorts after `"z"`, and full case folding (`"ß"` vs `"SS"`) is not
+/// applied. Locale-tailored collation is a T2 decision.
+fn ci_text_cmp(a: &str, b: &str) -> Ordering {
+    a.chars()
+        .flat_map(char::to_lowercase)
+        .cmp(b.chars().flat_map(char::to_lowercase))
+        .then_with(|| a.cmp(b))
+}
+
+/// Does `needle` match `hay` under the find options? `entire_cell` requires
+/// the match to cover the WHOLE text; otherwise any occurrence counts.
+fn text_matches(hay: &str, needle: &str, match_case: bool, entire_cell: bool) -> bool {
+    if entire_cell {
+        return fold_match_at(hay, 0, needle, match_case) == Some(hay.len());
+    }
+    find_from(hay, 0, needle, match_case).is_some()
+}
+
+/// Try to match `needle` at byte offset `pos` of `hay`; returns the matched
+/// byte LENGTH in `hay`. Case-insensitive mode compares CHAR-WISE through
+/// `char::to_lowercase` (Unicode default case folding per code point) — the
+/// same honest bounds as [`ci_text_cmp`]: no locale tailoring, no full case
+/// folding (`"ß"` does not match `"SS"`), no ICU dependency. Comparing the
+/// per-char lowercase EXPANSIONS keeps multi-char lowerings (e.g. `"İ"`)
+/// correct without breaking byte-index bookkeeping in the original text.
+fn fold_match_at(hay: &str, pos: usize, needle: &str, match_case: bool) -> Option<usize> {
+    let rest = &hay[pos..];
+    if match_case {
+        return rest.starts_with(needle).then_some(needle.len());
+    }
+    let mut hay_chars = rest.chars();
+    let mut consumed = 0usize;
+    for nc in needle.chars() {
+        let hc = hay_chars.next()?;
+        if hc != nc && !hc.to_lowercase().eq(nc.to_lowercase()) {
+            return None;
+        }
+        consumed += hc.len_utf8();
+    }
+    Some(consumed)
+}
+
+/// First occurrence of `needle` in `hay` at/after byte offset `from`
+/// (char-boundary scan); returns the `(start, end)` byte span.
+fn find_from(hay: &str, from: usize, needle: &str, match_case: bool) -> Option<(usize, usize)> {
+    for (off, _) in hay[from..].char_indices() {
+        let pos = from + off;
+        if let Some(len) = fold_match_at(hay, pos, needle, match_case) {
+            return Some((pos, pos + len));
+        }
+    }
+    None
+}
+
+/// Splice every NON-OVERLAPPING left-to-right occurrence of `needle` in
+/// `hay` with `replacement` (Excel's replace-all walk); `entire_cell`
+/// replaces the whole text iff it matches whole. Returns the new text +
+/// the occurrence count (0 ⇒ `hay` returned verbatim).
+fn replace_occurrences(
+    hay: &str,
+    needle: &str,
+    replacement: &str,
+    match_case: bool,
+    entire_cell: bool,
+) -> (String, u32) {
+    if entire_cell {
+        if fold_match_at(hay, 0, needle, match_case) == Some(hay.len()) {
+            return (replacement.to_string(), 1);
+        }
+        return (hay.to_string(), 0);
+    }
+    let mut out = String::with_capacity(hay.len());
+    let mut pos = 0usize;
+    let mut n = 0u32;
+    while let Some((start, end)) = find_from(hay, pos, needle, match_case) {
+        out.push_str(&hay[pos..start]);
+        out.push_str(replacement);
+        pos = end;
+        n += 1;
+    }
+    out.push_str(&hay[pos..]);
+    (out, n)
+}
+
+/// Truncate matched text to a panel-friendly excerpt (≤ 120 chars + `…`).
+fn excerpt_of(text: &str) -> String {
+    const MAX: usize = 120;
+    if text.chars().count() <= MAX {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(MAX).collect();
+    out.push('…');
+    out
 }
 
 /// The lowercase kind tag for a [`sheet_chart::model::ChartKind`] — the same

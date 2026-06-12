@@ -55,6 +55,9 @@ function makeFakeEngine(): SheetEngine {
     },
     getCellDisplay: () => "",
     getCellInput: () => "",
+    sortRange: () => ({ changed: [], edits: [] }),
+    findAll: () => [],
+    replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
     paginate: () => [],
     getGridScene: () => ({

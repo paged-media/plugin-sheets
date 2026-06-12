@@ -23,7 +23,10 @@ import {
   bootEmptyEngine,
   bootEngine,
   ENGINE_NOT_BUILT,
+  type CellEditRecord,
   type ChartInfo,
+  type FindMatch,
+  type FindOptions,
   type SheetEngine,
 } from "./engine";
 import { lowerSelectionToFrame } from "./lower";
@@ -181,6 +184,43 @@ export interface WorkbookSession {
   /** Drop the journal — the modal session boundary (call on exit; Tier 2's
    *  re-lowered batch owns the document grain from there). */
   clearCellEditJournal(): void;
+  /** Sort the SELECTED RANGE's rows on the active sheet by `keyCol`
+   *  (0-based, relative to the range) — thin glue over `engine.sortRange`
+   *  (all sort semantics in Rust, sheet.edit.sort.*). The engine's per-cell
+   *  input rewrites journal as ONE grouped ADR-012 step (one Cmd-Z undoes
+   *  the whole sort). Returns the honest outcome: `ok: false` carries the
+   *  engine's boundary message (e.g. "sort over formulas not yet
+   *  supported") for the panel to show. Never throws. */
+  sortRange(
+    keyCol: number,
+    ascending: boolean,
+    hasHeader: boolean,
+  ): { ok: true } | { ok: false; message: string };
+  /** Find every cell matching `needle` — thin glue over `engine.findAll`
+   *  (matching/collation decided in Rust, sheet.edit.find.*). `scope`
+   *  "sheet" searches the active sheet; "workbook" all sheets. Returns []
+   *  when there is no engine or the call fails (never throws). */
+  findAll(
+    needle: string,
+    opts: FindOptions,
+    scope: "sheet" | "workbook",
+  ): FindMatch[];
+  /** Replace every occurrence over the scope — thin glue over
+   *  `engine.replaceAll` (input-text splice + re-entry decided in Rust,
+   *  sheet.edit.replace.*). The per-cell rewrites journal as ONE grouped
+   *  step. Returns the counts (skipped = parse-failed/spill cells the
+   *  engine reported, untouched) or the honest error. Never throws. */
+  replaceAll(
+    needle: string,
+    replacement: string,
+    opts: FindOptions,
+    scope: "sheet" | "workbook",
+  ):
+    | { occurrences: number; replacedCells: number; skipped: number }
+    | { error: string };
+  /** Jump to a cell (a find hit): activate its sheet if needed and select
+   *  it in the grid (the panel + any in-frame grid re-render). */
+  goToCell(sheet: number, row: number, col: number): void;
   /** Re-emit the loaded workbook as XLSX bytes for the exporter
    *  contribution (S-06). Preservation-first (`engine.saveXlsx` — the
    *  lazy-verbatim re-emit, §10.2). Returns the bytes + a suggested file
@@ -303,14 +343,19 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // undoable, [cursor, length) redoable; a fresh commit truncates the redo
   // tail (the linear-history rule). Cleared on workbook load/source (the
   // session boundary) and on modal exit (Tier 2 owns the document grain).
+  // `batch` (additive): entries sharing a batch id were one BULK op (sort /
+  // replace-all) — undo/redo unwind the whole batch as ONE step. Plain cell
+  // edits carry no batch and unwind singly (unchanged behavior).
   let editJournal: {
     sheet: number;
     row: number;
     col: number;
     prev: string;
     next: string;
+    batch?: number;
   }[] = [];
   let journalCursor = 0;
+  let nextJournalBatch = 1;
 
   /** Write one cell through the engine AND journal it (the shared Tier-1
    *  capture for `editCell` + the in-frame commit). Returns false when
@@ -334,6 +379,27 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     editJournal.push({ sheet, row, col, prev, next: input });
     journalCursor = editJournal.length;
     return true;
+  }
+
+  /** Journal a BULK op's per-cell rewrites (the engine's `edits` lane —
+   *  prev/next already faithful inputs) as ONE grouped batch: a single
+   *  undo/redo step for the whole sort / replace-all. No-op when the op
+   *  changed nothing. */
+  function journalBatch(edits: readonly CellEditRecord[]): void {
+    if (edits.length === 0) return;
+    editJournal.length = journalCursor; // drop any redo tail
+    const batch = nextJournalBatch++;
+    for (const e of edits) {
+      editJournal.push({
+        sheet: e.sheet,
+        row: e.row,
+        col: e.col,
+        prev: e.prevInput,
+        next: e.nextInput,
+        batch,
+      });
+    }
+    journalCursor = editJournal.length;
   }
 
   /** Record the grid selection (engine + session) so the next windowing
@@ -770,14 +836,24 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         return true;
       }
       if (journalCursor === 0 || !state.engine) return false;
-      const entry = editJournal[journalCursor - 1];
-      try {
-        state.engine.setCell(entry.sheet, entry.row, entry.col, entry.prev);
-      } catch (err) {
-        host.log.error("undoCellEdit: engine setCell failed", err);
-        return false;
-      }
-      journalCursor -= 1;
+      // A batched group (sort / replace-all) unwinds WHOLE — one undo step;
+      // plain entries (no batch) unwind singly. Cells in a batch are
+      // disjoint, so reverse-order re-entry is order-independent.
+      const group = editJournal[journalCursor - 1].batch;
+      do {
+        const entry = editJournal[journalCursor - 1];
+        try {
+          state.engine.setCell(entry.sheet, entry.row, entry.col, entry.prev);
+        } catch (err) {
+          host.log.error("undoCellEdit: engine setCell failed", err);
+          return false;
+        }
+        journalCursor -= 1;
+      } while (
+        group !== undefined &&
+        journalCursor > 0 &&
+        editJournal[journalCursor - 1].batch === group
+      );
       emitter.emit();
       void submitInFrameGrid();
       return true;
@@ -788,14 +864,22 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         return false;
       }
       if (!state.engine) return false;
-      const entry = editJournal[journalCursor];
-      try {
-        state.engine.setCell(entry.sheet, entry.row, entry.col, entry.next);
-      } catch (err) {
-        host.log.error("redoCellEdit: engine setCell failed", err);
-        return false;
-      }
-      journalCursor += 1;
+      // Mirror of undo: a batched group re-applies whole.
+      const group = editJournal[journalCursor].batch;
+      do {
+        const entry = editJournal[journalCursor];
+        try {
+          state.engine.setCell(entry.sheet, entry.row, entry.col, entry.next);
+        } catch (err) {
+          host.log.error("redoCellEdit: engine setCell failed", err);
+          return false;
+        }
+        journalCursor += 1;
+      } while (
+        group !== undefined &&
+        journalCursor < editJournal.length &&
+        editJournal[journalCursor].batch === group
+      );
       emitter.emit();
       void submitInFrameGrid();
       return true;
@@ -812,6 +896,81 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     clearCellEditJournal() {
       editJournal = [];
       journalCursor = 0;
+    },
+
+    sortRange(keyCol, ascending, hasHeader) {
+      // Thin glue (§3): the engine owns ALL sort semantics — stable order,
+      // typed ranks, blanks-last, the formula-refusal boundary. This only
+      // routes the selected range in and journals the result.
+      if (!state.engine || state.activeSheet === null || !state.selectedRange) {
+        return { ok: false, message: "no workbook / sheet / range" };
+      }
+      try {
+        const res = state.engine.sortRange(
+          state.activeSheet,
+          state.selectedRange,
+          keyCol,
+          ascending,
+          hasHeader,
+        );
+        journalBatch(res.edits); // one grouped ADR-012 undo step
+        emitter.emit();
+        void submitInFrameGrid();
+        return { ok: true };
+      } catch (err) {
+        // The honest boundary (e.g. "sort over formulas not yet
+        // supported") — surfaced verbatim for the panel.
+        const message = err instanceof Error ? err.message : String(err);
+        host.log.warn("sortRange refused", err);
+        return { ok: false, message };
+      }
+    },
+
+    findAll(needle, opts, scope) {
+      if (!state.engine) return [];
+      const sheet =
+        scope === "workbook" ? undefined : (state.activeSheet ?? undefined);
+      if (scope === "sheet" && sheet === undefined) return [];
+      try {
+        return state.engine.findAll(sheet, needle, opts);
+      } catch (err) {
+        host.log.warn("findAll failed", err);
+        return [];
+      }
+    },
+
+    replaceAll(needle, replacement, opts, scope) {
+      if (!state.engine) return { error: "no workbook" };
+      const sheet =
+        scope === "workbook" ? undefined : (state.activeSheet ?? undefined);
+      if (scope === "sheet" && sheet === undefined) {
+        return { error: "no active sheet" };
+      }
+      try {
+        const res = state.engine.replaceAll(sheet, needle, replacement, opts);
+        journalBatch(res.edits); // one grouped ADR-012 undo step
+        emitter.emit();
+        void submitInFrameGrid();
+        return {
+          occurrences: res.occurrences,
+          replacedCells: res.edits.length,
+          skipped: res.skipped.length,
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        host.log.warn("replaceAll failed", err);
+        return { error: message };
+      }
+    },
+
+    goToCell(sheet, row, col) {
+      // A find hit: land on its sheet (range defaults like setActiveSheet)
+      // and select the cell; applyGridSelection emits + re-renders.
+      if (state.activeSheet !== sheet) {
+        state.activeSheet = sheet;
+        defaultRangeForActive();
+      }
+      applyGridSelection(row, col, 1, 1);
     },
 
     discoverDatasets() {
