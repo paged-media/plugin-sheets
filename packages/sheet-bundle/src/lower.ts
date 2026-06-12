@@ -133,6 +133,30 @@ export interface LowerLaneOptions {
  * writes. Returns the created frame's raw id, or null on any failure
  * (mutate-never-throws: outcomes are checked, not caught).
  */
+/** Snapshot the document's story ids (the `stories` collection). */
+async function storyIdsSnapshot(host: BundleHost): Promise<Set<string>> {
+  const items = await host.document.collection<{ selfId: string }>("stories");
+  return new Set(items.map((s) => s.selfId));
+}
+
+/** Resolve a JUST-CREATED frame's story by DIFFING the stories
+ *  collection across the insert. The hitTest read door reports
+ *  `storyId: null` for an EMPTY text frame (verified against the real
+ *  engine — the text hit path needs content), so the only working
+ *  resolution today is the before/after diff: exactly one new story id
+ *  belongs to the new frame. The proper frame→story read door is named
+ *  in the cross-repo RFI (v43 batch candidate). */
+async function newStoryId(
+  host: BundleHost,
+  before: ReadonlySet<string>,
+): Promise<string | null> {
+  const after = await host.document.collection<{ selfId: string }>("stories");
+  const fresh = after
+    .map((s) => s.selfId)
+    .filter((id) => !before.has(id));
+  return fresh.length === 1 ? fresh[0] : null;
+}
+
 export async function lowerSelectionToFrame(
   host: BundleHost,
   engine: SheetEngine,
@@ -161,6 +185,10 @@ export async function lowerSelectionToFrame(
   if (opts?.lane === "tab-text") {
     return lowerTabTextToFrame(host, content, placement, binding);
   }
+
+  // Snapshot story ids BEFORE phase 1 — the new frame's story is the
+  // diff (see newStoryId).
+  const storiesBefore = await storyIdsSnapshot(host);
 
   // Phase 1 — the frame + its binding, one undoable step. NO drawn rules:
   // a native `<Table>` (S-03 RESOLVED, protocol v37) carries its own cell
@@ -192,14 +220,14 @@ export async function lowerSelectionToFrame(
     return null;
   }
 
-  // Resolve the new frame's story via the hitTest read door (plugin-api
-  // exposes no direct frame→story lookup; HitResult carries storyId).
-  const hit = await host.document.hitTest(pageId, center(placement.bounds));
-  const storyId = hit?.storyId ?? null;
+  // Resolve the new frame's story by DIFFING the stories collection
+  // (snapshotted before phase 1) — the hitTest door cannot see an empty
+  // frame's story (storyId:null, verified live); see newStoryId().
+  const storyId = await newStoryId(host, storiesBefore);
   if (!storyId) {
     host.log.warn(
       "lower: could not resolve the created frame's story; frame placed " +
-        "empty (hitTest read-door miss)",
+        "empty (stories-diff ambiguous)",
     );
     await host.selection.set([outcome.createdId]);
     return frameId;
@@ -269,6 +297,9 @@ async function lowerTabTextToFrame(
 ): Promise<string | null> {
   const { batch, text } = lowerToMutations(content, placement, binding);
 
+  // Snapshot story ids before the frame insert (see newStoryId).
+  const storiesBefore = await storyIdsSnapshot(host);
+
   const outcome = await host.document.mutate(batch);
   if (!outcome.applied || !outcome.createdId) {
     host.log.warn("lower(tab-text): phase-1 batch rejected", outcome);
@@ -280,15 +311,11 @@ async function lowerTabTextToFrame(
     return null;
   }
 
-  const hit = await host.document.hitTest(
-    placement.pageId,
-    center(placement.bounds),
-  );
-  const storyId = hit?.storyId ?? null;
+  const storyId = await newStoryId(host, storiesBefore);
   if (!storyId) {
     host.log.warn(
       "lower(tab-text): could not resolve the created frame's story; " +
-        "frame placed empty (hitTest read-door miss)",
+        "frame placed empty (stories-diff ambiguous)",
     );
     await host.selection.set([outcome.createdId]);
     return frameId;

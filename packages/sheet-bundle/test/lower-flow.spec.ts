@@ -69,18 +69,24 @@ function fakeEngine(): SheetEngine {
   };
 }
 
-// A fake host capturing every mutate; createdId is a textFrame; hitTest
-// returns a known storyId so phase 2 can address the story.
+// A fake host capturing every mutate; createdId is a textFrame; the
+// stories collection grows by one entry once the frame batch applies —
+// the diff the lower flow resolves the new frame's story from (the
+// hitTest door cannot see an EMPTY frame's story; verified live).
 function fakeHost(createdId: ElementId, storyId: string | null) {
   const mutations: Mutation[] = [];
   const selections: ElementId[][] = [];
+  let frameInserted = false;
   const host = {
     log: { debug() {}, info() {}, warn() {}, error() {} },
     document: {
       async meta() {
         return { activePage: "Page/u1" } as never;
       },
-      async collection() {
+      async collection(name: string) {
+        if (name === "stories" && frameInserted && storyId) {
+          return [{ selfId: storyId }] as never;
+        }
         return [] as never;
       },
       async mutate(m: Mutation): Promise<MutationOutcome> {
@@ -91,6 +97,7 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
         if (m.op === "batch") {
           const ops = (m as { args: { ops: Array<{ op: string }> } }).args.ops;
           if (ops.some((o) => o.op === "insertTextFrame")) {
+            frameInserted = true;
             return { applied: true, createdId, pageIds: ["Page/u1"] };
           }
           return { applied: true, createdId: null, pageIds: ["Page/u1"] };
