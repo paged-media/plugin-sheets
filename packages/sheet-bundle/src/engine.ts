@@ -300,7 +300,18 @@ async function loadModule(): Promise<SheetWasmModule> {
       module: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     });
   } else {
-    await mod.default(new URL("./sheet_js_bg.wasm", import.meta.url));
+    // Browser path: resolve the artifact through the bundler's explicit
+    // `?url` import (the editor's wasm-loading convention). A bare
+    // relative URL resolves against the SERVED module path, and the dev
+    // server answers its HTML fallback — the
+    // "expected magic word 00 61 73 6d, found 3c 21 64 6f" boot failure
+    // the K-1 live-validation e2e surfaced. Object form: the bare
+    // argument is deprecated by wasm-bindgen.
+    // @ts-ignore — `?url` is a bundler affordance, untyped.
+    const wasmUrl = (await import("../bin/sheet_js_bg.wasm?url")) as {
+      default: string;
+    };
+    await mod.default({ module_or_path: wasmUrl.default });
   }
   return mod;
 }
