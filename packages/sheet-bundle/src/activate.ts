@@ -1,9 +1,10 @@
 // The paged.sheet bundle entry. T0 scope (the honest slice): import an
 // XLSX into an in-memory engine, pick a sheet + range, and LOWER it to a
-// page frame as tab-aligned text + drawn rules (the spec §2.2
-// degradation, S-03), bound via plugin metadata. Sheets mode (S-01), the
-// grid surface (S-02), threading/pagination (S-05), and persistence
-// (S-08) are NOT implemented — the panel + BREAKAGE_LOG say so.
+// page frame as a NATIVE Paged <Table> (S-03 RESOLVED — insertTable +
+// cell pour + spans + cell strokes/fills; the spec §2.2 tab-text
+// degradation is retained as the explicit fallback lane), bound via
+// plugin metadata. Sheets mode (S-01) and persistence (S-08) remain
+// honest gaps — the panel says so.
 //
 // Wiring mirrors plugin-draw/plugin-web: contributePanel for the workbook
 // panel + the two commands (importXlsx opens the panel; lowerToFrame runs

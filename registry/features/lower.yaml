@@ -1,5 +1,8 @@
-# sheet.lower.* — page-surface lowering (spec §8.2). T0 = single frame,
-# tab-text degradation (BREAKAGE S-03); taxonomy:
+# sheet.lower.* — page-surface lowering (spec §8.2). The page surface
+# emits a NATIVE Paged <Table> (S-03 RESOLVED — the wire carries
+# insertTable / cell-addressed insertText / setCellSpan / tableCell-scoped
+# cell properties); the spec §2.2 tab-text degradation is RETAINED as the
+# explicit fallback lane. Taxonomy:
 # implemented -> paginates -> reflow-stable -> round-trips.
 
 - id: sheet.lower.range.single-frame
@@ -41,3 +44,27 @@
   provenance: ["spec §12.4 determinism"]
   tests:
     rust: ["sheet-conformance/tests/lower.rs::sheet_lower_deterministic"]
+
+- id: sheet.lower.native-table
+  title: "Page lowering emits a NATIVE Paged <Table>: insertTable (widths/heights inline) + per-cell insertText via TextCellAddr + setCellSpan per merge + tableCell-scoped cellFillColor / cell*EdgeStrokeWeight for style fills/borders and grid rules"
+  tier: implemented
+  status: implemented
+  # RULING (S-03 RESOLVED): the wire carries native table ops (core
+  # protocol v37+; plugin-data D-02 is the sibling precedent). Column
+  # widths/row heights ride the insertTable args (no separate
+  # setColumnWidth/setRowHeight ops needed at creation). The tab-text
+  # degradation is RETAINED as the explicit fallback lane (`lane:
+  # "tab-text"`, plus the runtime fallback when a host rejects
+  # insertTable) — selectable and tested, never the default.
+  # HONEST IR GAP: Rule/LoweredStyle borders carry geometry/booleans only —
+  # no stroke weight/colour; the translator uses a documented hairline
+  # default (CELL_EDGE_STROKE_PT). Lowering real weights/colours is a
+  # sheet-lower (Rust) follow-on, not a TS decision.
+  provenance:
+    - "plugin-api wire.d.ts: insertTable / TextCellAddr / setCellSpan / tableCell ElementId / cell* PropertyPaths"
+    - "RFI §6 S-03 (resolved)"
+    - "spec §8.2 + §2.2 (degradation retained as fallback)"
+  tests:
+    vitest:
+      - "packages/sheet-host-model/test/lower-to-table.spec.ts"
+      - "packages/sheet-bundle/test/lower-flow.spec.ts"

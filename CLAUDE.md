@@ -9,11 +9,12 @@ repo, And The Next GmbH).
 A Rust/WASM calculation engine + sheet document model: live spreadsheets
 inside a print-grade layout document — a **publishing instrument, not an
 Excel replacement** (every scope decision follows from that). The page
-surface is COMPILED to native Paged content (T0: degraded to tab-aligned
-text + drawn rules — no native table-creation op yet, S-03); the
-sheets-mode grid (T1+) renders vector on an SDK surface (S-02). XLSX
-round-trip safety ("Paged never destroys a workbook") is a launch
-property.
+surface is COMPILED to native Paged content (a real `<Table>` via
+insertTable + cell pour + spans + cell strokes/fills — S-03 resolved; the
+tab-text + drawn-rules degradation is retained as the explicit fallback
+lane); the sheets-mode grid (T1+) renders vector on an SDK surface
+(S-02). XLSX round-trip safety ("Paged never destroys a workbook") is a
+launch property.
 
 Spec (the authority): `thoughts/docs/paged/plugin-sheets/base-idea.md`.
 SDK gap tracker: the cross-repo RFI `thoughts/docs/paged/plugin-platform/rfi-core-sdk-gaps.md` (S-NN ids in §6; per-plugin BREAKAGE_LOG retired 2026-06-12).

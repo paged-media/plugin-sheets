@@ -1,14 +1,19 @@
-// THE load-bearing translator (spec §8.2; degradation S-03): the engine
+// The tab-text FALLBACK translator (spec §2.2 degradation): the engine
 // has ALREADY computed the lowered IR (column/row geometry, formatted
 // cell text, grid rules, merges); this turns that pure data into host
 // Mutations. ZERO spreadsheet semantics live here (CLAUDE.md hard rule)
 // — it is arithmetic over already-decided geometry plus the host
 // mutation vocabulary.
 //
-// TWO-PHASE (S-03). The wire has no `insertTable` op, and `insertText`
-// keys off a `storyId` that exists only AFTER the frame applies. So the
-// page lower degrades to the spec §2.2 fallback — tab-aligned text in a
-// text frame + drawn rules — split across two phases:
+// LANE STATUS (S-03 RESOLVED): the wire NOW carries native table ops
+// (`insertTable`, cell-addressed `insertText`, `setCellSpan`, tableCell-
+// scoped properties) and the page lower PREFERS that lane
+// (lower-to-table.ts). THIS module is the retained, explicit fallback —
+// selected via the bundle's `lane: "tab-text"` option or when a host
+// rejects `insertTable` — and stays tested. Its constraint is real:
+// `insertText` keys off a `storyId` that exists only AFTER the frame
+// applies, so the spec §2.2 fallback — tab-aligned text in a text frame
+// + drawn rules — splits across two phases:
 //
 //   Phase 1 (this function's `batch`): insertTextFrame + an insertLine
 //     per grid rule + setPluginMetadata writing the binding onto the
@@ -52,7 +57,8 @@ export interface LowerResult {
   /** The non-default styles' prepared host overrides (IR-v2 style-map
    *  track, spec §8.3). Character-level props are ready to apply once a run
    *  span is known (the S-04 doc-style-group path); `blocked` facets need a
-   *  real table cell (S-03). Empty for an unstyled region. */
+   *  real table cell — only the native lane (lower-to-table.ts) has one.
+   *  Empty for an unstyled region. */
   styles: StyleEmission[];
 }
 
@@ -65,7 +71,7 @@ const CREATED_FRAME: ElementId = { kind: "textFrame", id: "$created" };
 
 /** Build the tab/newline join of the lowered cells. Rows in IR order;
  *  within a row, cells are placed at their `col` so empty columns become
- *  empty tab fields (tab-aligned text is the S-03 degradation — the
+ *  empty tab fields (tab-aligned text is the fallback degradation — the
  *  columns line up under monospace/tab stops). A trailing newline is
  *  NOT added (rows are SEPARATED by newlines, not terminated). */
 export function joinText(content: LoweredContent): string {
@@ -98,10 +104,11 @@ export function joinText(content: LoweredContent): string {
 //    character level (`characterFontStyle`/`characterFontSize`/
 //    `characterFontFamily`/`characterFillColor`) — emitted here.
 //  - FILL background + per-edge BORDERS need a real table CELL to attach to;
-//    the S-03 degradation pours tab-aligned text into ONE text frame (no
-//    `insertTable` op), so there is no cell to carry `cellFillColor` /
-//    `cell*EdgeStroke*`. They are reported as BLOCKED, never silently dropped
-//    or faked onto the frame.
+//    THIS fallback lane pours tab-aligned text into ONE text frame, so there
+//    is no cell to carry `cellFillColor` / `cell*EdgeStroke*`. They are
+//    reported as BLOCKED here, never silently dropped or faked onto the
+//    frame. (The preferred NATIVE lane, lower-to-table.ts, places both via
+//    tableCell-scoped setElementProperty — S-03 resolved.)
 //  - APPLYING an override to a poured run needs either a named character
 //    style (`createCharacterStyle` + `applyStyle`) or run-offset addressing —
 //    both the S-04 doc-style-group path (the style-management capability is an
@@ -118,8 +125,9 @@ export interface StyleProp {
   value: Value;
 }
 
-/** A facet of a cell style the S-03 tab-text degradation cannot place
- *  (no real table cell to attach a fill/border to). Reported, never faked. */
+/** A facet of a cell style the tab-text FALLBACK lane cannot place (no
+ *  real table cell to attach a fill/border to; the native lane places
+ *  both). Reported, never faked. */
 export type BlockedFacet = "fillBackground" | "border";
 
 /** The emittable overrides for ONE non-default style key, plus the facets
@@ -131,8 +139,8 @@ export interface StyleEmission {
   /** Character-level overrides expressible TODAY (font style/size/face,
    *  text colour). */
   props: StyleProp[];
-  /** Facets requiring a real table cell — blocked by the S-03 text-frame
-   *  degradation (empty when nothing is blocked). */
+  /** Facets requiring a real table cell — blocked by the tab-text
+   *  fallback's single text frame (empty when nothing is blocked). */
   blocked: BlockedFacet[];
 }
 
@@ -167,7 +175,7 @@ export function styleProps(style: LoweredStyle): StyleProp[] {
     });
 
   // Cell TEXT colour → character fill (the glyph colour). Fill BACKGROUND is
-  // a cell facet, handled separately (and blocked under S-03).
+  // a cell facet, handled separately (and blocked in this fallback lane).
   if (style.textRgb != null)
     props.push({
       path: "characterFillColor",
@@ -177,8 +185,9 @@ export function styleProps(style: LoweredStyle): StyleProp[] {
   return props;
 }
 
-/** Which cell facets a `LoweredStyle` carries that the S-03 tab-text frame
- *  cannot place (a fill background and/or borders need a real table cell). */
+/** Which cell facets a `LoweredStyle` carries that the tab-text fallback
+ *  frame cannot place (a fill background and/or borders need a real table
+ *  cell — the native lane's job). */
 function blockedFacets(style: LoweredStyle): BlockedFacet[] {
   const out: BlockedFacet[] = [];
   if (style.fillRgb != null) out.push("fillBackground");
@@ -262,7 +271,7 @@ export function lowerToMutations(
     batch: { op: "batch", args: { ops } },
     text: joinText(content),
     // The prepared style overrides (spec §8.3). The phase-1 batch stays the
-    // honest S-03 degradation (frame + rules + binding); the styles ride
+    // honest tab-text degradation (frame + rules + binding); the styles ride
     // alongside so the caller can apply the expressible character-level
     // overrides once the run offsets resolve (the doc-style-group path).
     styles: styleEmissions(content),

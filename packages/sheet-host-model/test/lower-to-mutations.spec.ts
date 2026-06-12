@@ -1,4 +1,6 @@
-// sheet.plugin.lower.mutations — the two-phase translator (S-03):
+// sheet.plugin.lower.mutations — the tab-text FALLBACK translator (the
+// retained spec §2.2 degradation; the native-table lane is
+// lower-to-table.spec.ts):
 // rule-offset math, op ordering, the $created sentinel, and the
 // tab/newline join (incl. empty cells). Pure data in, mutations out.
 
@@ -188,8 +190,9 @@ describe("sheet_plugin_lower_mutations: phase-2 text join", () => {
 });
 
 // sheet.style.applystyle-pour — the IR-v2 style table (spec §8.3) lowers
-// into host character-level property overrides; fill/border facets the S-03
-// text-frame degradation cannot place are REPORTED (not faked).
+// into host character-level property overrides; fill/border facets this
+// fallback's text-frame degradation cannot place are REPORTED (not faked) —
+// the native lane places them via tableCell-scoped properties.
 describe("sheet_style_applystyle_pour: style emission", () => {
   const defaultStyle: LoweredStyle = {
     key: 0,
@@ -263,7 +266,7 @@ describe("sheet_style_applystyle_pour: style emission", () => {
     expect(ems[0].blocked).toEqual([]);
   });
 
-  it("fill background + borders are REPORTED as blocked (S-03), not faked", () => {
+  it("fill background + borders are REPORTED as blocked (fallback lane), not faked", () => {
     const content: LoweredContent = {
       cols: [],
       rows: [],
@@ -277,7 +280,7 @@ describe("sheet_style_applystyle_pour: style emission", () => {
     const [emission] = styleEmissions(content);
     expect(emission.styleKey).toBe(1);
     // No character-level props (fill/border are cell facets), and BOTH are
-    // reported blocked — the honest S-03 boundary (no real table cell).
+    // reported blocked — the honest fallback-lane boundary (no real table cell).
     expect(emission.props).toEqual([]);
     expect(emission.blocked).toEqual(["fillBackground", "border"]);
   });
@@ -308,8 +311,9 @@ describe("sheet_style_applystyle_pour: style emission", () => {
     const { styles, batch } = lowerToMutations(content, placement, binding);
     expect(styles).toHaveLength(1);
     expect(styles[0].styleKey).toBe(1);
-    // The phase-1 batch is UNCHANGED — styles ride alongside, the honest S-03
-    // degradation (frame + rules + binding) does not gain a fake style op.
+    // The phase-1 batch is UNCHANGED — styles ride alongside, the honest
+    // tab-text degradation (frame + rules + binding) does not gain a fake
+    // style op.
     const ops = (batch as { args: { ops: Array<{ op: string }> } }).args.ops;
     expect(ops.every((o) => o.op !== "setStyleProperty")).toBe(true);
   });

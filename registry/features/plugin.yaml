@@ -9,11 +9,13 @@
     vitest: ["packages/sheet-bundle/test/activate.spec.ts"]
 
 - id: sheet.plugin.lower.mutations
-  title: "LoweredContent -> Mutation[] translation (two-phase: frame batch + text pour; S-03 degradation)"
+  title: "LoweredContent -> Mutation[] translation: native-table lane (default; see sheet.lower.native-table) + tab-text lane retained as the explicit fallback"
   status: implemented
-  provenance: ["plugin-api wire.d.ts mutation vocabulary", "BREAKAGE S-03"]
+  provenance:
+    ["plugin-api wire.d.ts mutation vocabulary", "RFI §6 S-03 (resolved; tab-text degradation retained as fallback)"]
   tests:
     vitest:
+      - "packages/sheet-host-model/test/lower-to-table.spec.ts"
       - "packages/sheet-host-model/test/lower-to-mutations.spec.ts"
       - "packages/sheet-host-model/test/placement.spec.ts"
       - "packages/sheet-bundle/test/lower-flow.spec.ts"

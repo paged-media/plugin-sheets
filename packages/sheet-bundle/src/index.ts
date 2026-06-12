@@ -48,8 +48,13 @@ export {
   type WorkbookSession,
 } from "./session";
 
-// The two-phase page lower (S-03), exported for the flow spec.
-export { lowerSelectionToFrame } from "./lower";
+// The native-table page lower (S-03 RESOLVED; tab-text lane retained as
+// the explicit fallback), exported for the flow spec.
+export {
+  lowerSelectionToFrame,
+  type LowerLane,
+  type LowerLaneOptions,
+} from "./lower";
 // Live multi-frame pagination across the host frame chain (Wave 2D, S-05).
 export {
   lowerPaginatedToChain,

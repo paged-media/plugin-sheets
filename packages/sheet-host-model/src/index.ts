@@ -49,11 +49,15 @@ export {
 } from "./lower-to-mutations";
 
 export {
+  CELL_EDGE_STROKE_PT,
   columnOrder,
   pageTableMutations,
   tableCellOps,
+  tableContentBatch,
+  tableDecorOps,
   tableInsertOp,
   type PageTableOps,
+  type TableDecor,
 } from "./lower-to-table";
 
 export {

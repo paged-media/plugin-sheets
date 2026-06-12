@@ -1,8 +1,10 @@
-// sheet.plugin.lower.mutations (the bundle-side flow): the two-phase
-// page lower (S-03) drives the host writes in order — phase 1 the batch
-// (frame + rules + binding), phase 2 the insertText into the story the
-// host's hitTest resolves. A fake host captures the mutate calls; a fake
-// engine returns a small LoweredContent.
+// sheet.plugin.lower.mutations / sheet.lower.native-table (the
+// bundle-side flow): the NATIVE page lower drives the host writes in
+// order — phase 1 the frame+binding batch, phase 2 the insertTable into
+// the story the host's hitTest resolves, phase 3 the cell pour + decor
+// (spans, fills, edge strokes) — with the tab-text lane retained as the
+// explicit/runtime fallback. A fake host captures the mutate calls; a
+// fake engine returns a small LoweredContent.
 
 import { describe, expect, it } from "vitest";
 
@@ -149,10 +151,17 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
     expect(tbl.args.cols).toBe(2);
     expect(tbl.args.columnWidths).toHaveLength(2);
     expect(tbl.args.columnWidths[0]).toBeGreaterThan(0); // measured, not 0
-    // Phase 3 — each cell's text poured into its table cell.
+    // Phase 3 — ONE batch: each cell's text poured into its table cell,
+    // then the decor (the engine's h-rule at the bottom boundary becomes
+    // tableCell-scoped bottom-edge strokes on both columns).
     expect(mutations[2].op).toBe("batch");
     const cellOps = (mutations[2] as {
-      args: { ops: Array<{ op: string; args: { text?: string; cell?: unknown } }> };
+      args: {
+        ops: Array<{
+          op: string;
+          args: { text?: string; cell?: unknown; path?: string; elementId?: unknown };
+        }>;
+      };
     }).args.ops;
     const item = cellOps.find((o) => o.args.text === "Item");
     expect(item?.op).toBe("insertText");
@@ -162,8 +171,67 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
       row: 0,
       col: 1,
     });
+    const edges = cellOps.filter((o) => o.op === "setElementProperty");
+    expect(edges).toHaveLength(2); // one per column under the h-rule at 18
+    expect(edges.every((o) => o.args.path === "cellBottomEdgeStrokeWeight")).toBe(
+      true,
+    );
+    expect(edges[0].args.elementId).toEqual({
+      kind: "tableCell",
+      id: { story_id: "Story/u9", table_id: "table1", row: 0, col: 0 },
+    });
     // The new frame is selected.
     expect(selections).toEqual([[CREATED]]);
+  });
+
+  it("lane: 'tab-text' drives the retained degradation (rules + text pour)", async () => {
+    const { host, mutations, selections } = fakeHost(CREATED, "Story/u9");
+    const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1", {
+      lane: "tab-text",
+    });
+
+    expect(id).toBe("frame1");
+    expect(mutations.map((m) => m.op)).toEqual(["batch", "insertText"]);
+    // Phase 1 — frame + DRAWN rule + binding (the spec §2.2 degradation).
+    const ops = (mutations[0] as { args: { ops: Array<{ op: string }> } }).args
+      .ops;
+    expect(ops[0].op).toBe("insertTextFrame");
+    expect(ops.some((o) => o.op === "insertLine")).toBe(true);
+    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
+    expect(ops.some((o) => o.op === "insertTable")).toBe(false);
+    // Phase 2 — the tab/newline join poured at offset 0 (no cell qualifier).
+    const pour = mutations[1] as {
+      args: { storyId: string; offset: number; text: string; cell?: unknown };
+    };
+    expect(pour.args.storyId).toBe("Story/u9");
+    expect(pour.args.offset).toBe(0);
+    expect(pour.args.text).toBe("Item\tQty");
+    expect(pour.args.cell).toBeUndefined();
+    expect(selections).toEqual([[CREATED]]);
+  });
+
+  it("falls back to the tab-text pour when the host rejects insertTable", async () => {
+    const { host, mutations } = fakeHost(CREATED, "Story/u9");
+    // Wrap mutate: reject insertTable (an older wire), apply the rest.
+    const realMutate = host.document.mutate.bind(host.document);
+    host.document.mutate = async (m: Mutation) => {
+      if (m.op === "insertTable") {
+        mutations.push(m);
+        return { applied: false, error: "unknown op" } as MutationOutcome;
+      }
+      return realMutate(m);
+    };
+
+    const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
+    expect(id).toBe("frame1"); // frame stands
+    expect(mutations.map((m) => m.op)).toEqual([
+      "batch", // phase 1 — frame + binding
+      "insertTable", // rejected
+      "insertText", // the runtime tab-text fallback pour
+    ]);
+    const pour = mutations[2] as { args: { text: string; cell?: unknown } };
+    expect(pour.args.text).toBe("Item\tQty");
+    expect(pour.args.cell).toBeUndefined();
   });
 
   it("phase 1 carries the binding for this plugin's namespace", async () => {

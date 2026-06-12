@@ -1,19 +1,25 @@
-// The two-phase page lower (S-03; spec §8.2). The engine lowers the
-// range to the IR (Rust), the host-model translator turns it into the
-// phase-1 batch + the phase-2 text (pure), and THIS module drives the
-// host writes — the only place in the bundle that calls
-// host.document.mutate.
+// The NATIVE-TABLE page lower (S-03 RESOLVED; spec §8.2). The engine
+// lowers the range to the IR (Rust), the host-model translators turn it
+// into wire ops (pure), and THIS module drives the host writes — the
+// only place in the bundle that calls host.document.mutate.
 //
-// WHY TWO PHASES (S-03). The wire has no `insertTable`, and `insertText`
-// keys off a `storyId` that only EXISTS after the frame is created. So
-// the page surface degrades to the spec §2.2 fallback (tab-aligned text
-// + drawn rules) and splits in two:
+// TWO LANES:
 //
-//   Phase 1 — mutate(batch): insertTextFrame + insertLine per rule +
-//     setPluginMetadata(binding) as ONE undoable step. The outcome
-//     carries `createdId` (the new frame's ElementId).
-//   Phase 2 — resolve the frame's storyId, then mutate(insertText) the
-//     joined cell text at offset 0.
+//   native-table (DEFAULT) — three phases:
+//     Phase 1 — mutate(batch): insertTextFrame + setPluginMetadata
+//       (binding) as ONE undoable step; the outcome mints the frame id.
+//       No drawn rules: the table carries its own cell edges.
+//     Phase 2 — resolve the frame's storyId, then mutate(insertTable)
+//       sized by font metrics (S-13); the outcome mints the tableId.
+//     Phase 3 — mutate(batch): the cell pour (insertText per cell via
+//       TextCellAddr) + decor (setCellSpan per merge, cellFillColor +
+//       cell*EdgeStrokeWeight via tableCell-scoped setElementProperty).
+//
+//   tab-text (EXPLICIT FALLBACK, spec §2.2 degradation) — the retained
+//     two-phase lane (lower-to-mutations.ts): frame + drawn rules +
+//     binding, then the tab/newline text pour. Selected via the `lane`
+//     option, and used at runtime when a host REJECTS insertTable (an
+//     older wire) — the degradation stays available and tested.
 //
 // RESOLVING THE STORY (the read door). plugin-api exposes no direct
 // frame→story lookup (SceneTreeNode/collections don't carry it); the
@@ -32,9 +38,11 @@ import type {
 import {
   BINDING_KEY,
   defaultPlacement,
+  joinText,
+  lowerToMutations,
   makeBinding,
   pageTableMutations,
-  tableCellOps,
+  tableContentBatch,
   tableInsertOp,
   type LoweredContent,
   type Page,
@@ -107,10 +115,22 @@ function frameIdOf(id: ElementId): string | null {
   return null;
 }
 
+/** Which translation lane the page lower drives. `native-table` (the
+ *  default) emits a real Paged `<Table>`; `tab-text` is the retained
+ *  spec §2.2 degradation (tab-aligned text + drawn rules). */
+export type LowerLane = "native-table" | "tab-text";
+
+/** Lane options for [`lowerSelectionToFrame`]. */
+export interface LowerLaneOptions {
+  /** Force a lane; default `"native-table"`. The tab-text fallback also
+   *  engages at runtime when the host rejects `insertTable`. */
+  lane?: LowerLane;
+}
+
 /**
  * Lower `sheet`/`range` to a fresh page frame. Engine computes the IR;
- * the translator (pure) shapes the mutations; this drives the two-phase
- * host writes. Returns the created frame's raw id, or null on any failure
+ * the translators (pure) shape the mutations; this drives the host
+ * writes. Returns the created frame's raw id, or null on any failure
  * (mutate-never-throws: outcomes are checked, not caught).
  */
 export async function lowerSelectionToFrame(
@@ -118,6 +138,7 @@ export async function lowerSelectionToFrame(
   engine: SheetEngine,
   sheet: number,
   range: string,
+  opts?: LowerLaneOptions,
 ): Promise<string | null> {
   const pageId = await activePageId(host);
   if (!pageId) {
@@ -137,9 +158,14 @@ export async function lowerSelectionToFrame(
   // gains one when save-back lands); the binding still round-trips.
   const binding = makeBinding(sheetName, range, 0);
 
+  if (opts?.lane === "tab-text") {
+    return lowerTabTextToFrame(host, content, placement, binding);
+  }
+
   // Phase 1 — the frame + its binding, one undoable step. NO drawn rules:
-  // a native `<Table>` (S-03 RESOLVED, protocol v37) draws its own
-  // borders. The binding rides the batch-created frame via `$created`.
+  // a native `<Table>` (S-03 RESOLVED, protocol v37) carries its own cell
+  // edges (phase 3). The binding rides the batch-created frame via
+  // `$created`.
   const outcome = await host.document.mutate({
     op: "batch",
     args: {
@@ -186,17 +212,96 @@ export async function lowerSelectionToFrame(
     tableInsertOp(content, storyId, columnWidths),
   );
   if (!tableOutcome.applied || !tableOutcome.createdId) {
-    host.log.warn("lower: phase-2 insertTable rejected", tableOutcome);
+    // RUNTIME FALLBACK: a host whose wire predates insertTable rejects the
+    // op — degrade to the spec §2.2 tab-text pour into the story we already
+    // resolved (the frame + binding stand; rules are not retrofittable
+    // without the table). Honest, logged, never silent.
+    host.log.warn(
+      "lower: insertTable rejected — falling back to the tab-text pour",
+      tableOutcome,
+    );
+    const text = joinText(content);
+    if (text.length > 0) {
+      const pour = await host.document.mutate({
+        op: "insertText",
+        args: { storyId, offset: 0, text },
+      });
+      if (!pour.applied) {
+        host.log.warn("lower: fallback text pour rejected", pour);
+      }
+    }
     await host.selection.set([outcome.createdId]);
     return frameId;
   }
   const tableId = tableOutcome.createdId.id as string;
 
-  // Phase 3 — pour each cell's formatted text into its table cell.
-  const cellBatch = tableCellOps(content, storyId, tableId);
+  // Phase 3 — ONE batch: pour each cell's formatted text into its table
+  // cell, then the decor (merges → setCellSpan; style fills/borders + grid
+  // rules → tableCell-scoped cellFillColor / cell*EdgeStrokeWeight).
+  const { batch: cellBatch, unmappedRules } = tableContentBatch(
+    content,
+    storyId,
+    tableId,
+  );
+  if (unmappedRules > 0) {
+    host.log.warn(
+      `lower: ${unmappedRules} grid rule(s) aligned to no cell boundary ` +
+        "(not drawn natively)",
+    );
+  }
   if (cellBatch.op === "batch" && cellBatch.args.ops.length > 0) {
     const pour = await host.document.mutate(cellBatch);
     if (!pour.applied) host.log.warn("lower: phase-3 cell pour rejected", pour);
+  }
+
+  await host.selection.set([outcome.createdId]);
+  return frameId;
+}
+
+/** The retained tab-text lane (spec §2.2 degradation): the pure
+ *  `lowerToMutations` batch (frame + drawn rules + binding), then the
+ *  tab/newline text pour into the resolved story. */
+async function lowerTabTextToFrame(
+  host: BundleHost,
+  content: LoweredContent,
+  placement: { pageId: PageId; bounds: [number, number, number, number] },
+  binding: ReturnType<typeof makeBinding>,
+): Promise<string | null> {
+  const { batch, text } = lowerToMutations(content, placement, binding);
+
+  const outcome = await host.document.mutate(batch);
+  if (!outcome.applied || !outcome.createdId) {
+    host.log.warn("lower(tab-text): phase-1 batch rejected", outcome);
+    return null;
+  }
+  const frameId = frameIdOf(outcome.createdId);
+  if (!frameId) {
+    host.log.warn("lower(tab-text): created element is not a frame target");
+    return null;
+  }
+
+  const hit = await host.document.hitTest(
+    placement.pageId,
+    center(placement.bounds),
+  );
+  const storyId = hit?.storyId ?? null;
+  if (!storyId) {
+    host.log.warn(
+      "lower(tab-text): could not resolve the created frame's story; " +
+        "frame placed empty (hitTest read-door miss)",
+    );
+    await host.selection.set([outcome.createdId]);
+    return frameId;
+  }
+
+  if (text.length > 0) {
+    const pour = await host.document.mutate({
+      op: "insertText",
+      args: { storyId, offset: 0, text },
+    });
+    if (!pour.applied) {
+      host.log.warn("lower(tab-text): phase-2 text pour rejected", pour);
+    }
   }
 
   await host.selection.set([outcome.createdId]);

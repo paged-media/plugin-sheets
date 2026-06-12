@@ -4,10 +4,13 @@
 # Phase-B style-map track parses REAL visual attributes from XLSX
 # (sheet-xlsx VisualStyles), resolves them into the LoweredContent.styles
 # table (sheet-lower StyleResolver), and the SAME resolver feeds the grid
-# scene (cross-surface parity). The TS translator (lower-to-mutations.ts)
-# prepares the character-level overrides; fill/border + run application stay
-# honest about the S-03/S-04 SDK gaps. doc-style-group remains PLANNED
-# (S-04: the style-management capability is an SDK gap).
+# scene (cross-surface parity). On the page surface, cell FILLS + BORDERS
+# now land NATIVELY via tableCell-scoped properties (S-03 resolved; see
+# sheet.lower.native-table); the tab-text FALLBACK lane
+# (lower-to-mutations.ts) still prepares character-level overrides and
+# reports fill/border as blocked — honest about its own limits.
+# doc-style-group remains PLANNED (S-04: the style-management capability —
+# run application through named styles — is an SDK gap).
 
 - id: sheet.style.xlsx-visual-parse
   title: Parse xlsx font/fill/border/alignment (styles.xml xf records) into visual cell styles
@@ -41,9 +44,13 @@
   title: Apply-style pour — a cell's resolved style flows into the lowered/poured content as host overrides
   status: implemented
   provenance:
-    ["spec §8.3 — style application on pour", "lower-to-mutations.ts::styleEmissions (honest S-03/S-04 boundary)"]
+    - "spec §8.3 — style application on pour"
+    - "lower-to-table.ts::tableDecorOps (native lane: cellFillColor + cell*EdgeStrokeWeight via tableCell scope)"
+    - "lower-to-mutations.ts::styleEmissions (fallback lane: character props prepared; fill/border honestly blocked — S-04 run application still open)"
   tests:
-    vitest: ["packages/sheet-host-model/test/lower-to-mutations.spec.ts"]
+    vitest:
+      - "packages/sheet-host-model/test/lower-to-table.spec.ts"
+      - "packages/sheet-host-model/test/lower-to-mutations.spec.ts"
 
 - id: sheet.style.cross-surface-parity
   title: A cell's visual style is identical on the page lowering and the grid scene (one style resolver)

@@ -63,9 +63,10 @@ node ../plugin-sdk/packages/plugin-cli/bin/paged-plugin.mjs validate packages/sh
 
 ## T0 scope honesty
 
-- Page lowering is **degraded**: tab-aligned text + drawn rules — the
-  wire has no table-creation op (S-03). Upgrades to native tables when
-  the table-model RFC lands.
+- Page lowering emits a **native Paged `<Table>`** (S-03 resolved):
+  `insertTable` + per-cell text pour + merge spans + cell fills/edge
+  strokes. The tab-text + drawn-rules degradation is retained as the
+  explicit fallback lane (and engages when a host rejects `insertTable`).
 - **No sheets mode yet**: frame activation (S-01) and the grid rendering
   surface (S-02) are SDK gaps; the T0 flow is the workbook panel +
   commands.
@@ -79,7 +80,7 @@ node ../plugin-sdk/packages/plugin-cli/bin/paged-plugin.mjs validate packages/sh
 ## Milestones (spec §13)
 
 All four milestones are implemented; the registry coverage gate is at
-0 gaps (342 implemented rows, 2 honest deferrals — see below).
+0 gaps (345 implemented rows, 2 honest deferrals — see below).
 
 - **M0 — spine + round-trip + first lowering** ✅ — frozen `sheet-core`,
   parser, dep graph + recalc, T0 functions via registry-driven dispatch,
@@ -103,5 +104,6 @@ in-frame sheets mode (S-01/S-02 SDK surface), conditional-formatting
 data-bar drawn geometry, the "new style from selection" document-style
 group (S-04), and full external-reference *evaluation* (needs a frozen-AST
 amendment). The interim panel grid stands in for in-frame sheets mode;
-page lowering still degrades to tab-text + rules until a native
-table-creation op lands (S-03). See `BREAKAGE_LOG.md`.
+page lowering is native-table (S-03 resolved; the tab-text degradation
+is the retained fallback lane). SDK gaps are tracked in the cross-repo
+RFI (`thoughts/docs/paged/plugin-platform/rfi-core-sdk-gaps.md` §6).
