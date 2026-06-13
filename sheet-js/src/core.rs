@@ -184,6 +184,19 @@ pub struct FreezeInfo {
     pub cols: u32,
 }
 
+/// One cell comment / note for the panel (preserve-first; spec §10.2). Read-
+/// only display state from the workbook's opaque `xl/commentsN.xml` (which
+/// round-trips byte-identical). The grid shows an indicator; this carries the
+/// text for the panel/hover.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct CommentInfo {
+    pub sheet: u16,
+    pub row: u32,
+    pub col: u32,
+    pub author: String,
+    pub text: String,
+}
+
 /// A worksheet's DATA-VALIDATION INVENTORY (spec §1.1/§11/T∞ — PRESERVE-ONLY).
 /// Data validation is on the permanent exclusion list: it round-trips
 /// preserved but is NEVER enforced, evaluated, or rendered as a runtime
@@ -1241,9 +1254,26 @@ impl SheetSession {
             freeze_rows: opts.freeze_rows.unwrap_or(stored.rows),
             freeze_cols: opts.freeze_cols.unwrap_or(stored.cols),
         };
+        // Cell-comment indicators (preserve-first; spec §10.2): supply the
+        // sheet's commented cells so the scene marks the visible ones. The
+        // comment text lives in `list_comments` (the panel/hover), not the scene.
+        let comment_cells: Vec<(u32, u32)> = self
+            .doc
+            .comments_of(sheet)
+            .map(|cs| cs.comments.iter().map(|c| (c.row, c.col)).collect())
+            .unwrap_or_default();
+
         let model = self.engine.as_ref().expect("engine present").model();
-        let mut scene =
-            sheet_grid::grid_scene(model, sheet, first_row, first_col, w_pt, h_pt, &grid_opts);
+        let mut scene = sheet_grid::grid_scene_with_comments(
+            model,
+            sheet,
+            first_row,
+            first_col,
+            w_pt,
+            h_pt,
+            &grid_opts,
+            &comment_cells,
+        );
 
         // Fold in the session's stored selection for THIS sheet (spec §8.1 —
         // selection is engine state the panel requests, not scene-derived).
@@ -1365,6 +1395,32 @@ impl SheetSession {
                     sheet: sid,
                     rows: fp.rows,
                     cols: fp.cols,
+                });
+            }
+        }
+        out
+    }
+
+    /// Enumerate the workbook's cell comments / notes (preserve-first; spec
+    /// §10.2), as `[{sheet,row,col,author,text}]` in sheet then row-major order.
+    /// Read-only display state parsed from the workbook's opaque
+    /// `xl/commentsN.xml` parts on load (which round-trip byte-identical). The
+    /// grid shows an indicator (folded into `get_grid_scene`); this carries the
+    /// text for the panel/hover. Empty for a workbook with no comments.
+    pub fn list_comments(&self) -> Vec<CommentInfo> {
+        let sheet_count = self.engine.as_ref().expect("engine present").model().sheets.len();
+        let mut out = Vec::new();
+        for sid in 0..sheet_count as SheetId {
+            let Some(cs) = self.doc.comments_of(sid) else {
+                continue;
+            };
+            for c in &cs.comments {
+                out.push(CommentInfo {
+                    sheet: sid,
+                    row: c.row,
+                    col: c.col,
+                    author: c.author.clone(),
+                    text: c.text.clone(),
                 });
             }
         }

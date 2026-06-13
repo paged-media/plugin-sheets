@@ -71,6 +71,26 @@ pub struct GridScene {
     /// band, the split still names how many leading sheet rows/cols are pinned
     /// (the renderer composites the frozen band over the scrolled body). */
     pub freeze: Option<GridFreeze>,
+    /// Cell-comment indicators for the VISIBLE cells that carry a comment
+    /// (preserve-first; spec §10.2). The renderer draws a small corner marker
+    /// (the classic Excel comment triangle); the comment text rides in the
+    /// panel / hover, not the scene. Empty unless the caller supplies the
+    /// sheet's commented cells. Read-only display affordance — comments are
+    /// never enforced, only shown.
+    pub comments: Vec<GridCommentMarker>,
+}
+
+/// One cell-comment indicator on a grid cell (preserve-first display). Its
+/// absolute `(row, col)` plus the viewport-local content-space top-right corner
+/// of the cell (`x`, `y`) where the renderer draws the marker triangle.
+#[derive(serde::Serialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct GridCommentMarker {
+    pub row: u32,
+    pub col: u32,
+    /// The cell's top-right corner, viewport-local pt (the marker anchor).
+    pub x: f64,
+    pub y: f64,
 }
 
 /// The frozen-pane split shown in a grid viewport (spec §8.1). `rows`/`cols`
@@ -201,6 +221,35 @@ pub fn grid_scene(
     max_height_pt: f64,
     opts: &GridOptions,
 ) -> GridScene {
+    grid_scene_with_comments(
+        model,
+        sheet,
+        first_row,
+        first_col,
+        max_width_pt,
+        max_height_pt,
+        opts,
+        &[],
+    )
+}
+
+/// As [`grid_scene`], plus the sheet's commented cells (`comment_cells`,
+/// absolute `(row, col)`): the scene emits a [`GridCommentMarker`] for each
+/// commented cell visible in the windowed viewport (preserve-first display;
+/// spec §10.2). The comment TEXT lives in the panel/hover, not the scene — this
+/// is only the indicator geometry. An empty `comment_cells` reproduces
+/// [`grid_scene`] exactly.
+#[allow(clippy::too_many_arguments)]
+pub fn grid_scene_with_comments(
+    model: &SheetModel,
+    sheet: SheetId,
+    first_row: u32,
+    first_col: u32,
+    max_width_pt: f64,
+    max_height_pt: f64,
+    opts: &GridOptions,
+    comment_cells: &[(u32, u32)],
+) -> GridScene {
     let ws = model.sheet(sheet);
 
     // ---- Window the columns: accumulate widths until max_width_pt. ----
@@ -303,6 +352,28 @@ pub fn grid_scene(
         RuleSet::default()
     };
 
+    // ---- Cell-comment indicators (preserve-first; spec §10.2). For each
+    // commented cell VISIBLE in the window, emit a marker at the cell's top-
+    // right corner (viewport-local pt). The comment text rides in the panel. ----
+    let mut comment_markers: Vec<GridCommentMarker> = Vec::new();
+    if !comment_cells.is_empty() {
+        for &(r, c) in comment_cells {
+            if r < first_row || r > row_end || c < first_col || c > col_end {
+                continue; // outside the window
+            }
+            let ci = (c - first_col) as usize;
+            let ri = (r - first_row) as usize;
+            // The cell's top-right corner: x = right edge of the column band,
+            // y = top edge of the row band.
+            comment_markers.push(GridCommentMarker {
+                row: r,
+                col: c,
+                x: x_offsets[ci + 1],
+                y: y_offsets[ri],
+            });
+        }
+    }
+
     // ---- Frozen-pane split (spec §8.1). Sum the frozen leading rows'/cols'
     // pt extents from the sheet origin (independent of the scroll origin — the
     // band is always the FIRST `freeze_rows`/`freeze_cols` of the sheet). ----
@@ -336,6 +407,7 @@ pub fn grid_scene(
         // The panel supplies selection later (spec §8.1).
         selection: None,
         freeze,
+        comments: comment_markers,
     }
 }
 
@@ -636,6 +708,39 @@ mod tests {
         let fz = scene.freeze.unwrap();
         assert!((fz.frozen_width_pt - 52.5).abs() < 1e-9);
         assert!((fz.frozen_height_pt - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sheet_grid_scene_comment_markers_visible_only() {
+        // Two commented cells: one in the window, one far below. Only the
+        // in-window one yields a marker, anchored at the cell's top-right corner.
+        let (m, s) = model_with(&[(0, 0, num(1.0))]);
+        let scene = grid_scene_with_comments(
+            &m,
+            s,
+            0,
+            0,
+            200.0,
+            90.0,
+            &GridOptions::default(),
+            &[(0, 0), (500_000, 3)],
+        );
+        assert_eq!(scene.comments.len(), 1, "only the visible comment marks");
+        let mk = &scene.comments[0];
+        assert_eq!((mk.row, mk.col), (0, 0));
+        // Top-right corner of A1: x = col 0 right edge (44.2575), y = row 0 top (0).
+        assert!((mk.x - 44.2575).abs() < 1e-9);
+        assert!((mk.y - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sheet_grid_scene_no_comments_when_none_supplied() {
+        let (m, s) = model_with(&[]);
+        let scene = grid_scene(&m, s, 0, 0, 200.0, 90.0, &GridOptions::default());
+        assert!(scene.comments.is_empty());
+        // The wire shape carries the (empty) comments array.
+        let json = serde_json::to_string(&scene).unwrap();
+        assert!(json.contains("\"comments\":[]"));
     }
 
     #[test]

@@ -51,6 +51,7 @@ function fakeEngine() {
     listCharts: () => [],
     listFreezePanes: () => [],
     listDataValidations: () => [],
+    listComments: () => [],
     listFunctions: () => [],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},

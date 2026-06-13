@@ -82,6 +82,18 @@ export interface DataValidationInfo {
   kinds: string[];
 }
 
+/** One cell comment / note (preserve-first; spec §10.2). Read-only display
+ *  state from the workbook's opaque `xl/commentsN.xml` (which round-trips
+ *  byte-identical). The grid shows an indicator; this carries the text + author
+ *  for the panel/hover. */
+export interface CommentInfo {
+  sheet: number;
+  row: number;
+  col: number;
+  author: string;
+  text: string;
+}
+
 /** One frame's content box for pagination (the host chain link's content
  *  box; Wave 2D / S-05). Only height bounds the split; width rides along.
  *  Forwarded verbatim to wasm. */
@@ -296,6 +308,11 @@ export interface SheetEngine {
    *  preserves but does NOT enforce — never a runtime dropdown. Empty when the
    *  workbook has none. */
   listDataValidations(): DataValidationInfo[];
+  /** Enumerate the workbook's cell comments / notes (preserve-first; spec
+   *  §10.2). Read-only display state from the opaque `xl/commentsN.xml` parts;
+   *  the grid shows an indicator (folded into `getGridScene`), this carries the
+   *  text for the panel/hover. Empty when the workbook has none. */
+  listComments(): CommentInfo[];
   /** Enumerate the engine's registered IMPLEMENTED functions for the
    *  formula-bar autocomplete (S-04). The names come from the engine's
    *  registry table (constitution §7) — never a TS list. Workbook-
@@ -375,6 +392,7 @@ export interface SheetWasmEngine {
   list_charts(): ChartInfo[];
   list_freeze_panes(): FreezeInfo[];
   list_data_validations(): DataValidationInfo[];
+  list_comments(): CommentInfo[];
   list_functions(): FunctionInfo[];
   get_chart_geometry(index: number, w_pt: number, h_pt: number): ChartGeometry;
   free(): void;
@@ -421,6 +439,7 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
     listCharts: () => wasm.list_charts(),
     listFreezePanes: () => wasm.list_freeze_panes(),
     listDataValidations: () => wasm.list_data_validations(),
+    listComments: () => wasm.list_comments(),
     listFunctions: () => wasm.list_functions(),
     getChartGeometry: (index, wPt, hPt) =>
       wasm.get_chart_geometry(index, wPt, hPt),

@@ -81,11 +81,24 @@ export interface GridFreeze {
   frozenHeightPt: number;
 }
 
+/** One cell-comment indicator on a grid cell (preserve-first display; spec
+ *  §10.2). Its absolute `(row, col)` + the cell's top-right corner (`x`, `y`,
+ *  viewport-local pt) where the panel draws the comment-triangle marker. The
+ *  comment TEXT rides in `engine.listComments()`, not here. Mirror of the Rust
+ *  `sheet_grid::GridCommentMarker`. */
+export interface GridCommentMarker {
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+}
+
 /** The complete grid scene for one viewport (spec §8.1): the windowed
  *  geometry, the visible populated cells, the style table, the gridlines
  *  (viewport-local content-space rules, h/v), the optional selection
- *  rectangle, and the optional frozen-pane split. The panel turns this into
- *  an SVG it overlays the sheet frame with; it never computes any of it. */
+ *  rectangle, the optional frozen-pane split, and the cell-comment markers.
+ *  The panel turns this into an SVG it overlays the sheet frame with; it never
+ *  computes any of it. */
 export interface GridScene {
   viewport: GridViewport;
   cells: GridCell[];
@@ -95,6 +108,9 @@ export interface GridScene {
   /** The frozen-pane split (spec §8.1); `null`/absent when nothing is
    *  frozen. The panel draws a heavier split rule at the band edge. */
   freeze?: GridFreeze | null;
+  /** Cell-comment indicators for the visible commented cells (spec §10.2,
+   *  preserve-first display). Absent/empty when none. */
+  comments?: GridCommentMarker[];
 }
 
 /** Tunable geometry for `gridSceneToSvg` — paint-time constants the panel
@@ -126,6 +142,10 @@ export interface GridSvgOptions {
   freezeColor: string;
   /** Frozen-pane split-line width (pt) — heavier than a gridline. */
   freezeWidth: number;
+  /** Cell-comment indicator (corner triangle) colour (spec §10.2). */
+  commentColor: string;
+  /** Cell-comment indicator triangle leg length (pt). */
+  commentSize: number;
 }
 
 /** Sober defaults; the panel overrides the colour fields from the token
@@ -143,6 +163,8 @@ export const DEFAULT_GRID_SVG_OPTIONS: GridSvgOptions = {
   selectionWidth: 1.5,
   freezeColor: "#808080",
   freezeWidth: 1.25,
+  commentColor: "#d93636",
+  commentSize: 4,
 };
 
 /** Total viewport width (pt) — the trailing x boundary (0 when empty). */
@@ -348,6 +370,25 @@ function freezeSplitSvg(scene: GridScene, o: GridSvgOptions): string {
   return parts.join("");
 }
 
+/** Build the cell-comment indicator `<polygon>`s (spec §10.2, preserve-first):
+ *  a small filled triangle in each commented cell's top-right corner — the
+ *  classic comment-note marker. The engine already gave each marker's top-right
+ *  corner `(x, y)` (viewport-local pt); the triangle hangs down-and-left from
+ *  it. "" when no cell carries a comment. */
+function commentMarkersSvg(scene: GridScene, o: GridSvgOptions): string {
+  const markers = scene.comments ?? [];
+  if (markers.length === 0) return "";
+  const s = o.commentSize;
+  return markers
+    .map((m) => {
+      // Triangle: corner, corner-left, corner-down (a right triangle hugging
+      // the cell's top-right corner).
+      const pts = `${m.x - s},${m.y} ${m.x},${m.y} ${m.x},${m.y + s}`;
+      return `<polygon points="${pts}" fill="${o.commentColor}"/>`;
+    })
+    .join("");
+}
+
 /** Build the selection `<rect>` (fill wash + stroke), or "" when there is
  *  no visible selection. */
 function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
@@ -370,7 +411,7 @@ function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
  * frame at any zoom (vector-crisp by construction).
  *
  * Layer order (back to front): cell fills → gridlines → cell borders →
- * cell text → frozen-pane split → selection chrome.
+ * cell text → frozen-pane split → comment markers → selection chrome.
  */
 export function gridSceneToSvg(
   scene: GridScene,
@@ -386,6 +427,7 @@ export function gridSceneToSvg(
     cellBorders(scene, vp, o) +
     cellTexts(scene, vp, o) +
     freezeSplitSvg(scene, o) +
+    commentMarkersSvg(scene, o) +
     selectionSvg(scene, o);
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" ` +

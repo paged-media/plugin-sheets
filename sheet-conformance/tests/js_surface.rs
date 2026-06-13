@@ -745,6 +745,43 @@ fn sheet_xlsx_data_validation_inventory_via_js_surface() {
     assert!(plain.list_data_validations().is_empty());
 }
 
+// ── sheet.xlsx.comments + sheet.grid.comments.indicator (JS surface) ────────
+
+/// The JS surface lists cell comments (preserve-first; spec §10.2) and folds
+/// the indicator into the grid scene. `list_comments` returns the author + text;
+/// `get_grid_scene` marks the visible commented cells. The comments parts
+/// round-trip byte-identical (opaque); a no-comment workbook reports none.
+#[test]
+fn sheet_xlsx_comments_via_js_surface() {
+    let s = SheetSession::load_xlsx(&fixture("13-comments.xlsx")).expect("load 13");
+
+    let cs = s.list_comments();
+    assert_eq!(cs.len(), 2);
+    let a1 = cs.iter().find(|c| (c.row, c.col) == (0, 0)).unwrap();
+    assert_eq!(a1.sheet, 0);
+    assert_eq!(a1.author, "Alice");
+    assert_eq!(a1.text, "Check this value before publishing.");
+    assert!(cs.iter().any(|c| (c.row, c.col) == (2, 2) && c.author == "Bob"));
+
+    // The grid scene marks the visible commented cells.
+    let scene = s
+        .get_grid_scene(0, 0, 0, 400.0, 120.0, GridSceneOptions::default())
+        .expect("grid scene over the commented sheet");
+    assert_eq!(scene.comments.len(), 2);
+    assert!(scene.comments.iter().any(|m| (m.row, m.col) == (0, 0)));
+    // The wire shape carries the camelCase comments markers.
+    let json = serde_json::to_string(&scene).unwrap();
+    assert!(json.contains("\"comments\""));
+
+    // A no-comment workbook reports none + marks nothing.
+    let plain = SheetSession::load_xlsx(&fixture("01-minimal.xlsx")).expect("load 01");
+    assert!(plain.list_comments().is_empty());
+    let plain_scene = plain
+        .get_grid_scene(0, 0, 0, 400.0, 120.0, GridSceneOptions::default())
+        .unwrap();
+    assert!(plain_scene.comments.is_empty());
+}
+
 /// `set_grid_selection` records a rectangle that the NEXT `get_grid_scene` for
 /// the same sheet folds into `GridScene.selection`; the wire JSON carries the
 /// camelCase `anchorRow`/`anchorCol`/`rows`/`cols` grid.ts expects. A selection

@@ -1,0 +1,31 @@
+# sheet.xlsx.comments + sheet.grid.comments.* (preserve-first; spec §10.2)
+# — cell comments / notes: PRESERVE + DISPLAY. The commentsN.xml part + its
+# companion vmlDrawing*.vml stay OPAQUE OPC parts (round-trip byte-identical);
+# we parse the comment list READ-ONLY so the grid shows an indicator + the panel
+# lists the text on hover. Authoring is preserve-first (T0): we read + display,
+# we never rewrite the part. Threaded comments (the modern xl/threadedComments
+# parts) are ALSO preserved opaquely; v0 reads the legacy <comments> list (the
+# universally-present form Excel still writes), threaded display is a follow-on.
+
+- id: sheet.xlsx.comments
+  title: XLSX commentsN.xml parse (read-only) + byte-identical round-trip of the opaque part
+  tier: implemented
+  status: implemented
+  ruling: "PRESERVE-FIRST: the worksheet's commentsN.xml part (resolved through its own .rels, relationships/comments) + its companion vmlDrawing*.vml stay OPAQUE (never promoted), so they re-emit BYTE-IDENTICAL on round-trip (preservation invariant, spec §10.2). ADDITIVE + READ-ONLY: the <authors> table + <commentList> parse into a SheetComments display model (cell ref, resolved author, flattened text). Authoring is preserve-first — we read + display, never rewrite the part. An unparsable ref / out-of-range authorId degrades gracefully (the part still round-trips)."
+  provenance: ["ECMA-376 §18.7 (comments)", "spec §10.2 (preservation invariant)"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/comments.rs::sheet_xlsx_comments_parse"
+      - "sheet-conformance/tests/js_surface.rs::sheet_xlsx_comments_via_js_surface"
+      - "sheet-xlsx/src/parts/comments.rs::parse_two_comments"
+
+- id: sheet.grid.comments.indicator
+  title: The grid surface marks commented cells (preserve-first display indicator)
+  tier: implemented
+  status: implemented
+  ruling: "The grid scene emits a corner marker (the classic comment-triangle anchor) for each commented cell VISIBLE in the windowed viewport (grid_scene_with_comments; the JS get_grid_scene folds in the sheet's commented cells). The comment TEXT lives in list_comments (the panel/hover), not the scene — the scene carries only the indicator geometry. A no-comment sheet marks nothing; an empty comment-cell list reproduces grid_scene exactly."
+  provenance: ["spec §8.1 (grid rendering surface), §10.2 (comments preserved + displayed)"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/comments.rs::sheet_grid_comments_indicator"
+      - "sheet-grid/src/lib.rs::sheet_grid_scene_comment_markers"

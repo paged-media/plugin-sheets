@@ -80,6 +80,7 @@ export {
   viewportHeightPt,
   viewportWidthPt,
   type GridCell,
+  type GridCommentMarker,
   type GridFreeze,
   type GridScene,
   type GridSelection,

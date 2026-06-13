@@ -103,6 +103,7 @@ function fakeEngine() {
     listCharts: () => [],
     listFreezePanes: () => [],
     listDataValidations: () => [],
+    listComments: () => [],
     listFunctions: () => [
       { name: "SUM", family: "math", minArgs: 1, maxArgs: null },
       { name: "SUMIF", family: "math", minArgs: 2, maxArgs: 3 },

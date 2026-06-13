@@ -17,6 +17,7 @@
 //! parser (bytes -> a parsed struct); the writer re-encodes from the model.
 
 pub mod chart;
+pub mod comments;
 pub mod conditional_format;
 pub mod data_validation;
 pub mod external_link;

@@ -53,6 +53,7 @@ pub use parts::chart::{ParsedChart as XlsxChart, SheetResolver as ChartSheetReso
 pub use parts::conditional_format::{
     CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, SheetConditionalFormats,
 };
+pub use parts::comments::{CellComment, SheetComments};
 pub use parts::data_validation::{DataValidation, DvKind, SheetDataValidations};
 pub use parts::external_link::{ExternalBook, ExternalLinks};
 pub use parts::freeze::FreezePanes;
@@ -61,7 +62,7 @@ pub use parts::styles::{VisualStyle, VisualStyles};
 use opc::{ModeledKind, OpcContainer, PartEntry};
 use parts::chart::{ParsedChart, SheetResolver};
 use rels::{
-    part_dir, rels_part_for, resolve_target, Relationships, REL_CHART, REL_DRAWING,
+    part_dir, rels_part_for, resolve_target, Relationships, REL_CHART, REL_COMMENTS, REL_DRAWING,
     REL_EXTERNAL_LINK, REL_OFFICE_DOCUMENT, REL_SHARED_STRINGS, REL_STYLES, REL_TABLE,
 };
 use sheet_core::cell::{Cell, StyleId};
@@ -144,6 +145,17 @@ pub struct XlsxDocument {
     /// but does not enforce (preservation transparency, not interpretation). A
     /// sheet with no `<dataValidations>` has no entry.
     pub data_validations: BTreeMap<SheetId, parts::data_validation::SheetDataValidations>,
+
+    /// Cell comments / notes per sheet (preserve-first; spec §10.2). Derived
+    /// from each worksheet's referenced `xl/commentsN.xml` part (resolved
+    /// through the worksheet's own `.rels`). ADDITIVE + READ-ONLY: the
+    /// `commentsN.xml` part + its companion `vmlDrawing*.vml` stay OPAQUE OPC
+    /// parts (never promoted), so they re-emit BYTE-IDENTICAL on round-trip
+    /// (preservation invariant, spec §10.2); this model exists for the grid
+    /// indicator + the panel display, never for re-emit. Authoring is
+    /// preserve-first (we read + show, never rewrite the part). A sheet with no
+    /// comments part has no entry.
+    pub comments: BTreeMap<SheetId, parts::comments::SheetComments>,
 
     /// The OPC container (ordered parts + content types) for re-write.
     container: OpcContainer,
@@ -281,6 +293,7 @@ impl XlsxDocument {
             SheetId,
             parts::data_validation::SheetDataValidations,
         > = BTreeMap::new();
+        let mut comments: BTreeMap<SheetId, parts::comments::SheetComments> = BTreeMap::new();
 
         for sref in &parsed_wb.sheets {
             let target = wb_rels.target_of(&sref.rid).ok_or_else(|| {
@@ -353,6 +366,28 @@ impl XlsxDocument {
                     }
                 }
                 model.sheet_mut(sid).expect("just added").tables = tables;
+
+                // Cell comments / notes (preserve-first, spec §10.2): the
+                // worksheet references its comments part through its OWN `.rels`
+                // (`relationships/comments` → `xl/commentsN.xml`). ADDITIVE +
+                // READ-ONLY parse for the grid indicator + the panel; the
+                // commentsN.xml part (+ its companion VML) stay OPAQUE (never
+                // promoted), so they re-emit byte-identical. The FIRST comments
+                // rel wins (a worksheet has one comments part).
+                if let Some(rel) = ws_rels.by_type(REL_COMMENTS) {
+                    let comments_part = resolve_target(&ws_base, &rel.target);
+                    if let Some(comments_bytes) =
+                        container.part(&comments_part).map(|p| p.bytes().to_vec())
+                    {
+                        // A malformed comments part is skipped (preservation-
+                        // safe: its bytes still round-trip).
+                        if let Ok(parsed) = parts::comments::parse(&comments_bytes) {
+                            if !parsed.is_empty() {
+                                comments.insert(sid, parsed);
+                            }
+                        }
+                    }
+                }
             }
 
             // Conditional formatting (M2 track, spec §10.4): the
@@ -509,6 +544,7 @@ impl XlsxDocument {
             external_links,
             freeze_panes,
             data_validations,
+            comments,
             container,
             bindings,
         })
@@ -584,6 +620,14 @@ impl XlsxDocument {
         sheet: SheetId,
     ) -> Option<&parts::data_validation::SheetDataValidations> {
         self.data_validations.get(&sheet)
+    }
+
+    /// The cell comments / notes of a sheet (preserve-first; spec §10.2), or
+    /// `None` for a sheet with no comments part. Read-only display state from
+    /// the worksheet's opaque `xl/commentsN.xml` (the part round-trips byte-
+    /// identical); the grid shows an indicator + the panel lists the text.
+    pub fn comments_of(&self, sheet: SheetId) -> Option<&parts::comments::SheetComments> {
+        self.comments.get(&sheet)
     }
 
     /// The worksheet part name bound to a model sheet (test/consumer helper).

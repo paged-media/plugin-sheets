@@ -42,6 +42,7 @@ function fakeEngine() {
     listCharts: () => [],
     listFreezePanes: () => [],
     listDataValidations: () => [],
+    listComments: () => [],
     listFunctions: () => {
       listFnCalls++;
       return [

@@ -132,6 +132,10 @@ function fakeWasm() {
       calls.push({ method: "list_data_validations", args: [] });
       return [{ sheet: 0, count: 3, kinds: ["list", "whole", "date"] }];
     },
+    list_comments() {
+      calls.push({ method: "list_comments", args: [] });
+      return [{ sheet: 0, row: 0, col: 0, author: "Alice", text: "hi" }];
+    },
     list_functions() {
       calls.push({ method: "list_functions", args: [] });
       return [{ name: "SUM", family: "math", minArgs: 1, maxArgs: null }];
@@ -187,6 +191,9 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(engine.listDataValidations()).toEqual([
       { sheet: 0, count: 3, kinds: ["list", "whole", "date"] },
     ]);
+    expect(engine.listComments()).toEqual([
+      { sheet: 0, row: 0, col: 0, author: "Alice", text: "hi" },
+    ]);
     expect(engine.listFunctions()).toEqual([
       { name: "SUM", family: "math", minArgs: 1, maxArgs: null },
     ]);
@@ -207,6 +214,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "list_charts",
       "list_freeze_panes",
       "list_data_validations",
+      "list_comments",
       "list_functions",
       "get_chart_geometry",
       "free",
@@ -223,7 +231,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     ]); // paginate
     expect(calls[7].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
     expect(calls[8].args).toEqual([0, 1, 2, 3, 4]);
-    expect(calls[14].args).toEqual([0, 360, 240]); // get_chart_geometry
+    expect(calls[15].args).toEqual([0, 360, 240]); // get_chart_geometry
   });
 
   it("dispose maps to free()", () => {

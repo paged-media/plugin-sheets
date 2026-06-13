@@ -40,6 +40,10 @@ pub const REL_DRAWING: &str = "/drawing";
 /// A drawing → chart-part relationship (`xl/charts/chartN.xml`, the DrawingML
 /// chart; ECMA-376 §21.2). One per `<c:chart>` graphic frame in the drawing.
 pub const REL_CHART: &str = "/chart";
+/// A worksheet → comments-part relationship (`xl/commentsN.xml`, the cell
+/// comments / notes list; ECMA-376 §18.7). The part stays opaque (round-trips
+/// byte-identical); we parse it read-only for the grid indicator + panel.
+pub const REL_COMMENTS: &str = "/comments";
 /// A workbook → external-link-part relationship
 /// (`xl/externalLinks/externalLinkN.xml`, ECMA-376 §18.14). One per
 /// `<externalReference>`; carries the CACHED values of a referenced external

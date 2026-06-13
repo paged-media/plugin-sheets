@@ -252,6 +252,28 @@ describe("sheet_grid_scene_freeze: split rendering", () => {
   });
 });
 
+// sheet.grid.comments.indicator — a commented cell gets a corner-triangle
+// marker at its top-right corner (preserve-first display; spec §10.2).
+describe("sheet_grid_scene_comments: indicator rendering", () => {
+  it("draws a corner triangle at each comment marker", () => {
+    const s = scene2x2();
+    // A1's top-right corner is (40, 0) in this 2x2 fixture.
+    s.comments = [{ row: 0, col: 0, x: 40, y: 0 }];
+    const svg = gridSceneToSvg(s);
+    const o = DEFAULT_GRID_SVG_OPTIONS;
+    // Triangle hangs down-and-left from the corner (size = commentSize).
+    expect(svg).toContain(
+      `<polygon points="${40 - o.commentSize},0 40,0 40,${o.commentSize}" ` +
+        `fill="${o.commentColor}"/>`,
+    );
+  });
+
+  it("draws no marker when no cell carries a comment", () => {
+    const svg = gridSceneToSvg(scene2x2());
+    expect(svg).not.toContain(DEFAULT_GRID_SVG_OPTIONS.commentColor);
+  });
+});
+
 describe("sheet_grid_selection: rect clamp", () => {
   it("returns null when there is no selection", () => {
     expect(selectionRect(scene2x2())).toBeNull();

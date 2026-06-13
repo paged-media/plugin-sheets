@@ -309,6 +309,14 @@ mod wasm {
             to_js(&self.session.list_data_validations()).unwrap_or(JsValue::NULL)
         }
 
+        /// Enumerate the workbook's cell comments / notes (preserve-first, spec
+        /// §10.2): `[{sheet,row,col,author,text}]`. The grid shows an indicator
+        /// (folded into `get_grid_scene`); this carries the text for the
+        /// panel/hover. The comments parts round-trip byte-identical (opaque).
+        pub fn list_comments(&self) -> JsValue {
+            to_js(&self.session.list_comments()).unwrap_or(JsValue::NULL)
+        }
+
         /// Enumerate the engine's registered IMPLEMENTED functions for the
         /// formula-bar autocomplete (S-04). The name table is codegen'd from
         /// the function registry (`registry/functions/*.yaml`) — the bundle's
