@@ -1,0 +1,43 @@
+# sheet.xlsx.pivot* (PRESERVE-ONLY; spec §1.1.1/§11/T∞)
+# — pivot tables are on the PERMANENT publishing-first exclusion list: the
+# pivotCache*/pivotTable* parts (and slicers) round-trip preserved but are NEVER
+# interpreted, recalculated, re-pivoted, or made editable. This is a PRODUCT
+# DECISION, not a deferral (base-idea §1.1.1).
+#
+# RATIONALE (the honest non-goal record): paged.sheet is a PUBLISHING instrument
+# — it typesets live workbooks into print-grade pages — NOT an analysis tool. A
+# pivot table's value is the INTERACTION (drag-to-summarize, collapse/expand,
+# slicers, re-pivot), exactly the surface a print/publishing product does not
+# own. The data-summary story Paged tells lives elsewhere: grouped aggregation +
+# record flow is paged.data's job (its DSL has grouping/rollup), and visual
+# summaries are the chart engine (sheet-chart, the frozen ChartGeometry IR).
+# Within paged.sheet a summary table is authored as ordinary cells + formulas
+# and rendered through the normal lowering path. Do NOT "helpfully" implement a
+# pivot engine.
+#
+# PRESERVATION: a workbook that ARRIVES carrying pivot artifacts is never
+# destroyed — the pivotCache*/pivotTable* parts are unknown subtrees retained
+# byte-faithfully under the preservation invariant (§10.2) and re-emitted in
+# place on round-trip. That preservation is already exercised by the
+# sheet.xlsx.preserve.unknown-parts row (which names pivot caches explicitly);
+# this row records the SCOPE DECISION and points at the same evidence.
+
+- id: sheet.xlsx.pivot
+  title: Pivot tables preserve-only — pivotCache/pivotTable parts round-trip byte-identical, NEVER interpreted
+  tier: preserved
+  status: implemented
+  ruling: >
+    EXPLICIT NON-GOAL, permanent (spec §1.1.1/§11/T∞, the publishing-first
+    exclusion list). Pivot tables are never interpreted, recalculated,
+    re-pivoted, rendered as an interactive pivot, or made editable — they are a
+    paged.data (grouping) / sheet-chart (visual summary) concern, not a
+    paged.sheet one. The pivotCache*/pivotTable* parts (and slicers) are unknown
+    OPC parts captured verbatim and re-emitted byte-identical on round-trip
+    (covered by sheet.xlsx.preserve.unknown-parts, which exercises pivot caches
+    in 04-unknown-parts.xlsx). This is a product decision, not a deferral.
+  provenance:
+    - "spec §1.1.1 (pivot explicit non-goal), §1.1/§11 (publishing-first exclusion), §10.2 (preservation invariant)"
+    - "ECMA-376 §18.10 (pivotTable), §18.10.1 (pivotCacheDefinition)"
+  tests:
+    rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_preserve_unknown_parts"]
+    corpus: ["corpus/xlsx-corpus/04-unknown-parts.xlsx"]
