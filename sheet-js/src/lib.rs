@@ -195,6 +195,22 @@ mod wasm {
             to_js(&lowered)
         }
 
+        /// Read a range (`"A1:D9"` or `"A1"`) as a rectangular grid of
+        /// formatted DISPLAY strings (K-6 / S-14 — the clipboard copy
+        /// interchange). Returns `string[][]` (row-major, `""` for empty
+        /// cells). Junk endpoints / an OOB sheet are boundary errors.
+        pub fn get_range_values(
+            &self,
+            sheet: u16,
+            range: &str,
+        ) -> Result<JsValue, JsValue> {
+            let rows = self
+                .session
+                .get_range_values(sheet, range)
+                .map_err(map_err)?;
+            to_js(&rows)
+        }
+
         /// Paginate a range across the host frame chain's content boxes (Wave
         /// 2D, S-05). `frames` is the chain's content boxes
         /// (`[{widthPt,heightPt}]`); returns the serialized `Vec<Page>` (each

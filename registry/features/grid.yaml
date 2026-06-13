@@ -61,3 +61,29 @@
   provenance: ["ADR-012", "plugin-api EditContextContribution.onUndo/onRedo"]
   tests:
     vitest: ["packages/sheet-bundle/test/session-undo.spec.ts"]
+
+- id: sheet.grid.clipboard.copy-range
+  title: Copy the selected range to host.clipboard as a tabular payload (cells as formatted display strings) + a TSV text fallback (K-6 / S-14)
+  status: implemented
+  provenance:
+    - "RFI §6 K-6 / S-14 — host.clipboard with a { text, tabular } payload"
+    - "sheet-js/src/core.rs::get_range_values (the engine-owned range read)"
+  tests:
+    rust: ["sheet-conformance/tests/js_surface.rs::sheet_grid_clipboard_copy_range_values"]
+    vitest: ["packages/sheet-bundle/test/clipboard.spec.ts"]
+
+- id: sheet.grid.clipboard.copy-cell-cap
+  title: Clipboard range copy honors the T0 cell cap (a full-sheet range is a boundary error, never a panic) — the session stays usable
+  status: implemented
+  provenance: ["RFI §6 K-6", "the get_range_lowered T0 cap discipline"]
+  tests:
+    rust: ["sheet-conformance/tests/js_surface.rs::sheet_grid_clipboard_copy_caps_full_sheet"]
+
+- id: sheet.grid.clipboard.paste-range
+  title: Paste host.clipboard (tabular or TSV) into the grid at the selection anchor — each cell re-typed through the journaled editCell lane (one grouped undo step)
+  status: implemented
+  provenance:
+    - "RFI §6 K-6 / S-14 — paste lands tabular/TSV at the anchor"
+    - "ADR-012 Tier 1 — the paste is a grouped journal batch"
+  tests:
+    vitest: ["packages/sheet-bundle/test/clipboard.spec.ts"]

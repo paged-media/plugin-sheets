@@ -11,6 +11,7 @@ import type {
   ElementId,
   ProviderRecordSet,
   SceneLayerSurface,
+  TabularClipboard,
 } from "@paged-media/plugin-api";
 import {
   gridSceneToSceneLayer,
@@ -184,6 +185,28 @@ export interface WorkbookSession {
    *  editing a formula cell shows its formula, not the computed display.
    *  Returns "" when there is no engine / active sheet (never throws). */
   cellInputAt(row: number, col: number): string;
+  /** K-6 / S-14 — COPY the current grid selection to the system clipboard
+   *  (`host.clipboard.write`). Reads the selected range's FORMATTED display
+   *  strings from the engine (`getRangeValues` — all formatting in Rust) and
+   *  writes BOTH a `tabular` grid AND a TSV `text` fallback. Returns the
+   *  outcome: `ok:true` with the copied row/col counts, or `ok:false` with an
+   *  honest reason (no selection / no engine / the clipboard door denied).
+   *  Never throws. */
+  copySelection(): Promise<
+    | { ok: true; rows: number; cols: number }
+    | { ok: false; message: string }
+  >;
+  /** K-6 / S-14 — PASTE the system clipboard into the grid at the selection
+   *  ANCHOR (`host.clipboard.read`). Prefers the rich `tabular` grid; falls
+   *  back to parsing the `text` half as TSV. Each cell re-types through the
+   *  journaled `editCell` lane as ONE grouped ADR-012 undo step (one Cmd-Z
+   *  undoes the whole paste). Returns the outcome: `ok:true` with the pasted
+   *  row/col counts, or `ok:false` with an honest reason (no selection / no
+   *  engine / nothing on the clipboard). Never throws. */
+  pasteAtSelection(): Promise<
+    | { ok: true; rows: number; cols: number }
+    | { ok: false; message: string }
+  >;
   /** S-04 formula bar — the engine's registry-generated function name table
    *  for the autocomplete (constitution §7: the completion names are the
    *  ENGINE's, never a TS list). Cached after the first call (the registry
@@ -338,6 +361,33 @@ export function columnLabel(index: number): string {
     n = Math.floor(n / 26) - 1;
   } while (n >= 0);
   return label;
+}
+
+/** K-6 — the A1 range string for a grid selection rectangle (anchor +
+ *  span). Pure A1 formatting (NOT spreadsheet semantics — the engine reads
+ *  + validates the range). A 1×1 selection yields a single-cell range. */
+export function selectionRangeA1(
+  anchorRow: number,
+  anchorCol: number,
+  rows: number,
+  cols: number,
+): string {
+  const start = `${columnLabel(anchorCol)}${anchorRow + 1}`;
+  if (rows <= 1 && cols <= 1) return start;
+  const end = `${columnLabel(anchorCol + cols - 1)}${anchorRow + rows}`;
+  return `${start}:${end}`;
+}
+
+/** K-6 — parse a TSV `text` clipboard half into a rectangular grid (the
+ *  fallback when the platform offered no rich `tabular`). Tabs split cells,
+ *  newlines split rows; CRLF tolerated; a single trailing newline dropped
+ *  (so a copied range doesn't gain a blank row). Pure transport — never
+ *  spreadsheet semantics. */
+export function tsvToRows(text: string): string[][] {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const body = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+  if (body === "") return [];
+  return body.split("\n").map((line) => line.split("\t"));
 }
 
 export function createWorkbookSession(host: BundleHost): WorkbookSession {
@@ -903,6 +953,126 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("cellInputAt: engine read failed", err);
         return "";
       }
+    },
+
+    async copySelection() {
+      // K-6 / S-14 — read the selected range's FORMATTED display strings from
+      // the engine (all formatting in Rust) and write a tabular payload (+ a
+      // TSV text fallback) to the system clipboard. Thin glue (§3): the engine
+      // owns the values, the host owns the clipboard.
+      if (!state.engine || state.activeSheet === null) {
+        return { ok: false as const, message: "no workbook / sheet" };
+      }
+      const sel = state.gridSelection;
+      if (!sel) {
+        return { ok: false as const, message: "select a range to copy" };
+      }
+      const range = selectionRangeA1(
+        sel.anchorRow,
+        sel.anchorCol,
+        sel.rows,
+        sel.cols,
+      );
+      let grid: string[][];
+      try {
+        grid = state.engine.getRangeValues(state.activeSheet, range);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        host.log.warn("copySelection: range read failed", err);
+        return { ok: false as const, message };
+      }
+      if (grid.length === 0) {
+        return { ok: false as const, message: "the selection is empty" };
+      }
+      const tabular: TabularClipboard = { rows: grid };
+      const text = grid.map((r) => r.join("\t")).join("\n");
+      try {
+        await host.clipboard.write({ text, tabular });
+      } catch (err) {
+        // The SDK door already swallows a platform refusal; a throw here would
+        // be a gate/contract error — report it honestly, never crash the grid.
+        const message = err instanceof Error ? err.message : String(err);
+        host.log.warn("copySelection: clipboard write failed", err);
+        return { ok: false as const, message };
+      }
+      return {
+        ok: true as const,
+        rows: grid.length,
+        cols: grid[0]?.length ?? 0,
+      };
+    },
+
+    async pasteAtSelection() {
+      // K-6 / S-14 — read the clipboard, land its grid at the selection anchor
+      // through the JOURNALED editCell lane as ONE grouped undo step. Prefers
+      // the rich tabular half; falls back to TSV. Thin glue (§3): the engine
+      // re-types each cell's string in Rust; this only routes + journals.
+      if (!state.engine || state.activeSheet === null) {
+        return { ok: false as const, message: "no workbook / sheet" };
+      }
+      const sel = state.gridSelection;
+      if (!sel) {
+        return { ok: false as const, message: "select a cell to paste at" };
+      }
+      let payload;
+      try {
+        payload = await host.clipboard.read();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        host.log.warn("pasteAtSelection: clipboard read failed", err);
+        return { ok: false as const, message };
+      }
+      if (!payload) {
+        return { ok: false as const, message: "the clipboard is empty" };
+      }
+      // Prefer the rich grid; fall back to parsing the TSV text half.
+      const grid =
+        payload.tabular?.rows ??
+        (payload.text !== undefined ? tsvToRows(payload.text) : []);
+      if (grid.length === 0) {
+        return {
+          ok: false as const,
+          message: "nothing tabular on the clipboard",
+        };
+      }
+      // Write each cell through the engine, capturing prev/next inputs so the
+      // whole paste journals as ONE grouped ADR-012 undo step. A per-cell write
+      // failure is tolerated (logged + skipped) — never half a crash.
+      const sheet = state.activeSheet;
+      const edits: CellEditRecord[] = [];
+      let written = 0;
+      for (let r = 0; r < grid.length; r++) {
+        const row = grid[r];
+        for (let c = 0; c < row.length; c++) {
+          const targetRow = sel.anchorRow + r;
+          const targetCol = sel.anchorCol + c;
+          const next = row[c];
+          let prev: string;
+          try {
+            prev = state.engine.getCellInput(sheet, targetRow, targetCol);
+            state.engine.setCell(sheet, targetRow, targetCol, next);
+          } catch (err) {
+            host.log.warn(
+              `pasteAtSelection: setCell(${sheet},${targetRow},${targetCol}) failed`,
+              err,
+            );
+            continue;
+          }
+          edits.push({ sheet, row: targetRow, col: targetCol, prevInput: prev, nextInput: next });
+          written += 1;
+        }
+      }
+      if (written === 0) {
+        return { ok: false as const, message: "the paste wrote no cells" };
+      }
+      journalBatch(edits); // one grouped Cmd-Z undoes the whole paste
+      emitter.emit();
+      void submitInFrameGrid();
+      return {
+        ok: true as const,
+        rows: grid.length,
+        cols: Math.max(...grid.map((r) => r.length)),
+      };
     },
 
     functionList() {

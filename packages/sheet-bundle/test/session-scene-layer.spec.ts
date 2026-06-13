@@ -64,6 +64,7 @@ function fakeEngine() {
     findAll: () => [],
     replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
+    getRangeValues: () => [],
     paginate: () => [],
     // The fake ignores the window args and always returns the 2×2 scene; the
     // session overlays its own selection onto it via computeGridScene.

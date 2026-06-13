@@ -81,6 +81,10 @@ function fakeWasm() {
       });
       return { occurrences: 1, changed: [], edits: [], skipped: [] };
     },
+    get_range_values(sheet, range) {
+      calls.push({ method: "get_range_values", args: [sheet, range] });
+      return [["x"]];
+    },
     get_range_lowered(sheet, range, opts) {
       calls.push({ method: "get_range_lowered", args: [sheet, range, opts] });
       return lowered;
@@ -150,6 +154,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(engine.getRangeLowered(0, "A1:B2", { includeGridRules: true })).toBe(
       lowered,
     );
+    expect(engine.getRangeValues(0, "A1:B2")).toEqual([["x"]]);
     expect(
       engine.paginate(
         0,
@@ -182,6 +187,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "set_cell",
       "get_cell_display",
       "get_range_lowered",
+      "get_range_values",
       "paginate",
       "get_grid_scene",
       "set_grid_selection",
@@ -194,15 +200,16 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     // argument fidelity through the facade.
     expect(calls[0].args[0]).toBe(bytes);
     expect(calls[4].args).toEqual([0, "A1:B2", { includeGridRules: true }]);
-    expect(calls[5].args).toEqual([
+    expect(calls[5].args).toEqual([0, "A1:B2"]); // get_range_values
+    expect(calls[6].args).toEqual([
       0,
       "A1:B9",
       [{ widthPt: 100, heightPt: 50 }],
       { continuedMarker: true },
     ]); // paginate
-    expect(calls[6].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
-    expect(calls[7].args).toEqual([0, 1, 2, 3, 4]);
-    expect(calls[11].args).toEqual([0, 360, 240]); // get_chart_geometry
+    expect(calls[7].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
+    expect(calls[8].args).toEqual([0, 1, 2, 3, 4]);
+    expect(calls[12].args).toEqual([0, 360, 240]); // get_chart_geometry
   });
 
   it("dispose maps to free()", () => {

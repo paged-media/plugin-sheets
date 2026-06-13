@@ -56,6 +56,7 @@ function fakeEngine(): SheetEngine {
       rules: { h: [{ at: 18, from: 0, to: 100 }], v: [] },
       merges: [],
     }),
+    getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => ({
       viewport: { firstRow: 0, firstCol: 0, rows: 0, cols: 0, xOffsets: [0], yOffsets: [0] },

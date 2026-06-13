@@ -36,6 +36,7 @@ function statefulEngine() {
       rules: { h: [], v: [] },
       merges: [],
     }),
+    getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => ({
       viewport: {

@@ -370,6 +370,63 @@ fn sheet_js_get_range_lowered_caps_full_sheet() {
         .is_err());
 }
 
+// ── sheet.js.get_range_values (K-6 / S-14 clipboard copy) ───────────────────
+
+/// `get_range_values` returns a rectangular grid of FORMATTED display strings
+/// (the clipboard copy interchange) — the SAME formatted value the lowering /
+/// grid show. A single cell, a reversed range, an empty cell as "", a junk
+/// range as a boundary error, and a formula cell as its computed display.
+#[test]
+fn sheet_grid_clipboard_copy_range_values() {
+    let s = SheetSession::load_xlsx(&fixture("02-formulas.xlsx")).expect("load 02");
+
+    // A1:B3 — a 3×2 grid of formatted display strings.
+    let grid = s.get_range_values(0, "A1:B3").expect("values A1:B3");
+    assert_eq!(grid.len(), 3, "3 rows");
+    assert!(grid.iter().all(|r| r.len() == 2), "rectangular, 2 cols each");
+    // The display strings ARE the formatted values (A1=2, A3=SUM=5, B3=concat).
+    assert_eq!(grid[0][0], "2", "A1");
+    assert_eq!(grid[2][0], "5", "A3 = SUM(A1:A2), the formula's DISPLAY");
+    assert_eq!(grid[2][1], "SumProduct", "B3 = B1&B2");
+
+    // A single cell "A1" (no ':') is a 1×1 grid.
+    let one = s.get_range_values(0, "A1").expect("values single A1");
+    assert_eq!(one, vec![vec!["2".to_string()]]);
+
+    // A reversed range reads the same window (endpoints normalized).
+    let rev = s.get_range_values(0, "B3:A1").expect("values reversed");
+    assert_eq!(rev, grid, "B3:A1 == A1:B3");
+
+    // An out-of-used-range cell reads "" (empty), still rectangular.
+    let with_empty = s.get_range_values(0, "A1:C3").expect("values A1:C3");
+    assert!(with_empty.iter().all(|r| r.len() == 3), "3 cols each");
+    assert_eq!(with_empty[0][2], "", "C1 empty");
+
+    // Junk endpoints / an OOB sheet are boundary errors.
+    assert!(s.get_range_values(0, "not-a-range").is_err());
+    assert!(s.get_range_values(5, "A1").is_err(), "OOB sheet");
+}
+
+/// The clipboard copy honors the SAME T0 cell cap as lowering: a full-sheet
+/// range is a boundary error (not a panic/allocation abort), and the session
+/// stays usable afterwards.
+#[test]
+fn sheet_grid_clipboard_copy_caps_full_sheet() {
+    let mut s = SheetSession::new();
+    let oversize = s.get_range_values(0, "A1:XFD1048576");
+    let err = oversize.expect_err("full-sheet range must be Err, not a panic");
+    assert!(
+        err.to_string().contains("T0 lowering cap"),
+        "message names the cap: {err}"
+    );
+    // The session remains usable after the rejection.
+    s.set_cell(0, 0, 0, "42").expect("set_cell works after rejection");
+    assert_eq!(
+        s.get_range_values(0, "A1").expect("A1 after rejection"),
+        vec![vec!["42".to_string()]]
+    );
+}
+
 /// FREEZE AMENDMENT (audit finding 2): `set_cell` with an out-of-range sheet id
 /// must be a boundary error and must NOT auto-create a phantom sheet (which
 /// would silently drop its data on save). The workbook stays 1 sheet, clean.

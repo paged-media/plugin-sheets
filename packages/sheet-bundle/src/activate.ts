@@ -157,6 +157,31 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => host.shell.openPanel(DATASETS_PANEL_ID),
   });
+  // K-6 / S-14 — COPY the selected range to the system clipboard as a
+  // tabular payload (+ a TSV text fallback). The engine owns the formatted
+  // values (getRangeValues); host.clipboard owns the OS clipboard. Degrades
+  // honestly when no range is selected / no clipboard backend is wired.
+  host.contribute.command({
+    id: "media.paged.sheet.command.copySelection",
+    title: "Copy selection",
+    category: "Sheet",
+    handler: async () => {
+      const r = await session.copySelection();
+      if (!r.ok) host.log.warn(`copySelection: ${r.message}`);
+    },
+  });
+  // K-6 / S-14 — PASTE the system clipboard into the grid at the selection
+  // anchor (tabular preferred, TSV fallback), each cell re-typed through the
+  // journaled editCell lane as one grouped undo step.
+  host.contribute.command({
+    id: "media.paged.sheet.command.pasteSelection",
+    title: "Paste",
+    category: "Sheet",
+    handler: async () => {
+      const r = await session.pasteAtSelection();
+      if (!r.ok) host.log.warn(`pasteAtSelection: ${r.message}`);
+    },
+  });
 
   // K-1 entry — double-click a lowered sheet frame to ENTER "sheet" mode:
   // the live in-frame grid renders (C-1 sceneLayer); Esc / exit clears it.

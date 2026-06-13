@@ -51,6 +51,8 @@ export {
   cellToString,
   columnLabel,
   usedRangeA1,
+  selectionRangeA1,
+  tsvToRows,
   type SessionState,
   type WorkbookSession,
 } from "./session";

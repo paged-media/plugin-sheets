@@ -212,6 +212,14 @@ export interface SheetEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  /** Read a range (`"A1:D9"` or `"A1"`) as a RECTANGULAR grid of formatted
+   *  DISPLAY strings — the K-6 / S-14 clipboard copy interchange. `out[r][c]`
+   *  is the number-formatted display of the cell at the range's row `r`, col
+   *  `c` (`""` for empty); a formula cell yields its computed display. All
+   *  formatting/normalization decided in Rust (the same value the lowering
+   *  and the grid show — spec §8.3). Junk endpoints / an OOB sheet THROW the
+   *  boundary error. */
+  getRangeValues(sheet: number, range: string): string[][];
   /** Paginate a range across the host frame chain's content boxes (Wave 2D
    *  / S-05). `frames` is the chain's content boxes (only height splits);
    *  returns one `Page` per filled frame — each a self-contained
@@ -306,6 +314,7 @@ export interface SheetWasmEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  get_range_values(sheet: number, range: string): string[][];
   paginate(
     sheet: number,
     range: string,
@@ -364,6 +373,7 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.replace_all(sheet, needle, replacement, opts),
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
+    getRangeValues: (sheet, range) => wasm.get_range_values(sheet, range),
     paginate: (sheet, range, frames, opts) =>
       wasm.paginate(sheet, range, frames, opts),
     getGridScene: (sheet, firstRow, firstCol, wPt, hPt, opts) =>

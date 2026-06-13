@@ -59,6 +59,7 @@ function makeFakeEngine(): SheetEngine {
     findAll: () => [],
     replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
+    getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => ({
       viewport: { firstRow: 0, firstCol: 0, rows: 0, cols: 0, xOffsets: [0], yOffsets: [0] },

@@ -45,6 +45,8 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.sortRange",
       "media.paged.sheet.command.findReplace",
       "media.paged.sheet.command.sheetFromDataset",
+      "media.paged.sheet.command.copySelection",
+      "media.paged.sheet.command.pasteSelection",
     ]);
   });
 
@@ -52,6 +54,12 @@ describe("sheet_plugin_manifest_valid", () => {
     expect(manifest.capabilities.document.read).toBe("broad");
     expect(manifest.capabilities.document.write).toBe("scoped");
     expect(manifest.capabilities.network).toBe(false);
+  });
+
+  it("declares the clipboard FULL grant (K-6 / S-14) — text + tabular for range copy/paste", () => {
+    // "full" authorizes BOTH halves of host.clipboard (the cell-grid
+    // interchange); "vector"/"none" would deny the tabular grid.
+    expect(manifest.capabilities.clipboard).toBe("full");
   });
 
   it("declares the data-provider CONSUMER capability (S-15) — consume, not publish", () => {

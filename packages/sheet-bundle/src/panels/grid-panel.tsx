@@ -505,6 +505,35 @@ export function makeGridPanel(
           >
             R{firstRow} C{firstCol}
           </span>
+          {/* K-6 / S-14 — copy the selected range / paste at the anchor.
+              Disabled until a cell is selected; the engine owns the values,
+              host.clipboard the OS clipboard. */}
+          <button
+            type="button"
+            data-grid-copy
+            disabled={!sel}
+            onClick={() => {
+              void session.copySelection().then((r) => {
+                if (!r.ok) host.log.warn(`copy: ${r.message}`);
+              });
+            }}
+            style={{ ...scrollBtn, marginLeft: "var(--space-2, 8px)" }}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            data-grid-paste
+            disabled={!sel}
+            onClick={() => {
+              void session.pasteAtSelection().then((r) => {
+                if (!r.ok) host.log.warn(`paste: ${r.message}`);
+              });
+            }}
+            style={scrollBtn}
+          >
+            Paste
+          </button>
         </div>
 
         {/* The grid surface: the engine-windowed SVG + the cell editor. */}

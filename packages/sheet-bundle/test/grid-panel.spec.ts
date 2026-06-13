@@ -93,6 +93,7 @@ function fakeEngine() {
       rules: { h: [], v: [] },
       merges: [],
     }),
+    getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => scene2x2(),
     setGridSelection(sheet, anchorRow, anchorCol, rows, cols) {

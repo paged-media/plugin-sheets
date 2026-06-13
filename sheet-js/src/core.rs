@@ -1031,6 +1031,61 @@ impl SheetSession {
         Ok(lower_range(model, sheet, cell_range, &view))
     }
 
+    /// Read a range (`"A1:D9"` or a single cell `"A1"`) as a RECTANGULAR grid
+    /// of formatted DISPLAY strings (K-6 / S-14 — the clipboard copy
+    /// interchange). `out[r][c]` is the number-formatted display of the cell
+    /// at the range's row `r`, col `c` (`""` for an empty cell), the SAME
+    /// string the page lowering and the grid view show (spec §8.3 — one
+    /// formatted-value path). Row-major, fully rectangular (every row has the
+    /// same column count); the range is normalized so a reversed endpoint
+    /// (`"D9:A1"`) reads the same window.
+    ///
+    /// Junk endpoints are a boundary error; an OOB sheet id is rejected
+    /// (finding-2 discipline); the materialized area is bounded by the SAME
+    /// T0 cell cap as single-frame lowering (the clipboard is a publishing
+    /// copy, not a million-cell export). Display-only: a formula cell yields
+    /// its computed display (a paste re-types the values, not the formulas —
+    /// the spreadsheet copy contract for cross-app interchange).
+    pub fn get_range_values(
+        &self,
+        sheet: u16,
+        range: &str,
+    ) -> Result<Vec<Vec<String>>, SessionError> {
+        let cell_range = parse_range(range)?;
+        self.validate_sheet(sheet)?;
+
+        // Normalize the endpoints (a reversed range reads the same window).
+        let (top, left, bottom, right) = (
+            cell_range.r0.min(cell_range.r1),
+            cell_range.c0.min(cell_range.c1),
+            cell_range.r0.max(cell_range.r1),
+            cell_range.c0.max(cell_range.c1),
+        );
+
+        // Cap the materialized area BEFORE reading (u64 math so a full-sheet
+        // range cannot overflow `rows * cols`) — the same guard as lowering.
+        let area = (bottom as u64 - top as u64 + 1) * (right as u64 - left as u64 + 1);
+        if area > T0_LOWER_CELL_CAP {
+            return Err(SessionError(format!(
+                "range exceeds the T0 lowering cap ({T0_LOWER_CELL_CAP} cells)"
+            )));
+        }
+
+        let model = self.engine.as_ref().expect("engine present").model();
+        let mut cache = FormatCache::default();
+        let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
+        let mut rows: Vec<Vec<String>> =
+            Vec::with_capacity((bottom - top + 1) as usize);
+        for r in top..=bottom {
+            let mut row = Vec::with_capacity((right - left + 1) as usize);
+            for c in left..=right {
+                row.push(cell_display(model, sheet, r, c, &mut cache, &ctx));
+            }
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+
     /// Paginate `range` of `sheet` across `frames` (the host frame chain's
     /// content boxes; Wave 2D, S-05). Threads a tall range into the ordered
     /// frame list — rows that do not fit flow to the next frame, headers can
