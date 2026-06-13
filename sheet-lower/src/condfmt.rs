@@ -115,6 +115,22 @@ pub struct ColorScale {
     pub stops: Vec<ScaleStop>,
 }
 
+/// A data-bar rule (`sheet-lower` mirror of `sheet_xlsx::DataBar`): the
+/// min/max domain endpoints + the bar fill colour. The bar lowers to a DRAWN
+/// RECT (the page-draw geometry lane, spec §8.2) — NOT a style fill — so it
+/// lives on its own `CfRuleKind::DataBar` variant, evaluated by
+/// [`databar_rect_fraction`] against the covering range's value domain.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DataBar {
+    /// The bar's domain min endpoint, or `None` (= derive the range min).
+    pub min: Option<f64>,
+    /// The bar's domain max endpoint, or `None` (= derive the range max).
+    pub max: Option<f64>,
+    /// The bar fill colour as `(r, g, b)` bytes (the document default blue
+    /// `#638EC6` when the XLSX rule omits the colour).
+    pub rgb: (u8, u8, u8),
+}
+
 /// The interpreted kind of one cf rule (the T2 lowering subset).
 #[derive(Clone, Debug, PartialEq)]
 pub enum CfRuleKind {
@@ -127,8 +143,11 @@ pub enum CfRuleKind {
     ExpressionUnsupported,
     /// A colour scale; matches paint an interpolated fill (not the dxf).
     ColorScale(ColorScale),
-    /// Preserve-only (data bar handled by the page draw track; icon set / other
-    /// rule kinds carry no override in T2).
+    /// A data bar — a proportional DRAWN RECT in the cell (the page-draw
+    /// geometry lane, spec §8.2). Lowered to a [`crate::DataBarRect`], NOT a
+    /// style override.
+    DataBar(DataBar),
+    /// Preserve-only (icon set / other rule kinds carry no override in T2).
     Preserved,
 }
 
@@ -234,7 +253,11 @@ pub fn override_for(
                         }
                     }
                 }
-                CfRuleKind::ExpressionUnsupported | CfRuleKind::Preserved => {}
+                // Data bars are GEOMETRY (the drawn-rect lane, `databar_for`),
+                // not a style override — they never paint a cell fill here.
+                CfRuleKind::DataBar(_)
+                | CfRuleKind::ExpressionUnsupported
+                | CfRuleKind::Preserved => {}
             }
         }
     }
@@ -258,6 +281,61 @@ pub fn override_for(
 /// than the current best (or there is no best yet).
 fn is_better(best: &Option<(i64, &VisualAttrs)>, priority: i64) -> bool {
     best.as_ref().is_none_or(|b| priority < b.0)
+}
+
+/// The data bar to DRAW at one cell, if any rule covering it is a data bar
+/// (spec §8.2 — the drawn-rect geometry lane, NOT a style fill). Returns the
+/// `(fill_fraction, rgb)` for the lowest-priority data bar covering the cell,
+/// where `fill_fraction ∈ [0, 1]` is the bar length as a share of the cell
+/// width — `(value - lo) / (hi - lo)`, clamped, computed against the data
+/// bar's domain endpoints (explicit `min`/`max`, else the covering range's
+/// numeric min/max via `domain`). `None` for a non-numeric cell, a cell no
+/// data bar covers, or a degenerate (zero-width / no-numeric) domain.
+///
+/// Distinct lane from [`override_for`]: data bars are GEOMETRY, so the lowering
+/// keeps the cell's style untouched and draws a rect on top. A cell under both
+/// a dxf rule and a data bar gets BOTH (the fill is the bar, the style is the
+/// dxf) — they do not compete (Excel layers a data bar over the cell fill).
+pub fn databar_for(
+    cf: &SheetCondFmt,
+    row: u32,
+    col: u32,
+    value: &CellValue,
+    domain: &mut DomainFn,
+) -> Option<(f64, (u8, u8, u8))> {
+    let v = match value {
+        CellValue::Number(n) => *n,
+        _ => return None,
+    };
+
+    let mut best: Option<(i64, &DataBar, CfRange)> = None;
+    for block in &cf.blocks {
+        if !block.contains(row, col) {
+            continue;
+        }
+        let covering = block
+            .ranges
+            .iter()
+            .copied()
+            .find(|&(r0, c0, r1, c1)| row >= r0 && row <= r1 && col >= c0 && col <= c1);
+        for rule in &block.rules {
+            if let (CfRuleKind::DataBar(db), Some(cov)) = (&rule.kind, covering) {
+                if best.as_ref().is_none_or(|b| rule.priority < b.0) {
+                    best = Some((rule.priority, db, cov));
+                }
+            }
+        }
+    }
+
+    let (_, db, cov) = best?;
+    let (dmin, dmax) = domain(cov)?;
+    let lo = db.min.unwrap_or(dmin);
+    let hi = db.max.unwrap_or(dmax);
+    if (hi - lo).abs() < f64::EPSILON {
+        return None; // degenerate domain — no bar (avoids div-by-zero)
+    }
+    let frac = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+    Some((frac, db.rgb))
 }
 
 /// Interpolate a 2-/3-colour scale at `value` over the covering range's domain.
@@ -584,6 +662,81 @@ mod tests {
         let mut domain = |_: (u32, u32, u32, u32)| Some((0.0, 10.0));
         let hit = override_for(&cf, 0, 0, &CellValue::Number(5.0), &mut domain).unwrap();
         assert_eq!(hit.fill_rgb.as_deref(), Some("#123456"));
+    }
+
+    #[test]
+    fn sheet_lower_condfmt_databar_geometry_fraction_over_domain() {
+        // A data bar over A1:A5 with derived (min/max) endpoints; the cell's
+        // fill fraction is (value - lo) / (hi - lo), clamped, over the domain.
+        let cf = SheetCondFmt {
+            blocks: vec![CfBlock {
+                ranges: vec![(0, 0, 4, 0)],
+                rules: vec![CfRule {
+                    kind: CfRuleKind::DataBar(DataBar {
+                        min: None,
+                        max: None,
+                        rgb: (0x63, 0x8E, 0xC6),
+                    }),
+                    priority: 1,
+                    dxf: VisualAttrs::default(),
+                }],
+            }],
+        };
+        let mut domain = |_: (u32, u32, u32, u32)| Some((0.0, 100.0));
+        // value 0 → 0%, 50 → 50%, 100 → 100% over [0,100].
+        let (f0, rgb) = databar_for(&cf, 0, 0, &CellValue::Number(0.0), &mut domain).unwrap();
+        assert!((f0 - 0.0).abs() < 1e-9);
+        assert_eq!(rgb, (0x63, 0x8E, 0xC6));
+        let (f50, _) = databar_for(&cf, 1, 0, &CellValue::Number(50.0), &mut domain).unwrap();
+        assert!((f50 - 0.5).abs() < 1e-9);
+        let (f100, _) = databar_for(&cf, 2, 0, &CellValue::Number(100.0), &mut domain).unwrap();
+        assert!((f100 - 1.0).abs() < 1e-9);
+        // A value outside the domain clamps into [0, 1].
+        let (over, _) = databar_for(&cf, 3, 0, &CellValue::Number(250.0), &mut domain).unwrap();
+        assert!((over - 1.0).abs() < 1e-9);
+        // Non-numeric / uncovered cells produce no bar.
+        assert!(databar_for(&cf, 0, 0, &CellValue::from("x"), &mut domain).is_none());
+        assert!(databar_for(&cf, 9, 9, &CellValue::Number(5.0), &mut domain).is_none());
+    }
+
+    #[test]
+    fn sheet_lower_condfmt_databar_geometry_explicit_endpoints_and_degenerate() {
+        // Explicit num endpoints win over the derived domain.
+        let cf = SheetCondFmt {
+            blocks: vec![CfBlock {
+                ranges: vec![(0, 0, 0, 0)],
+                rules: vec![CfRule {
+                    kind: CfRuleKind::DataBar(DataBar {
+                        min: Some(10.0),
+                        max: Some(20.0),
+                        rgb: (1, 2, 3),
+                    }),
+                    priority: 1,
+                    dxf: VisualAttrs::default(),
+                }],
+            }],
+        };
+        // The domain fn would say [0,1000], but explicit [10,20] is used: 15 → 0.5.
+        let mut domain = |_: (u32, u32, u32, u32)| Some((0.0, 1000.0));
+        let (f, _) = databar_for(&cf, 0, 0, &CellValue::Number(15.0), &mut domain).unwrap();
+        assert!((f - 0.5).abs() < 1e-9);
+
+        // A degenerate (zero-width) domain paints no bar (no div-by-zero).
+        let degen = SheetCondFmt {
+            blocks: vec![CfBlock {
+                ranges: vec![(0, 0, 0, 0)],
+                rules: vec![CfRule {
+                    kind: CfRuleKind::DataBar(DataBar {
+                        min: Some(5.0),
+                        max: Some(5.0),
+                        rgb: (0, 0, 0),
+                    }),
+                    priority: 1,
+                    dxf: VisualAttrs::default(),
+                }],
+            }],
+        };
+        assert!(databar_for(&degen, 0, 0, &CellValue::Number(5.0), &mut domain).is_none());
     }
 
     #[test]

@@ -5,14 +5,15 @@
 # (iconset) stay at the `preserved` floor.
 #
 # STATUS: M2 conditional-formatting track LANDED for the dxf-painting + scale +
-# preserve-floor subset. The cfRule parser, the value-comparison/colour-scale
-# evaluators, and the §8.3 document-style override lowering ship; the dxf table
-# parses from `<dxfs>`. The §8.3 principle holds: CF results lower as
-# constrained local overrides. STILL planned: the dataBar drawn-rect GEOMETRY
-# (the bar lowers on the page-draw track, not the style path — preserve floor
-# only for now); arbitrary `expression` predicates needing a formula evaluator
-# (DEFERRED — lowering is pure, no sheet-calc dep; only reducible
-# `cell <op> literal` forms lower).
+# dataBar-geometry + preserve-floor subset. The cfRule parser, the value-
+# comparison/colour-scale evaluators, the §8.3 document-style override lowering,
+# and the dataBar drawn-rect GEOMETRY (the page-draw lane — a proportional rect
+# per cell, lowered to paged.draw insertPath, NOT a style fill) all ship; the
+# dxf table parses from `<dxfs>`. The §8.3 principle holds: CF style results
+# lower as constrained local overrides. STILL the honest floor: iconSet stays
+# preserve-only (no icon-glyph asset pipeline); arbitrary `expression`
+# predicates needing a formula evaluator are DEFERRED (lowering is pure, no
+# sheet-calc dep; only reducible `cell <op> literal` forms lower).
 
 - id: sheet.xlsx.conditional-formatting
   title: XLSX conditionalFormatting / cfRule parse + preserve (round-trip safe even for unsupported rule kinds)
@@ -54,13 +55,16 @@
       - "sheet-xlsx/src/parts/conditional_format.rs::sheet_lower_condfmt_colorscale_unresolved_stop_holds_alignment"
 
 - id: sheet.lower.condfmt.databar
-  title: "dataBar -> a drawn rule/rect (T2: the bar lowers to a drawn rectangle in frame-content coordinates)"
-  ruling: "T2 STATUS: dataBar is PARSED (min/max cfvo + bar colour) and round-trips; in the STYLE path it paints nothing (Preserved) — the proportional drawn-rect GEOMETRY belongs to the page-draw track (spec §8.2) and is NOT yet emitted. Honest floor: parsed + preserved, drawn-rect lowering still planned."
-  tier: preserved
-  status: planned
-  provenance: ["ECMA-376 §18.3.1.28 (dataBar)", "spec §8.2, §8.3, §10.4"]
+  title: "dataBar -> a drawn rect (T2: the bar lowers to a proportional drawn rectangle in frame-content coordinates, the page-draw geometry lane)"
+  ruling: "T2 LANDED: dataBar lowers to REAL GEOMETRY — a `sheet_lower::DataBarRect` (content-space pt, origin = range top-left) per numeric cell, proportional to the cell's value over the data bar's domain (explicit `num` cfvo endpoints, else the covering range's numeric min/max), inset from the cell edges; the bar colour resolves from the rule's `<color>` (the document-default blue #638EC6 when absent). It is NOT a style fill (it stays out of the IR styles table — the style path leaves the cell unpainted), so a cell can carry both a dxf style and a drawn bar (Excel layers them). The host lowers each rect to a `paged.draw` insertPath + a deduped document swatch (the same native-vector lane charts use), NOT another plugin (§2.1). T1 pagination does not thread cf geometry (it lowers via `lower_range`, no cf — matching how it does not thread cf style overrides). The cf XML still round-trips byte-identical via the worksheet verbatim capture (the parse is additive, read-only, never written back)."
+  tier: rendered
+  status: implemented
+  provenance: ["ECMA-376 §18.3.1.28 (dataBar)", "spec §8.2 (page-draw native geometry lane), §10.4 (rendered tier)"]
   tests:
-    rust: ["sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_databar"]
+    rust:
+      - "sheet-conformance/tests/condfmt.rs::sheet_lower_condfmt_databar"
+      - "sheet-lower/src/condfmt.rs::sheet_lower_condfmt_databar_geometry"
+    vitest: ["packages/sheet-host-model/test/lower-to-mutations.spec.ts"]
 
 - id: sheet.lower.condfmt.iconset
   title: "iconSet -> preserve-only (T2 floor: round-tripped, not interpreted/rendered)"

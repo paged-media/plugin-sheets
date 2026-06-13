@@ -32,13 +32,14 @@ import type {
   ElementId,
   Mutation,
   PropertyPath,
+  SwatchSpec,
   Value,
 } from "@paged-media/plugin-api";
 import type { PageId } from "@paged-media/plugin-api";
 
 import { BINDING_KEY, type Binding } from "./binding";
 import type { Bounds } from "./placement";
-import type { LoweredContent, LoweredStyle } from "./lowered";
+import type { DataBarRect, LoweredContent, LoweredStyle } from "./lowered";
 
 /** The page + bounds the frame is placed at (from placement.ts). */
 export interface LowerPlacement {
@@ -212,6 +213,113 @@ export function styleEmissions(content: LoweredContent): StyleEmission[] {
   return out;
 }
 
+// ── Conditional-formatting data bars (spec §8.2 page-draw geometry lane) ─────
+//
+// A data bar is a DRAWN RECT, lowered to a `paged.draw` insertPath — the same
+// native-vector lane charts use (chart.ts), NOT a style cell fill. The engine
+// (sheet-lower) already decided every rect's content-space geometry + colour;
+// this turns each into one insertPath (closed 4-corner ring) + a swatch + a
+// frameFillColor ref. The swatch/colorRef discipline mirrors chart.ts (the
+// host's frameFillColor takes a Color/<id> ref, not inline hex).
+
+/** The `$created` sentinel as a polygon id — an insertPath mints a polygon
+ *  node, addressed for its fill via this (the host resolves it to the
+ *  most-recent creating child of the batch). */
+const CREATED_DATABAR: ElementId = { kind: "polygon", id: "$created" };
+
+/** Normalise a `#RRGGBB`/`#RGB` (any case) to the uppercase 6-digit body
+ *  WITHOUT `#`, or null if malformed (a defensive guard — a bad colour degrades
+ *  to "no fill", never crashes). Shared shape with chart.ts's normaliser. */
+function normalizeBarHex(hex: string): string | null {
+  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return null;
+  let body = m[1];
+  if (body.length === 3) {
+    body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
+  }
+  return body.toUpperCase();
+}
+
+/** The deterministic document-swatch id for a data-bar colour (keyed by the
+ *  canonical hex so one colour reuses ONE swatch across bars + re-lowers). */
+function barSwatchId(canonHex: string): string {
+  return `Color/uPagedSheetDataBar${canonHex}`;
+}
+
+/** The distinct data-bar colours across the content, in first-appearance
+ *  order (deterministic), as canonical hex bodies. */
+function distinctBarColors(content: LoweredContent): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const bar of content.databars ?? []) {
+    const h = normalizeBarHex(bar.fill);
+    if (h == null || seen.has(h)) continue;
+    seen.add(h);
+    out.push(h);
+  }
+  return out;
+}
+
+/** The createSwatch ops for every distinct data-bar colour (RGB process
+ *  swatches at deterministic ids; not "creating children", so they leave the
+ *  `$created` sentinel untouched — emitted before the bar paths). */
+function barSwatchOps(content: LoweredContent): Mutation[] {
+  return distinctBarColors(content).map((canonHex) => {
+    const spec: SwatchSpec = {
+      selfId: barSwatchId(canonHex),
+      name: `paged.sheet data bar ${canonHex}`,
+      space: "RGB",
+      value: [
+        parseInt(canonHex.slice(0, 2), 16),
+        parseInt(canonHex.slice(2, 4), 16),
+        parseInt(canonHex.slice(4, 6), 16),
+      ],
+      model: "Process",
+    };
+    return { op: "createSwatch", args: { spec } };
+  });
+}
+
+/** The insertPath (closed rect ring) + frameFillColor ops for ONE data bar,
+ *  offset by the frame origin `[top, left]` into page-local pt. A zero-width
+ *  bar (value at domain min) is skipped (nothing to draw). */
+function dataBarOps(
+  bar: DataBarRect,
+  pageId: PageId,
+  top: number,
+  left: number,
+): Mutation[] {
+  if (bar.w <= 0) return [];
+  const x0 = left + bar.x;
+  const y0 = top + bar.y;
+  const x1 = x0 + bar.w;
+  const y1 = y0 + bar.h;
+  const corner = (p: [number, number]) => ({ anchor: p, left: p, right: p });
+  const anchors = (
+    [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+    ] as [number, number][]
+  ).map(corner);
+  const ops: Mutation[] = [
+    { op: "insertPath", args: { pageId, anchors, open: false } },
+  ];
+  const fillHex = normalizeBarHex(bar.fill);
+  if (fillHex != null) {
+    ops.push({
+      op: "setElementProperty",
+      args: {
+        elementId: CREATED_DATABAR,
+        path: "frameFillColor",
+        value: { type: "colorRef", value: barSwatchId(fillHex) },
+      },
+    });
+  }
+  return ops;
+}
+
 /** Translate lowered IR + a resolved placement + the frame binding into
  *  the phase-1 batch and the phase-2 text. Pure: no host import beyond
  *  wire TYPES. */
@@ -254,10 +362,22 @@ export function lowerToMutations(
     });
   }
 
-  // (3) The binding, written onto the batch-created frame via the
-  // `$created` sentinel. ONE undo removes the frame, its rules, AND the
-  // binding (the plugin-web single-undo property). The value is the
-  // JSON-stringified envelope, exactly as setPluginMetadata expects.
+  // (3) Conditional-formatting DATA BARS as drawn rects (spec §8.2 page-draw
+  // geometry lane). The engine already decided each bar's content-space rect +
+  // colour; we mint one swatch per distinct bar colour (first, so the per-path
+  // frameFillColor refs resolve — not creating children, so they leave the
+  // textFrame `$created` sentinel untouched), then one insertPath + fill ref
+  // per bar. Emitted BEFORE the binding so `setPluginMetadata` stays LAST.
+  ops.push(...barSwatchOps(content));
+  for (const bar of content.databars ?? []) {
+    ops.push(...dataBarOps(bar, pageId, top, left));
+  }
+
+  // (4) The binding, written onto the batch-created frame via the
+  // `$created` sentinel. ONE undo removes the frame, its rules, the data
+  // bars, AND the binding (the plugin-web single-undo property). The binding
+  // targets the textFrame KIND, so the interleaved line/polygon creates do
+  // not shift its `$created`. The value is the JSON-stringified envelope.
   ops.push({
     op: "setPluginMetadata",
     args: {

@@ -89,7 +89,9 @@ pub use style::{NoStyles, StyleResolver, VisualAttrs, VisualStyleSource};
 // differential format into the lowered style (no `sheet-calc` / `sheet-xlsx`
 // dep — the xlsx side converts its parsed cf model into these mirror types).
 pub mod condfmt;
-pub use condfmt::{CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, ScaleStop, SheetCondFmt};
+pub use condfmt::{
+    CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, ScaleStop, SheetCondFmt,
+};
 
 // ---- T0 geometry rulings (spec §8.2). ----
 
@@ -106,6 +108,12 @@ pub const DEFAULT_COL_CHARS: f64 = 8.43;
 /// The default row height in points (Excel's 15 pt for the default font).
 /// Model `row_heights` are already points, so this is a direct fallback.
 pub const DEFAULT_ROW_PT: f64 = 15.0;
+
+/// The inset (pt) of a conditional-formatting data bar from its cell edges
+/// (spec §8.2 page-draw lane) — a small margin so the drawn bar reads inside
+/// the cell, never touching the grid rules. Clamped to a quarter of the cell
+/// in `databar_rect` for tiny cells.
+pub const DATABAR_INSET_PT: f64 = 1.5;
 
 // ---- The IR (FROZEN wire shape; mirrored by lowered.ts). ----
 
@@ -126,6 +134,15 @@ pub struct LoweredContent {
     /// track populates real styles in Phase B. Additive — the TS mirror
     /// keeps it optional so existing fixtures stay valid.
     pub styles: Vec<LoweredStyle>,
+    /// Conditional-formatting DATA BARS as drawn rects (spec §8.2/§10.4, the
+    /// page-draw geometry lane). Each is one proportional rect inside a cell,
+    /// in content-space pt (origin = the range top-left), with a `#RRGGBB`
+    /// fill — the host lowers each to a `paged.draw` `insertPath`, exactly the
+    /// native-vector lane charts use. Empty unless a data-bar cf rule covers a
+    /// numeric cell in the range; the unstyled/styled lowering paths leave it
+    /// empty (data bars come only from [`lower_range_condfmt`]). Additive on
+    /// the wire (the TS mirror keeps it optional).
+    pub databars: Vec<DataBarRect>,
 }
 
 /// One column's geometry: its range-relative index and lowered width (pt).
@@ -207,6 +224,31 @@ impl LoweredStyle {
             border_left: false,
         }
     }
+}
+
+/// One conditional-formatting DATA BAR as a drawn rect (spec §8.2/§10.4 — the
+/// page-draw geometry lane). The rect is in content-space pt (origin = the
+/// range's top-left, the same frame-content system as [`Rule`]), sized so it
+/// fills `fill_fraction` of the cell's width, inset slightly from the cell
+/// edges (a publishing-clean bar that does not touch the grid rules). `fill`
+/// is the bar colour as `#RRGGBB`. The host lowers each to a `paged.draw`
+/// `insertPath` (the native-vector lane), NOT a style fill.
+#[derive(serde::Serialize, PartialEq, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DataBarRect {
+    /// The cell's range-relative `(row, col)` (for host hit-testing / debug).
+    pub row: u32,
+    pub col: u32,
+    /// The rect's content-space top-left + size (pt).
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    /// The bar's value share of the cell width, `[0, 1]` (carried so a host
+    /// can re-derive or label the bar; `w` already encodes it).
+    pub fill_fraction: f64,
+    /// The bar fill colour, `#RRGGBB`.
+    pub fill: String,
 }
 
 /// The horizontal/vertical rule sets (spec §8.2 grid rules).
@@ -440,6 +482,9 @@ pub fn lower_range_styled(
         // With `NoStyles` this is exactly `[LoweredStyle::default_key0()]`
         // (the frozen-`lower_range` behaviour); a real source populates it.
         styles: style_resolver.into_styles(),
+        // Data bars come only from the conditional-formatting lowering path
+        // (`lower_range_condfmt`); the styled path never draws them.
+        databars: Vec::new(),
     }
 }
 
@@ -506,6 +551,10 @@ pub fn lower_range_condfmt(
     let total_width = x;
 
     // ---- Rows: range-relative index + height (pt) + cells (cf-styled). ----
+    // Data bars (spec §8.2 page-draw geometry lane) accumulate as we walk: a
+    // numeric cell under a data-bar cf rule yields one proportional drawn rect
+    // in content-space pt (col_x/row_y give the cell box). NOT a style fill.
+    let mut databars: Vec<DataBarRect> = Vec::new();
     let mut rows = Vec::with_capacity((bottom - top + 1) as usize);
     let mut row_y: Vec<f64> = Vec::with_capacity((bottom - top + 2) as usize);
     let mut y = 0.0_f64;
@@ -530,6 +579,28 @@ pub fn lower_range_condfmt(
                         None => base,
                     };
                     let key = intern_effective(&mut styles, &mut dedup, effective);
+
+                    // Data-bar geometry (the page-draw lane): a separate pass
+                    // from the style override — a cell can carry both a dxf
+                    // style and a drawn bar (Excel layers them).
+                    if let Some((frac, rgb)) =
+                        condfmt::databar_for(cf, r, c, &cell.value, &mut |rng| {
+                            cf_domain(ws, rng, &mut domain_cache)
+                        })
+                    {
+                        let cell_x = col_x[(c - left) as usize];
+                        let cell_w = col_x[(c - left + 1) as usize] - cell_x;
+                        databars.push(databar_rect(
+                            r - top,
+                            c - left,
+                            cell_x,
+                            y,
+                            cell_w,
+                            height_pt,
+                            frac,
+                            rgb,
+                        ));
+                    }
                     (text, align, key)
                 }
                 None => (String::new(), Align::General, 0),
@@ -582,6 +653,38 @@ pub fn lower_range_condfmt(
         rules,
         merges,
         styles,
+        databars,
+    }
+}
+
+/// Build one [`DataBarRect`] for a cell at content-space `(cell_x, cell_y)`
+/// with size `(cell_w, cell_h)`. The bar fills `frac` of the cell WIDTH,
+/// inset by [`DATABAR_INSET_PT`] on every edge so it reads as a bar inside the
+/// cell (not touching the grid rules). A `frac` of 0 still emits a zero-width
+/// rect (deterministic; the host draws nothing visible). `rgb` → `#RRGGBB`.
+#[allow(clippy::too_many_arguments)]
+fn databar_rect(
+    row: u32,
+    col: u32,
+    cell_x: f64,
+    cell_y: f64,
+    cell_w: f64,
+    cell_h: f64,
+    frac: f64,
+    rgb: (u8, u8, u8),
+) -> DataBarRect {
+    let inset = DATABAR_INSET_PT.min(cell_w / 4.0).min(cell_h / 4.0);
+    let avail_w = (cell_w - 2.0 * inset).max(0.0);
+    let bar_w = avail_w * frac.clamp(0.0, 1.0);
+    DataBarRect {
+        row,
+        col,
+        x: cell_x + inset,
+        y: cell_y + inset,
+        w: bar_w,
+        h: (cell_h - 2.0 * inset).max(0.0),
+        fill_fraction: frac,
+        fill: format!("#{:02X}{:02X}{:02X}", rgb.0, rgb.1, rgb.2),
     }
 }
 

@@ -23,8 +23,9 @@
 //! - `cellIs` + reducible `expression` + `colorScale` LOWER to per-cell style
 //!   overrides (evaluated against the already-computed cell values — no formula
 //!   evaluator; `sheet-lower` has no `sheet-calc` dep);
-//! - `dataBar` lowers to a drawn rect on the page-draw track (NOT a style
-//!   override) → it is `Preserved` in the style path;
+//! - `dataBar` lowers to a DRAWN RECT (the page-draw geometry lane, spec §8.2 —
+//!   `LoweredContent.databars`) — NOT a style override; the style path leaves
+//!   the cell unfilled, the geometry carries one proportional rect per cell;
 //! - `iconSet` is preserve-only (round-trips, not rendered);
 //! - the cf XML round-trips byte-identical via the worksheet's verbatim capture.
 
@@ -300,18 +301,20 @@ fn sheet_lower_condfmt_lower_to_style_override() {
     assert_eq!(plain, styled, "empty cf == lower_range_styled");
 }
 
-// ── sheet.lower.condfmt.databar (preserve-on-style-path floor) ───────────────
+// ── sheet.lower.condfmt.databar (drawn-rect GEOMETRY lane) ───────────────────
 
-/// A dataBar rule lowers to a drawn rect on the page-draw track, NOT a style
-/// fill — so in the STYLE path it paints nothing (`Preserved`). Its cells keep
-/// their base style; the rule round-trips (asserted above). Documented honest
-/// floor: the drawn-rect geometry is the lower track's concern, the registry row
-/// stays at its honest tier.
+/// A dataBar rule lowers to a DRAWN RECT (the page-draw geometry lane, spec
+/// §8.2) — NOT a style fill. So column D cells keep their base style (no fill
+/// override), and the lowered content carries one `DataBarRect` per numeric D
+/// cell, proportional to the column's value domain. The rule still round-trips
+/// byte-identical (asserted in `sheet_xlsx_conditional_formatting`).
 #[test]
 fn sheet_lower_condfmt_databar() {
     let doc = open_fixture();
     let lc = lower_full(&doc);
-    // Column D under a dataBar — no style fill applied in the style path.
+
+    // Style path: column D under a dataBar applies NO style fill (it is drawn
+    // geometry, not a cell fill).
     for r in 0..5 {
         assert_eq!(
             fill_at(&lc, r, 3),
@@ -319,11 +322,46 @@ fn sheet_lower_condfmt_databar() {
             "D row {r}: dataBar paints no style fill (drawn-rect track)"
         );
     }
-    // The lowered cf carries it as Preserved (no style override).
+
+    // The lowered cf carries the data bar as a GEOMETRY rule (not Preserved):
+    // block 3 (column D) is the dataBar; it resolves to a `sheet_lower::DataBar`.
     let low = doc.lowered_conditional_formats(0);
+    assert!(
+        matches!(
+            low.blocks[3].rules[0].kind,
+            sheet_lower::CfRuleKind::DataBar(_)
+        ),
+        "the dataBar rule lowers to the geometry lane"
+    );
+
+    // The lowered content carries one drawn rect per numeric D cell (col index
+    // 3 in the A1:E5 range). D values are 10,40,70,20,90 over domain [10,90].
+    let d_bars: Vec<&sheet_lower::DataBarRect> =
+        lc.databars.iter().filter(|b| b.col == 3).collect();
+    assert_eq!(d_bars.len(), 5, "one data bar rect per D-column cell");
+
+    // The fractions are (value - 10) / (90 - 10): D1=10→0.0, D3=70→0.75,
+    // D5=90→1.0. Bars are sorted by the row-major lowering walk (row asc).
+    let frac_at = |row: u32| d_bars.iter().find(|b| b.row == row).unwrap().fill_fraction;
+    assert!((frac_at(0) - 0.0).abs() < 1e-9, "D1 value 10 → 0%");
+    assert!((frac_at(2) - 0.75).abs() < 1e-9, "D3 value 70 → 75%");
+    assert!((frac_at(4) - 1.0).abs() < 1e-9, "D5 value 90 → 100%");
+
+    // Each bar is the document-default blue #638EC6 (the fixture's bar colour)
+    // and is positioned in content-space (x/y inside the D column's cell box).
+    for b in &d_bars {
+        assert_eq!(b.fill, "#638EC6");
+        assert!(b.w >= 0.0 && b.h > 0.0);
+        // The bar's width never exceeds the cell's available width.
+        let cell_w = lc.cols[3].width_pt;
+        assert!(b.w <= cell_w, "bar width within the cell");
+    }
+
+    // Determinism: two runs are serde_json-byte-equal (databars included).
+    let again = lower_full(&doc);
     assert_eq!(
-        low.blocks[3].rules[0].kind,
-        sheet_lower::CfRuleKind::Preserved
+        serde_json::to_string(&lc).unwrap(),
+        serde_json::to_string(&again).unwrap()
     );
 }
 

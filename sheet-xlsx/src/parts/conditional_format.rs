@@ -257,11 +257,34 @@ impl CfRuleKind {
             },
             CfRuleKind::ExpressionUnsupported => sheet_lower::CfRuleKind::ExpressionUnsupported,
             CfRuleKind::ColorScale(cs) => sheet_lower::CfRuleKind::ColorScale(cs.to_lower()),
-            // dataBar (drawn-rect track), iconSet (preserve floor), and other
-            // rule kinds carry no style override in the lowering subset.
-            CfRuleKind::DataBar(_) | CfRuleKind::IconSet | CfRuleKind::Preserved => {
-                sheet_lower::CfRuleKind::Preserved
-            }
+            // dataBar lowers to the page-draw GEOMETRY lane (a drawn rect), not
+            // a style override (spec §8.2). Its min/max endpoints + bar colour
+            // cross into the `sheet-lower` mirror; the lowering draws the rect.
+            CfRuleKind::DataBar(db) => sheet_lower::CfRuleKind::DataBar(db.to_lower()),
+            // iconSet (preserve floor) + other rule kinds carry no override.
+            CfRuleKind::IconSet | CfRuleKind::Preserved => sheet_lower::CfRuleKind::Preserved,
+        }
+    }
+}
+
+impl DataBar {
+    /// Lower the data bar: resolve the min/max `<cfvo>` endpoints (an explicit
+    /// numeric `type="num" val=N` becomes an absolute endpoint; `min`/`max`/
+    /// `percent`/… stay `None` and derive from the covering range's domain in
+    /// the lowering) + the bar colour (`#RRGGBB` → `(r, g, b)` bytes; the
+    /// document-default blue `#638EC6` when the rule omits the colour).
+    fn to_lower(&self) -> sheet_lower::DataBar {
+        // A data bar carries its endpoints in `<cfvo>` order (min then max).
+        let endpoint = |i: usize| {
+            self.cfvos
+                .get(i)
+                .filter(|cfvo| cfvo.kind == "num")
+                .and_then(|cfvo| cfvo.val)
+        };
+        sheet_lower::DataBar {
+            min: endpoint(0),
+            max: endpoint(1),
+            rgb: parse_hex_rgb(self.color.as_deref().unwrap_or("#638EC6")),
         }
     }
 }
@@ -915,18 +938,53 @@ mod tests {
     }
 
     #[test]
-    fn to_lower_databar_iconset_become_preserved() {
+    fn to_lower_databar_geometry_iconset_preserved() {
+        // dataBar lowers to the GEOMETRY lane (a `sheet_lower::DataBar`);
+        // iconSet stays preserve-only.
         let xml = br#"<conditionalFormatting sqref="A1:A3">
-  <cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar></cfRule>
+  <cfRule type="dataBar" priority="1"><dataBar><cfvo type="num" val="0"/><cfvo type="num" val="100"/><color rgb="FF638EC6"/></dataBar></cfRule>
   <cfRule type="iconSet" priority="2"><iconSet iconSet="3Arrows"/></cfRule>
 </conditionalFormatting>"#;
         let sheet = SheetConditionalFormats {
             blocks: vec![parse_block(xml).unwrap().unwrap()],
         };
         let lowered = sheet.to_lower(&[]);
-        for r in &lowered.blocks[0].rules {
-            assert_eq!(r.kind, sheet_lower::CfRuleKind::Preserved);
-        }
+        // Both rules sit in ONE block (one <conditionalFormatting> element).
+        // The data bar carries its endpoints + colour into the geometry mirror.
+        assert_eq!(
+            lowered.blocks[0].rules[0].kind,
+            sheet_lower::CfRuleKind::DataBar(sheet_lower::DataBar {
+                min: Some(0.0),
+                max: Some(100.0),
+                rgb: (0x63, 0x8E, 0xC6),
+            })
+        );
+        // The iconSet stays preserve-only.
+        assert_eq!(
+            lowered.blocks[0].rules[1].kind,
+            sheet_lower::CfRuleKind::Preserved
+        );
+    }
+
+    #[test]
+    fn to_lower_databar_default_color_and_derived_endpoints() {
+        // A data bar with min/max cfvo (no explicit num) + no colour → the
+        // endpoints derive (None) and the colour is the document default blue.
+        let xml = br#"<conditionalFormatting sqref="A1:A3">
+  <cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/></dataBar></cfRule>
+</conditionalFormatting>"#;
+        let sheet = SheetConditionalFormats {
+            blocks: vec![parse_block(xml).unwrap().unwrap()],
+        };
+        let lowered = sheet.to_lower(&[]);
+        assert_eq!(
+            lowered.blocks[0].rules[0].kind,
+            sheet_lower::CfRuleKind::DataBar(sheet_lower::DataBar {
+                min: None,
+                max: None,
+                rgb: (0x63, 0x8E, 0xC6), // #638EC6 default
+            })
+        );
     }
 
     #[test]

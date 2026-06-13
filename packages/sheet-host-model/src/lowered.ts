@@ -96,6 +96,24 @@ export interface Merge {
   colSpan: number;
 }
 
+/** One conditional-formatting DATA BAR as a drawn rect (spec §8.2/§10.4 — the
+ *  page-draw geometry lane). The rect is in content-space pt (origin = the
+ *  region's top-left, the same system as `Rule`); `fillFraction` is the bar's
+ *  value share of the cell width (`w` already encodes it), `fill` is the bar
+ *  colour as `#RRGGBB`. The translator lowers each to a `paged.draw`
+ *  `insertPath` (the native-vector lane, NOT a style fill). Mirror of the Rust
+ *  `sheet_lower::DataBarRect`. */
+export interface DataBarRect {
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fillFraction: number;
+  fill: string;
+}
+
 /** The complete lowered region for one frame: column + row geometry,
  *  rules, and merges. The translator turns this into host mutations;
  *  it never computes any of it. `styles` (IR v2, M1 style-map track) is
@@ -108,6 +126,10 @@ export interface LoweredContent {
   rules: Rules;
   merges: Merge[];
   styles?: LoweredStyle[];
+  /** Conditional-formatting data bars as drawn rects (spec §8.2 page-draw
+   *  lane). ADDITIVE — optional so existing fixtures stay valid; the engine
+   *  emits it (empty unless a data-bar cf rule covers numeric cells). */
+  databars?: DataBarRect[];
 }
 
 /** One paginated frame (the TS MIRROR of the Rust `sheet_lower::Page`,

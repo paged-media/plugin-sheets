@@ -371,6 +371,12 @@ fn assemble_page_content(
         // Re-use the shared style table verbatim — style_keys on the copied
         // cells still index it correctly (every frame shows the same styles).
         styles: full.styles.clone(),
+        // Pagination lowers via `lower_range` (no conditional formatting), so
+        // there are no data bars to carry here (the cf page-draw lane is the
+        // single-frame `lower_range_condfmt` path — T1 pagination does not
+        // thread cf geometry, matching how it does not thread cf style
+        // overrides either).
+        databars: Vec::new(),
     }
 }
 
