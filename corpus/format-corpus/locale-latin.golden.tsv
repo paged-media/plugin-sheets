@@ -1,0 +1,68 @@
+# sheet.format.locale.* — Western-European Latin tier rendering goldens
+# (fr-FR / es-ES / it-IT). Spec §9; ECMA-376 §18.8.31. Driven through
+# FormatCtx::new(Date1900, Locale::{FrFr,EsEs,ItIt}) by
+# sheet-conformance/tests/locale.rs (sheet_format_locale_latin_tier). The
+# format CODE is locale-NEUTRAL (same `#,##0.00` / `mmmm` / `AM/PM` tokens as
+# the en/de goldens); only the RENDERED separators, month/day names, and AM/PM
+# strings differ. The en-US goldens (number/datetime.golden.tsv) and the de
+# golden MUST stay byte-identical — this file is an additive mirror, never a
+# regression of an existing locale.
+#
+# This file is a pure data-table expansion: each locale row exercises the same
+# table-read rendering path (number.rs / datetime.rs read separators + names
+# from sheet-format/src/locale.rs) the en/de rows already cover. No new
+# rendering code — only new LocaleData const rows.
+#
+# 1900 date system. serial 44197 = 2021-01-01 (a Friday); 44228 = 2021-02-01;
+# 44256 = 2021-03-01; 44312 = 2021-04-26 (a Monday). Columns:
+# locale<TAB>id<TAB>format_code<TAB>value<TAB>expected.
+#
+# ---- fr-FR: "," decimal, " " (space) group, "/" date sep ----
+fr	fr-fixed2	0.00	1.5	1,50
+fr	fr-fixed2-int	0.00	1	1,00
+fr	fr-group	#,##0	1234	1 234
+fr	fr-group-millions	#,##0	1234567	1 234 567
+fr	fr-group-decimals	#,##0.00	1234.5	1 234,50
+fr	fr-neg	0.00	-1.5	-1,50
+fr	fr-percent	0.00%	0.1234	12,34%
+fr	fr-fullmonth-jan	mmmm	44197	janvier
+fr	fr-fullmonth-feb	mmmm	44228	février
+fr	fr-fullmonth-dec	mmmm	44531	décembre
+fr	fr-abbrmonth-jan	mmm	44197	janv.
+fr	fr-fullday-fri	dddd	44197	vendredi
+fr	fr-fullday-mon	dddd	44312	lundi
+fr	fr-abbrday-fri	ddd	44197	ven.
+fr	fr-ampm-pm	h:mm AM/PM	0.5	12:00 PM
+fr	fr-date-compound	dddd d mmmm yyyy	44197	vendredi 1 janvier 2021
+# ---- es-ES: "," decimal, "." group ----
+es	es-fixed2	0.00	1.5	1,50
+es	es-group	#,##0	1234	1.234
+es	es-group-millions	#,##0	1234567	1.234.567
+es	es-group-decimals	#,##0.00	1234.5	1.234,50
+es	es-neg	0.00	-1.5	-1,50
+es	es-percent	0.00%	0.1234	12,34%
+es	es-fullmonth-jan	mmmm	44197	enero
+es	es-fullmonth-mar	mmmm	44256	marzo
+es	es-fullmonth-dec	mmmm	44531	diciembre
+es	es-abbrmonth-jan	mmm	44197	ene.
+es	es-fullday-fri	dddd	44197	viernes
+es	es-fullday-mon	dddd	44312	lunes
+es	es-abbrday-fri	ddd	44197	vie.
+es	es-ampm-am	h:mm AM/PM	0.25	6:00 AM
+es	es-date-compound	dddd d mmmm yyyy	44197	viernes 1 enero 2021
+# ---- it-IT: "," decimal, "." group ----
+it	it-fixed2	0.00	1.5	1,50
+it	it-group	#,##0	1234	1.234
+it	it-group-millions	#,##0	1234567	1.234.567
+it	it-group-decimals	#,##0.00	1234.5	1.234,50
+it	it-neg	0.00	-1.5	-1,50
+it	it-percent	0.00%	0.1234	12,34%
+it	it-fullmonth-jan	mmmm	44197	gennaio
+it	it-fullmonth-feb	mmmm	44228	febbraio
+it	it-fullmonth-dec	mmmm	44531	dicembre
+it	it-abbrmonth-jan	mmm	44197	gen
+it	it-fullday-fri	dddd	44197	venerdì
+it	it-fullday-mon	dddd	44312	lunedì
+it	it-abbrday-fri	ddd	44197	ven
+it	it-ampm-pm	h:mm AM/PM	0.5	12:00 PM
+it	it-date-compound	dddd d mmmm yyyy	44197	venerdì 1 gennaio 2021

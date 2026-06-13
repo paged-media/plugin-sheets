@@ -1,6 +1,8 @@
 # sheet.format.locale.* — locale/localization features for the number-format
-# engine (spec §9; decision D-8, v1 set = en/de minimum). Build-consumed half
-# of the two-registry split; the state-repo row is the status ledger.
+# engine (spec §9; decision D-8, v1 set = en/de minimum, extended to the
+# Western-European Latin tier fr/es/it as an additive data-table expansion).
+# Build-consumed half of the two-registry split; the state-repo row is the
+# status ledger.
 #
 # Phase A carved the seam: FormatCtx gained a `locale` field +
 # FormatCtx::new(date_system, locale), CalcSettings gained `locale`, the
@@ -107,3 +109,44 @@
   provenance: ["ECMA-376 (NUMBERVALUE)", "OpenFormula coercion", "spec §9, D-8"]
   tests:
     rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_number_parse"]
+
+- id: sheet.format.locale.latin-tier
+  title: "Western-European Latin locales (fr-FR / es-ES / it-IT) — additive LocaleData table rows + LCID mapping"
+  status: implemented
+  note: >
+    A pure DATA-TABLE expansion of the en/de machinery: fr-FR / es-ES / it-IT
+    each ship as one LocaleData const row (separators + Gregorian month/day
+    names + en AM/PM token + default dd/mm/yyyy short-date) plus a
+    locale_data/locale_from_lcid arm. NO rendering-code change — number.rs and
+    datetime.rs already read every separator/name from the table, so the new
+    locales render purely from their rows. Separators: fr ","/space group, es
+    ","/".", it ","/"." (decimal/group). LCID primary-language bits map
+    0x0c→fr, 0x0a→es, 0x10→it (so a [$-40c]#,##0 numFmt renders fr). They share
+    the de-DE AM/PM ruling (an explicit AM/PM token renders the literal en
+    "AM"/"PM"; the 24h convention lives in the AUTHORING). en-US AND de-DE
+    output stay BYTE-IDENTICAL — the locale-latin.golden.tsv corpus is an
+    additive mirror with per-locale en/de regression guards in the test.
+  provenance: ["ECMA-376 §18.8.31 (number/date codes)", "ECMA-376 §18.8.30 ([$-LCID])", "CLDR fr/es/it separators + month/day names", "spec §9, D-8 (extended)"]
+  tests:
+    rust: ["sheet-conformance/tests/locale.rs::sheet_format_locale_latin_tier"]
+    corpus: ["corpus/format-corpus/locale-latin.golden.tsv"]
+
+- id: sheet.format.locale.cjk-followup
+  title: "CJK locales (ja/zh) — scoped v2 follow-up, NOT a table row (era calendars + 午前/午後 AM/PM need oracle verification)"
+  status: planned
+  note: >
+    HONEST NON-GOAL FOR v1. The locale machinery is data-driven (LocaleData +
+    locale_data/locale_from_lcid), so the Latin tier (fr/es/it) dropped in as
+    pure table rows. CJK locales do NOT: Japanese ja-JP and Chinese zh-CN add
+    semantics a separator/name swap cannot express — the Japanese imperial ERA
+    calendar (Gengou: 令和/平成 via the `ggg`/`gg`/`g`/`e` tokens, ECMA-376
+    §18.8.31), CJK month/day glyph conventions (1月..12月, 日曜日..土曜日), and
+    a genuinely localized AM/PM (午前/午後) that does NOT mirror en the way
+    fr/es/it/de do. Each needs oracle (Excel) verification before it can be a
+    LocaleData row, and the era calendar needs serial→era derivation in
+    datetime.rs (NOT a table read). The file that would expand is
+    sheet-format/src/locale.rs (rows) PLUS sheet-format/src/datetime.rs (the
+    `g`/`e` era tokens) — the latter is real rendering code, which is why this
+    is a scoped v2 item, not a drive-in table row. Tracked here so the seam
+    stays honest.
+  provenance: ["ECMA-376 §18.8.31 (g/gg/ggg era + e tokens)", "Japanese imperial calendar (Gengou) public docs", "spec §9, D-8 scope"]

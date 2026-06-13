@@ -299,6 +299,99 @@ fn sheet_format_locale_number_parse() {
     );
 }
 
+/// `sheet.format.locale.latin-tier` — fr-FR / es-ES / it-IT render through the
+/// additive LocaleData rows; en-US AND de-DE stay byte-identical.
+#[test]
+fn sheet_format_locale_latin_tier() {
+    // 1) Drive the 5-column (locale<TAB>id<TAB>code<TAB>value<TAB>expected)
+    //    Latin-tier golden corpus through each locale's FormatCtx.
+    let path: PathBuf = repo_root().join("corpus/format-corpus/locale-latin.golden.tsv");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("latin corpus: cannot read {}: {e}", path.display()));
+    let mut rows = 0usize;
+    for (lineno, raw) in text.lines().enumerate() {
+        let line = raw.trim_end_matches(['\r', '\n']);
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert!(
+            cols.len() == 4 || cols.len() == 5,
+            "latin corpus {}:{} has {} columns, expected 4 or 5 \
+             (locale<TAB>id<TAB>code<TAB>value[<TAB>expected])",
+            path.display(),
+            lineno + 1,
+            cols.len()
+        );
+        let locale = match cols[0] {
+            "fr" => Locale::FrFr,
+            "es" => Locale::EsEs,
+            "it" => Locale::ItIt,
+            other => panic!("latin corpus {}:{}: unknown locale {other:?}", path.display(), lineno + 1),
+        };
+        let (id, code, value) = (cols[1], cols[2], cols[3]);
+        let expected = cols.get(4).copied().unwrap_or("");
+        let f = compile(code).unwrap_or_else(|e| panic!("[{id}] compile {code:?} failed: {e}"));
+        let got = fmt_value(code_value(value), &f, locale);
+        assert_eq!(
+            got, expected,
+            "[{id}] format_value({value:?}, {code:?}) under {:?} = {got:?}, want {expected:?}",
+            locale
+        );
+        rows += 1;
+    }
+    assert!(rows >= 30, "latin corpus must carry >= 30 rows (has {rows})");
+
+    // 2) Targeted separator asserts per locale.
+    assert_eq!(fmt("#,##0.00", 1234.5, Locale::FrFr), "1 234,50"); // fr: space group
+    assert_eq!(fmt("#,##0.00", 1234.5, Locale::EsEs), "1.234,50"); // es: "." group
+    assert_eq!(fmt("#,##0.00", 1234.5, Locale::ItIt), "1.234,50"); // it: "." group
+
+    // 3) Calendar-name asserts (serial 44197 = Fri 2021-01-01).
+    assert_eq!(fmt("mmmm", 44197.0, Locale::FrFr), "janvier");
+    assert_eq!(fmt("dddd", 44197.0, Locale::FrFr), "vendredi");
+    assert_eq!(fmt("mmmm", 44197.0, Locale::EsEs), "enero");
+    assert_eq!(fmt("dddd", 44197.0, Locale::EsEs), "viernes");
+    assert_eq!(fmt("mmmm", 44197.0, Locale::ItIt), "gennaio");
+    assert_eq!(fmt("dddd", 44197.0, Locale::ItIt), "venerdì");
+
+    // 4) The shared AM/PM ruling: an explicit token renders the literal en
+    //    markers in fr/es/it too (like de-DE), NOT a localized form.
+    assert_eq!(fmt("h:mm AM/PM", 0.5, Locale::FrFr), "12:00 PM");
+    assert_eq!(fmt("h:mm AM/PM", 0.25, Locale::EsEs), "6:00 AM");
+
+    // 5) LCID mapping picks up the new locales (per-code [$-LCID] override).
+    assert_eq!(locale_from_lcid(0x040c), Locale::FrFr); // fr-FR
+    assert_eq!(locale_from_lcid(0x0c0c), Locale::FrFr); // fr-CA (sublang masked)
+    assert_eq!(locale_from_lcid(0x040a), Locale::EsEs); // es-ES
+    assert_eq!(locale_from_lcid(0x0410), Locale::ItIt); // it-IT
+    let fr_code = compile("[$-40c]#,##0.00").unwrap();
+    let en_ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
+    assert_eq!(
+        format_value(&CellValue::Number(1234.5), &fr_code, &en_ctx),
+        "1 234,50",
+        "a [$-40c] token renders fr separators even under an en ctx"
+    );
+
+    // 6) REGRESSION GUARD: en-US AND de-DE output the SAME codes byte-identically
+    //    — the Latin tier is purely additive, never a regression of en/de.
+    assert_eq!(fmt("#,##0.00", 1234.5, Locale::EnUs), "1,234.50");
+    assert_eq!(fmt("#,##0.00", 1234.5, Locale::DeDe), "1.234,50");
+    assert_eq!(fmt("mmmm", 44197.0, Locale::EnUs), "January");
+    assert_eq!(fmt("mmmm", 44197.0, Locale::DeDe), "Januar");
+}
+
+/// Parse a corpus `value` column (number / `text:` / `bool:`) into a CellValue.
+fn code_value(v: &str) -> CellValue {
+    parse_value(v)
+}
+
+/// Format a CellValue under a locale (the date/text-aware companion to `fmt`).
+fn fmt_value(v: CellValue, f: &sheet_format::CompiledFormat, locale: Locale) -> String {
+    format_value(&v, f, &FormatCtx::new(DateSystem::Date1900, locale))
+}
+
 // ---- helpers ----
 
 fn cell() -> sheet_core::CellRef {

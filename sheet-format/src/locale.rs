@@ -50,6 +50,17 @@
 //! `locale-de.golden.tsv` corpus + `tests/locale.rs` exercise the de path
 //! end-to-end. A `[$<symbol>-<LCID>]` token in a format code carries a
 //! per-code locale ([`locale_from_lcid`]) that overrides the document locale.
+//!
+//! The Western-European Latin tier (**fr-FR / es-ES / it-IT**) is a pure
+//! data-table expansion of this same machinery: each is a [`LocaleData`] const
+//! row plus a [`locale_data`]/[`locale_from_lcid`] arm — no rendering-code
+//! change, since `number.rs`/`datetime.rs` already read every separator/name
+//! from the table. They share the de-DE AM/PM ruling (an explicit AM/PM token
+//! renders the literal en `"AM"`/`"PM"`; the 24-hour convention lives in the
+//! AUTHORING, not the engine). CJK locales (ja/zh — era calendars and
+//! `午前`/`午後` AM/PM) are a scoped v2 follow-up (registry
+//! `sheet.format.locale.cjk-followup`), NOT a table row here, because their
+//! calendar/AM-PM semantics need oracle verification beyond a separator swap.
 
 pub use sheet_core::Locale;
 
@@ -181,6 +192,134 @@ const DE_DE: LocaleData = LocaleData {
     short_date: "dd.mm.yyyy",
 };
 
+// ---- fr-FR (Western-European Latin tier; data-fill, table-read only). ----
+
+const FR_MONTHS_FULL: [&str; 12] = [
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+];
+// French abbreviations (Excel fr-FR / CLDR): three-letter lowercase forms.
+const FR_MONTHS_ABBR: [&str; 12] = [
+    "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.",
+    "déc.",
+];
+const FR_DAYS_FULL: [&str; 7] = [
+    "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+];
+const FR_DAYS_ABBR: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+
+const FR_FR: LocaleData = LocaleData {
+    decimal: ",",
+    // Excel fr-FR groups with a (regular) space, e.g. `1 234 567`.
+    group: " ",
+    list: ";",
+    months_full: &FR_MONTHS_FULL,
+    months_abbr: &FR_MONTHS_ABBR,
+    days_full: &FR_DAYS_FULL,
+    days_abbr: &FR_DAYS_ABBR,
+    // Shares the de-DE ruling: an explicit AM/PM token renders the literal en
+    // markers (the 24-hour convention lives in the authoring, not the engine).
+    am: "AM",
+    pm: "PM",
+    am_short: "A",
+    pm_short: "P",
+    short_date: "dd/mm/yyyy",
+};
+
+// ---- es-ES (Western-European Latin tier; data-fill, table-read only). ----
+
+const ES_MONTHS_FULL: [&str; 12] = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+];
+const ES_MONTHS_ABBR: [&str; 12] = [
+    "ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sep.", "oct.", "nov.", "dic.",
+];
+const ES_DAYS_FULL: [&str; 7] = [
+    "domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
+];
+const ES_DAYS_ABBR: [&str; 7] = ["dom.", "lun.", "mar.", "mié.", "jue.", "vie.", "sáb."];
+
+const ES_ES: LocaleData = LocaleData {
+    decimal: ",",
+    group: ".",
+    list: ";",
+    months_full: &ES_MONTHS_FULL,
+    months_abbr: &ES_MONTHS_ABBR,
+    days_full: &ES_DAYS_FULL,
+    days_abbr: &ES_DAYS_ABBR,
+    am: "AM",
+    pm: "PM",
+    am_short: "A",
+    pm_short: "P",
+    short_date: "dd/mm/yyyy",
+};
+
+// ---- it-IT (Western-European Latin tier; data-fill, table-read only). ----
+
+const IT_MONTHS_FULL: [&str; 12] = [
+    "gennaio",
+    "febbraio",
+    "marzo",
+    "aprile",
+    "maggio",
+    "giugno",
+    "luglio",
+    "agosto",
+    "settembre",
+    "ottobre",
+    "novembre",
+    "dicembre",
+];
+const IT_MONTHS_ABBR: [&str; 12] = [
+    "gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic",
+];
+const IT_DAYS_FULL: [&str; 7] = [
+    "domenica",
+    "lunedì",
+    "martedì",
+    "mercoledì",
+    "giovedì",
+    "venerdì",
+    "sabato",
+];
+const IT_DAYS_ABBR: [&str; 7] = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];
+
+const IT_IT: LocaleData = LocaleData {
+    decimal: ",",
+    group: ".",
+    list: ";",
+    months_full: &IT_MONTHS_FULL,
+    months_abbr: &IT_MONTHS_ABBR,
+    days_full: &IT_DAYS_FULL,
+    days_abbr: &IT_DAYS_ABBR,
+    am: "AM",
+    pm: "PM",
+    am_short: "A",
+    pm_short: "P",
+    short_date: "dd/mm/yyyy",
+};
+
 /// Resolve the [`LocaleData`] table for a [`Locale`]. `'static` — a const
 /// table lookup, no allocation. en-US is the default and the only entry
 /// exercised by every M0 golden (so en stays byte-identical).
@@ -188,23 +327,31 @@ pub fn locale_data(locale: Locale) -> &'static LocaleData {
     match locale {
         Locale::EnUs => &EN_US,
         Locale::DeDe => &DE_DE,
+        Locale::FrFr => &FR_FR,
+        Locale::EsEs => &ES_ES,
+        Locale::ItIt => &IT_IT,
     }
 }
 
 /// Map an OOXML LCID (locale id) to a [`Locale`] (spec §9; ECMA-376 §18.8.30,
 /// the `[$<symbol>-<LCID>]` currency/locale modifier). LCIDs are 16-bit; the
 /// LOW 10 bits are the *primary* language id (the rest are the sublanguage /
-/// sort id), so we mask to the primary language: `0x07` = German, `0x09` =
-/// English. Only the D-8 v1 set (en/de) is mapped; ANY other LCID resolves to
-/// [`Locale::EnUs`] (the default — keeps an unmodelled locale's separators/names
-/// the en defaults rather than failing).
+/// sort id), so we mask to the primary language: `0x07` = German,
+/// `0x09` = English, `0x0c` = French, `0x0a` = Spanish, `0x10` = Italian.
+/// Only the modelled set (en/de/fr/es/it) is mapped; ANY other LCID resolves
+/// to [`Locale::EnUs`] (the default — keeps an unmodelled locale's
+/// separators/names the en defaults rather than failing).
 ///
 /// Examples: `0x0407` (de-DE) and `0x0807` (de-CH) → [`Locale::DeDe`];
-/// `0x0409` (en-US), `0x0809` (en-GB), and the absent/zero LCID →
-/// [`Locale::EnUs`].
+/// `0x040c` (fr-FR) and `0x0c0c` (fr-CA) → [`Locale::FrFr`]; `0x040a` (es-ES)
+/// → [`Locale::EsEs`]; `0x0410` (it-IT) → [`Locale::ItIt`]; `0x0409` (en-US),
+/// `0x0809` (en-GB), and the absent/zero LCID → [`Locale::EnUs`].
 pub fn locale_from_lcid(lcid: u32) -> Locale {
     match lcid & 0x03ff {
         0x07 => Locale::DeDe,
+        0x0c => Locale::FrFr,
+        0x0a => Locale::EsEs,
+        0x10 => Locale::ItIt,
         _ => Locale::EnUs,
     }
 }
@@ -286,8 +433,15 @@ mod tests {
         assert_eq!(locale_from_lcid(0x0807), Locale::DeDe); // de-CH
         assert_eq!(locale_from_lcid(0x0409), Locale::EnUs); // en-US
         assert_eq!(locale_from_lcid(0x0809), Locale::EnUs); // en-GB
-                                                            // An unmodelled LCID (e.g. fr-FR 0x040c) falls back to en-US.
-        assert_eq!(locale_from_lcid(0x040c), Locale::EnUs);
+                                                            // The Western-European Latin tier maps by primary language too
+                                                            // (sublang masked: fr-CA 0x0c0c → fr).
+        assert_eq!(locale_from_lcid(0x040c), Locale::FrFr); // fr-FR
+        assert_eq!(locale_from_lcid(0x0c0c), Locale::FrFr); // fr-CA
+        assert_eq!(locale_from_lcid(0x040a), Locale::EsEs); // es-ES
+        assert_eq!(locale_from_lcid(0x0410), Locale::ItIt); // it-IT
+                                                            // A still-unmodelled LCID (e.g. ja-JP 0x0411 — the CJK v2 follow-up)
+                                                            // falls back to en-US.
+        assert_eq!(locale_from_lcid(0x0411), Locale::EnUs);
         // The bare/zero LCID is en-US (default).
         assert_eq!(locale_from_lcid(0), Locale::EnUs);
     }

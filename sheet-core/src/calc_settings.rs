@@ -35,10 +35,16 @@ pub struct CalcSettings {
 }
 
 /// Display locale for the number-format engine (spec §9; D-8 v1 set =
-/// en/de minimum). Affects the RENDERED separators + month/day/AM-PM
-/// names only — the format-code token grammar (`yyyy`/`mm`/`dd`, `0`,
-/// `#`, `.`) stays locale-neutral, and the formula dialect is always en.
-/// The locale-data table lives in `sheet-format/src/locale.rs`.
+/// en/de minimum, extended to the Western-European Latin set fr/es/it).
+/// Affects the RENDERED separators + month/day/AM-PM names only — the
+/// format-code token grammar (`yyyy`/`mm`/`dd`, `0`, `#`, `.`) stays
+/// locale-neutral, and the formula dialect is always en. The locale-data
+/// table lives in `sheet-format/src/locale.rs`.
+///
+/// SCOPE NOTE: this set is the Latin-script European tier (decimal/group
+/// swap + Gregorian month/day names + en AM/PM token). CJK locales (ja/zh,
+/// era calendars, `午前`/`午後` AM/PM) are a scoped v2 follow-up — see the
+/// `sheet.format.locale.cjk-followup` ruling in `registry/features/locale.yaml`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum Locale {
     /// English (United States): `.` decimal, `,` group, `January`..,
@@ -47,6 +53,15 @@ pub enum Locale {
     EnUs,
     /// German (Germany): `,` decimal, `.` group, `Januar`.., `Montag`..
     DeDe,
+    /// French (France): `,` decimal, ` ` (space) group, `janvier`..,
+    /// `dimanche`.., en `AM`/`PM` token.
+    FrFr,
+    /// Spanish (Spain): `,` decimal, `.` group, `enero`.., `domingo`..,
+    /// en `AM`/`PM` token.
+    EsEs,
+    /// Italian (Italy): `,` decimal, `.` group, `gennaio`.., `domenica`..,
+    /// en `AM`/`PM` token.
+    ItIt,
 }
 
 /// The serial-date epoch (ECMA-376 §18.17.4). `Date1900` carries the 1900
