@@ -1,0 +1,38 @@
+# sheet.xlsx.data-validation* (PRESERVE-ONLY; spec §1.1/§11/T∞)
+# — data validation is on the PERMANENT publishing-first exclusion list: it
+# round-trips preserved but is NEVER interpreted, evaluated, enforced, or
+# rendered as a runtime dropdown. This is a PRODUCT DECISION, not a deferral.
+#
+# SCOPE DECISION (recorded here + reported to the orchestrator): the base spec
+# (§1.1) forbids RENDERING the dropdown affordance ("none interpreted, rendered,
+# or editable"). So the honest scope is STRICTLY (a) PRESERVE byte-faithfully
+# through load→save (the launch property — the <dataValidations> is captured
+# verbatim, AfterSheetData, and re-emitted untouched even on a dirty re-encode),
+# and (b) parse a READ-ONLY INVENTORY so a panel can SHOW that the workbook
+# carries validations Paged preserves but does NOT enforce (preservation
+# transparency). We do NOT render a grid dropdown, do NOT block edits, do NOT
+# evaluate the constraints — that would cross the spec's "never rendered/
+# enforced" line. The parsed model is the foundation if the product ever
+# re-rules validation into scope.
+
+- id: sheet.xlsx.data-validation
+  title: XLSX dataValidations preserve-only — byte-identical round-trip, never interpreted/enforced
+  tier: preserved
+  status: implemented
+  ruling: "PRESERVE-ONLY (spec §1.1/§11/T∞, the permanent exclusion list). The <dataValidations> is an unmodeled <worksheet> child captured verbatim (AfterSheetData) — it round-trips BYTE-IDENTICAL whether or not the additive parse runs, even on a dirty re-encode. The list/whole/decimal/date/time/textLength/custom constraints are NEVER evaluated, enforced, or rendered as a runtime dropdown: loading does not block or alter cells, and an edit to a value outside a list constraint is accepted. This is a product decision, not a deferral."
+  provenance: ["ECMA-376 §18.3.1.32 (dataValidations), §18.3.1.33 (dataValidation)", "spec §1.1/§11 (publishing-first exclusion), §10.2 (preservation invariant)"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/data_validation.rs::sheet_xlsx_data_validation"
+      - "sheet-xlsx/src/parts/data_validation.rs::parse_list_validation"
+
+- id: sheet.xlsx.data-validation.inventory
+  title: Read-only data-validation inventory for the panel (preservation transparency, NOT interpretation)
+  tier: implemented
+  status: implemented
+  ruling: "READ-ONLY ADDITIVE parse: the captured <dataValidations> is parsed (kind, ranges, raw un-evaluated operand formulas) into a SheetDataValidations inventory, exposed via list_data_validations as {sheet,count,kinds}. This exists ONLY so a panel can SHOW that the workbook carries validations Paged preserves but does NOT enforce — strictly less than a runtime dropdown (the spec forbids rendering one). The parse never writes back (the bytes round-trip byte-identical); the operand formulas are kept raw + un-evaluated."
+  provenance: ["ECMA-376 §18.3.1.33 (dataValidation)", "spec §1.1 (preserve-not-render), §10.2"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/data_validation.rs::sheet_xlsx_data_validation_inventory"
+      - "sheet-conformance/tests/js_surface.rs::sheet_xlsx_data_validation_inventory_via_js_surface"

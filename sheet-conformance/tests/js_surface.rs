@@ -714,6 +714,37 @@ fn sheet_grid_freeze_render_via_js_surface() {
     assert!(plain_scene.freeze.is_none());
 }
 
+// ── sheet.xlsx.data-validation.inventory (JS surface) ───────────────────────
+
+/// The JS surface reports the data-validation INVENTORY (spec §1.1/§11/T∞ —
+/// PRESERVE-ONLY): `list_data_validations` returns count + kinds so a panel can
+/// SHOW that the workbook carries validations Paged preserves but does not
+/// enforce. The validations are NEVER enforced (loading does not block/alter
+/// cells); the XML round-trips byte-identical. A no-validation workbook reports
+/// an empty inventory.
+#[test]
+fn sheet_xlsx_data_validation_inventory_via_js_surface() {
+    let s = SheetSession::load_xlsx(&fixture("12-datavalidation.xlsx")).expect("load 12");
+    let inv = s.list_data_validations();
+    assert_eq!(inv.len(), 1, "one sheet carries validations");
+    assert_eq!(inv[0].sheet, 0);
+    assert_eq!(inv[0].count, 3);
+    assert_eq!(inv[0].kinds, vec!["list", "whole", "date"]);
+
+    // PRESERVE-ONLY: the validations are not enforced — B2 ("Yes") loads as a
+    // plain cell and stays editable to ANY value (no constraint blocks it).
+    assert_eq!(s.get_cell_display(0, 1, 1), "Yes");
+    let mut s2 = SheetSession::load_xlsx(&fixture("12-datavalidation.xlsx")).expect("reload 12");
+    // An edit to a value OUTSIDE the list constraint is accepted (not blocked).
+    s2.set_cell(0, 1, 1, "NotInList")
+        .expect("validation never blocks an edit (preserve-only)");
+    assert_eq!(s2.get_cell_display(0, 1, 1), "NotInList");
+
+    // A no-validation workbook reports an empty inventory.
+    let plain = SheetSession::load_xlsx(&fixture("01-minimal.xlsx")).expect("load 01");
+    assert!(plain.list_data_validations().is_empty());
+}
+
 /// `set_grid_selection` records a rectangle that the NEXT `get_grid_scene` for
 /// the same sheet folds into `GridScene.selection`; the wire JSON carries the
 /// camelCase `anchorRow`/`anchorCol`/`rows`/`cols` grid.ts expects. A selection

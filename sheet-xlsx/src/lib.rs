@@ -53,6 +53,7 @@ pub use parts::chart::{ParsedChart as XlsxChart, SheetResolver as ChartSheetReso
 pub use parts::conditional_format::{
     CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, SheetConditionalFormats,
 };
+pub use parts::data_validation::{DataValidation, DvKind, SheetDataValidations};
 pub use parts::external_link::{ExternalBook, ExternalLinks};
 pub use parts::freeze::FreezePanes;
 pub use parts::styles::{VisualStyle, VisualStyles};
@@ -132,6 +133,17 @@ pub struct XlsxDocument {
     /// derived state for the grid surface, never written back. A sheet with no
     /// frozen pane has no entry (the common case).
     pub freeze_panes: BTreeMap<SheetId, parts::freeze::FreezePanes>,
+
+    /// Data-validation rules per sheet — READ-ONLY INVENTORY, NEVER ENFORCED OR
+    /// RENDERED (spec §1.1/§11/T∞: data validation is on the permanent
+    /// exclusion list; it round-trips preserved but is "never interpreted,
+    /// rendered, or editable"). Derived from each worksheet's captured
+    /// `<dataValidations>` subtree (AfterSheetData), which STILL round-trips
+    /// byte-identical via the verbatim capture (preserve.rs). This exists ONLY
+    /// so a panel can SHOW that the workbook carries validations Paged preserves
+    /// but does not enforce (preservation transparency, not interpretation). A
+    /// sheet with no `<dataValidations>` has no entry.
+    pub data_validations: BTreeMap<SheetId, parts::data_validation::SheetDataValidations>,
 
     /// The OPC container (ordered parts + content types) for re-write.
     container: OpcContainer,
@@ -265,6 +277,10 @@ impl XlsxDocument {
             parts::conditional_format::SheetConditionalFormats,
         > = BTreeMap::new();
         let mut freeze_panes: BTreeMap<SheetId, parts::freeze::FreezePanes> = BTreeMap::new();
+        let mut data_validations: BTreeMap<
+            SheetId,
+            parts::data_validation::SheetDataValidations,
+        > = BTreeMap::new();
 
         for sref in &parsed_wb.sheets {
             let target = wb_rels.target_of(&sref.rid).ok_or_else(|| {
@@ -359,6 +375,18 @@ impl XlsxDocument {
                 parsed_ws.captured.before().map(|c| c.bytes.as_slice()),
             )? {
                 freeze_panes.insert(sid, fp);
+            }
+
+            // Data validations (spec §1.1/§11/T∞ — PRESERVE-ONLY, never
+            // enforced/rendered): the `<dataValidations>` sits in the AFTER-
+            // sheetData captures. ADDITIVE + READ-ONLY parse into the inventory
+            // (the captured bytes are untouched — the rules round-trip
+            // byte-identical). This is for preservation transparency only.
+            let dv = parts::data_validation::parse_all(
+                parsed_ws.captured.after().map(|c| c.bytes.as_slice()),
+            )?;
+            if !dv.is_empty() {
+                data_validations.insert(sid, dv);
             }
 
             worksheet_parts.push(ws_part.clone());
@@ -480,6 +508,7 @@ impl XlsxDocument {
             charts,
             external_links,
             freeze_panes,
+            data_validations,
             container,
             bindings,
         })
@@ -542,6 +571,19 @@ impl XlsxDocument {
     /// byte-identical); the grid surface renders the split.
     pub fn freeze_panes_of(&self, sheet: SheetId) -> parts::freeze::FreezePanes {
         self.freeze_panes.get(&sheet).copied().unwrap_or_default()
+    }
+
+    /// The data-validation INVENTORY of a sheet (spec §1.1/§11/T∞ — PRESERVE-
+    /// ONLY, never enforced or rendered). Read-only derived state from the
+    /// worksheet's captured `<dataValidations>` (the bytes round-trip byte-
+    /// identical); `None` for a sheet with no validations. Exposed so a panel
+    /// can SHOW that the workbook carries preserved-but-unenforced validations —
+    /// never to interpret or block edits.
+    pub fn data_validations_of(
+        &self,
+        sheet: SheetId,
+    ) -> Option<&parts::data_validation::SheetDataValidations> {
+        self.data_validations.get(&sheet)
     }
 
     /// The worksheet part name bound to a model sheet (test/consumer helper).

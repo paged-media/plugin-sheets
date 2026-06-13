@@ -184,6 +184,24 @@ pub struct FreezeInfo {
     pub cols: u32,
 }
 
+/// A worksheet's DATA-VALIDATION INVENTORY (spec §1.1/§11/T∞ — PRESERVE-ONLY).
+/// Data validation is on the permanent exclusion list: it round-trips
+/// preserved but is NEVER enforced, evaluated, or rendered as a runtime
+/// dropdown. This inventory exists ONLY so a panel can SHOW that the workbook
+/// carries validations Paged preserves but does not enforce (preservation
+/// transparency). `count` is the headline number; `kinds` summarizes which
+/// validation TYPES are present (deduped, in first-appearance order).
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataValidationInfo {
+    pub sheet: u16,
+    /// The number of `<dataValidation>` rules on the sheet.
+    pub count: u32,
+    /// The distinct validation kinds present (`"list"`, `"whole"`, `"date"`,
+    /// …) for the panel summary. Preserved-not-enforced — display only.
+    pub kinds: Vec<String>,
+}
+
 /// One chart in the workbook (M2 charts track, spec §8.4) for the panel's
 /// chart list. `index` is the position in the engine's parsed-chart vector (the
 /// handle [`SheetSession::get_chart_geometry`] takes); `hostSheet` is the model
@@ -1349,6 +1367,38 @@ impl SheetSession {
                     cols: fp.cols,
                 });
             }
+        }
+        out
+    }
+
+    /// Enumerate the worksheets that carry DATA VALIDATIONS (spec §1.1/§11/T∞ —
+    /// PRESERVE-ONLY), as `[{sheet,count,kinds}]`. Data validation is on the
+    /// permanent exclusion list: it round-trips preserved but is NEVER enforced,
+    /// evaluated, or rendered as a runtime dropdown. This inventory exists ONLY
+    /// so a panel can SHOW that the workbook carries validations Paged preserves
+    /// but does not enforce (preservation transparency, NOT interpretation). The
+    /// `<dataValidations>` XML round-trips byte-identical regardless (the parse
+    /// is read-only). Empty for a workbook with no validations.
+    pub fn list_data_validations(&self) -> Vec<DataValidationInfo> {
+        let sheet_count = self.engine.as_ref().expect("engine present").model().sheets.len();
+        let mut out = Vec::new();
+        for sid in 0..sheet_count as SheetId {
+            let Some(dv) = self.doc.data_validations_of(sid) else {
+                continue;
+            };
+            // Distinct kinds in first-appearance order (a small inventory).
+            let mut kinds: Vec<String> = Vec::new();
+            for rule in &dv.rules {
+                let tag = rule.kind.tag().to_string();
+                if !kinds.contains(&tag) {
+                    kinds.push(tag);
+                }
+            }
+            out.push(DataValidationInfo {
+                sheet: sid,
+                count: dv.len() as u32,
+                kinds,
+            });
         }
         out
     }

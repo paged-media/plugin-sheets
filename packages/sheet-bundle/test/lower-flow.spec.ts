@@ -69,6 +69,7 @@ function fakeEngine(): SheetEngine {
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 1, cols: 2 }],
     listCharts: () => [],
     listFreezePanes: () => [],
+    listDataValidations: () => [],
     listFunctions: () => [],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},

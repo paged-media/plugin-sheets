@@ -70,6 +70,18 @@ export interface FreezeInfo {
   cols: number;
 }
 
+/** One worksheet's DATA-VALIDATION inventory (spec §1.1/§11/T∞ — PRESERVE-
+ *  ONLY). Data validation round-trips preserved but is NEVER enforced,
+ *  evaluated, or rendered as a runtime dropdown; this inventory exists ONLY so
+ *  the panel can SHOW that the workbook carries validations Paged preserves but
+ *  does not enforce. `count` is the headline number; `kinds` the distinct
+ *  validation types present (display only). */
+export interface DataValidationInfo {
+  sheet: number;
+  count: number;
+  kinds: string[];
+}
+
 /** One frame's content box for pagination (the host chain link's content
  *  box; Wave 2D / S-05). Only height bounds the split; width rides along.
  *  Forwarded verbatim to wasm. */
@@ -278,6 +290,12 @@ export interface SheetEngine {
    *  derived state parsed from the workbook's `<sheetViews><pane>` on load
    *  (the view round-trips byte-identical); empty when none are frozen. */
   listFreezePanes(): FreezeInfo[];
+  /** Enumerate the worksheets carrying DATA VALIDATIONS (spec §1.1/§11/T∞ —
+   *  PRESERVE-ONLY). A read-only inventory (count + kinds) for preservation
+   *  transparency: the panel SHOWS that the workbook carries validations Paged
+   *  preserves but does NOT enforce — never a runtime dropdown. Empty when the
+   *  workbook has none. */
+  listDataValidations(): DataValidationInfo[];
   /** Enumerate the engine's registered IMPLEMENTED functions for the
    *  formula-bar autocomplete (S-04). The names come from the engine's
    *  registry table (constitution §7) — never a TS list. Workbook-
@@ -356,6 +374,7 @@ export interface SheetWasmEngine {
   list_sheets(): SheetInfo[];
   list_charts(): ChartInfo[];
   list_freeze_panes(): FreezeInfo[];
+  list_data_validations(): DataValidationInfo[];
   list_functions(): FunctionInfo[];
   get_chart_geometry(index: number, w_pt: number, h_pt: number): ChartGeometry;
   free(): void;
@@ -401,6 +420,7 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
     listSheets: () => wasm.list_sheets(),
     listCharts: () => wasm.list_charts(),
     listFreezePanes: () => wasm.list_freeze_panes(),
+    listDataValidations: () => wasm.list_data_validations(),
     listFunctions: () => wasm.list_functions(),
     getChartGeometry: (index, wPt, hPt) =>
       wasm.get_chart_geometry(index, wPt, hPt),

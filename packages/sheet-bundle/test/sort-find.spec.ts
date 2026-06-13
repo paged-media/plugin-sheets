@@ -104,6 +104,7 @@ function statefulEngine() {
     ],
     listCharts: () => [],
     listFreezePanes: () => [],
+    listDataValidations: () => [],
     listFunctions: () => [],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
