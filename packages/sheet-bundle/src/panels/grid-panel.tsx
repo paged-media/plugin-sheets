@@ -26,13 +26,18 @@ import {
 import type { BundleHost } from "@paged-media/plugin-api";
 import {
   DEFAULT_GRID_SVG_OPTIONS,
+  applyCompletion,
+  arityHint,
   cellEditorRect,
+  completionTokenAt,
   gridSceneToSvg,
   hitCell,
+  matchFunctions,
+  type FunctionEntry,
   type GridScene,
 } from "@paged-media/sheet-host-model";
 
-import type { WorkbookSession } from "../session";
+import { columnLabel, type WorkbookSession } from "../session";
 
 // ---------------------------------------------------------------- styles
 
@@ -61,6 +66,55 @@ const editorInput: CSSProperties = {
   padding: "0 3px",
   margin: 0,
   outline: "none",
+};
+
+const formulaBarRow: CSSProperties = {
+  display: "flex",
+  alignItems: "stretch",
+  gap: "var(--space-1, 4px)",
+  position: "relative",
+};
+
+const cellRefBadge: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 44,
+  padding: "0 6px",
+  font: "11px var(--font-mono, monospace)",
+  color: "var(--pg-muted-fg)",
+  background: "var(--pg-subtle, var(--pg-bg))",
+  border: "1px solid var(--pg-border)",
+  borderRadius: "var(--radius-sm, 4px)",
+};
+
+const formulaInput: CSSProperties = {
+  flex: 1,
+  boxSizing: "border-box",
+  font: "12px var(--font-mono, monospace)",
+  color: "var(--pg-fg)",
+  background: "var(--pg-bg)",
+  border: "1px solid var(--pg-border)",
+  borderRadius: "var(--radius-sm, 4px)",
+  padding: "4px 6px",
+  outline: "none",
+};
+
+const completionList: CSSProperties = {
+  position: "absolute",
+  top: "calc(100% + 2px)",
+  left: 48,
+  right: 0,
+  zIndex: 2,
+  listStyle: "none",
+  margin: 0,
+  padding: 0,
+  maxHeight: 180,
+  overflowY: "auto",
+  background: "var(--pg-bg)",
+  border: "1px solid var(--pg-border)",
+  borderRadius: "var(--radius-sm, 4px)",
+  boxShadow: "var(--shadow-md, 0 4px 12px rgba(0,0,0,0.18))",
 };
 
 // The viewport size the grid windows into (content-space pt). The interim
@@ -100,6 +154,128 @@ export function makeGridPanel(
     const editorRef = useRef<HTMLInputElement | null>(null);
 
     const st = session.state();
+
+    // ── Formula bar (S-04) — bound to the selected cell. The bar shows the
+    // cell's re-enterable INPUT (formula or literal) and commits through the
+    // journaled editCell lane. Autocomplete proposes engine-registry function
+    // names for the token under the caret (no spreadsheet semantics in TS —
+    // the names ARE the engine's, the matching is pure prefix). ──────────────
+    const sel = st.gridSelection;
+    const fbRow = sel?.anchorRow ?? null;
+    const fbCol = sel?.anchorCol ?? null;
+    // The bar tracks the selected cell unless the user is actively editing it
+    // (`fbDraft` non-null). Switching cells discards an uncommitted draft —
+    // the documented "adjust state while rendering" pattern: `draftCell`
+    // records which cell the open draft belongs to (set when editing starts);
+    // when the selection moves off it, the draft is cleared.
+    const [fbDraft, setFbDraft] = useState<string | null>(null);
+    const [draftCell, setDraftCell] = useState<string>("");
+    const fbCellKey = fbRow !== null && fbCol !== null ? `${fbRow}:${fbCol}` : "";
+    if (fbDraft !== null && fbCellKey !== draftCell) {
+      // Selection moved off the cell being edited — discard the draft.
+      setFbDraft(null);
+    }
+    /** Begin/continue a draft on the CURRENT selected cell. */
+    const startDraft = useCallback(
+      (value: string) => {
+        setFbDraft(value);
+        setDraftCell(fbCellKey);
+      },
+      [fbCellKey],
+    );
+    const fbValue =
+      fbDraft ??
+      (fbRow !== null && fbCol !== null ? session.cellInputAt(fbRow, fbCol) : "");
+
+    const fbInputRef = useRef<HTMLInputElement | null>(null);
+    const [fbCaret, setFbCaret] = useState(0);
+    const [activeCompletion, setActiveCompletion] = useState(0);
+
+    // Completions for the token under the caret (pure prefix match over the
+    // engine's registry table — empty when the token is empty / no engine).
+    const functions: readonly FunctionEntry[] = st.engine
+      ? session.functionList()
+      : [];
+    const token = completionTokenAt(fbValue, fbCaret);
+    const completions: FunctionEntry[] =
+      fbDraft !== null && token.text.length > 0
+        ? matchFunctions(functions, token.text)
+        : [];
+    // Keep the active index in range as the list shrinks/grows.
+    const activeIdx =
+      completions.length === 0
+        ? 0
+        : Math.min(activeCompletion, completions.length - 1);
+
+    const commitFormula = useCallback(
+      (value: string) => {
+        if (fbRow === null || fbCol === null || st.activeSheet === null) return;
+        // Journaled lane — one undoable step, dirty cut recomputed in Rust.
+        session.editCell(st.activeSheet, fbRow, fbCol, value);
+        setFbDraft(null);
+      },
+      [fbRow, fbCol, st.activeSheet],
+    );
+
+    const chooseCompletion = useCallback(
+      (entry: FunctionEntry) => {
+        const next = applyCompletion(fbValue, token, entry.name);
+        startDraft(next.value);
+        setFbCaret(next.caret);
+        // Restore focus + caret after the controlled re-render.
+        requestAnimationFrame(() => {
+          const el = fbInputRef.current;
+          if (el) {
+            el.focus();
+            el.setSelectionRange(next.caret, next.caret);
+          }
+        });
+      },
+      [fbValue, token, startDraft],
+    );
+
+    const onFormulaKey = useCallback(
+      (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (completions.length > 0) {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActiveCompletion((i) => (i + 1) % completions.length);
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActiveCompletion(
+              (i) => (i - 1 + completions.length) % completions.length,
+            );
+            return;
+          }
+          if (e.key === "Tab") {
+            e.preventDefault();
+            chooseCompletion(completions[activeIdx]);
+            return;
+          }
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          // Enter accepts an open completion if one is highlighted by Tab/arrow
+          // navigation; otherwise it commits the formula.
+          commitFormula(fbValue);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setFbDraft(null);
+        }
+      },
+      [completions, activeIdx, chooseCompletion, commitFormula, fbValue],
+    );
+
+    const onFormulaChange = useCallback(
+      (e: React.ChangeEvent<HTMLInputElement>) => {
+        startDraft(e.target.value);
+        setFbCaret(e.target.selectionStart ?? e.target.value.length);
+        setActiveCompletion(0);
+      },
+      [startDraft],
+    );
 
     // The engine-windowed scene for the current origin (null before import
     // or when windowing fails — the panel says so).
@@ -216,6 +392,74 @@ export function makeGridPanel(
         }}
       >
         <div style={kicker}>Grid</div>
+
+        {/* Formula bar (S-04) — bound to the selected cell; autocompletes
+            engine-registry function names. Disabled until a cell is selected. */}
+        <div data-sheet-formula-bar style={formulaBarRow}>
+          <span data-formula-cellref style={cellRefBadge}>
+            {fbRow !== null && fbCol !== null
+              ? `${columnLabel(fbCol)}${fbRow + 1}`
+              : "—"}
+          </span>
+          <input
+            ref={fbInputRef}
+            data-formula-input
+            type="text"
+            value={fbValue}
+            disabled={fbRow === null || fbCol === null}
+            placeholder={
+              fbRow === null ? "Select a cell to edit its formula" : "="
+            }
+            onChange={onFormulaChange}
+            onKeyDown={onFormulaKey}
+            onSelect={(e) =>
+              setFbCaret(e.currentTarget.selectionStart ?? fbValue.length)
+            }
+            style={{
+              ...formulaInput,
+              opacity: fbRow === null ? 0.6 : 1,
+            }}
+          />
+          {completions.length > 0 && (
+            <ul data-formula-completions style={completionList}>
+              {completions.map((entry, i) => (
+                <li key={entry.name}>
+                  <button
+                    type="button"
+                    data-formula-completion={entry.name}
+                    // mousedown (not click) so the choice lands before the
+                    // input's blur tears the list down.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      chooseCompletion(entry);
+                    }}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "var(--space-2, 8px)",
+                      width: "100%",
+                      textAlign: "left",
+                      font: "12px var(--font-mono, monospace)",
+                      color: "var(--pg-fg)",
+                      background:
+                        i === activeIdx
+                          ? "var(--pg-primary-subtle, var(--pg-subtle, transparent))"
+                          : "none",
+                      border: "none",
+                      padding: "4px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span>{entry.name}</span>
+                    <span style={{ color: "var(--pg-muted-fg)" }}>
+                      {arityHint(entry)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {/* Scroll controls — one row/col per step; the engine re-windows. */}
         <div style={{ display: "flex", gap: "var(--space-1, 4px)" }}>

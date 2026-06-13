@@ -207,4 +207,31 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
 
     e.free();
   });
+
+  // S-04 formula bar: the function name table flows through the REAL wasm
+  // door — the engine's registry codegen (sheet-core/build.rs FUNC_META) is
+  // the autocomplete's source (constitution §7), proven against the artifact.
+  it("lists the registry functions for the formula bar (S-04)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+
+    const fns = e.list_functions() as Array<{
+      name: string;
+      family: string;
+      minArgs: number;
+      maxArgs: number | null;
+    }>;
+    expect(fns.length).toBeGreaterThan(50);
+
+    const sum = fns.find((f) => f.name === "SUM");
+    expect(sum).toBeDefined();
+    expect(sum?.minArgs).toBe(1);
+    // Variadic — Rust `Option<u8>::None` crosses serde-wasm-bindgen as
+    // `undefined` (not `null`); arityHint treats both as "no upper bound".
+    expect(sum?.maxArgs == null).toBe(true);
+    // A different family rides along (not an agg-only slice).
+    expect(fns.some((f) => f.name === "VLOOKUP")).toBe(true);
+    e.free();
+  });
 });

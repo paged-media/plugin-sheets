@@ -715,3 +715,64 @@ fn sheet_js_grid_scene_rejects_oob_sheet() {
     );
     assert_eq!(s.list_sheets().len(), 1, "no phantom sheet created");
 }
+
+// ── sheet.js.list_functions (S-04 formula-bar autocomplete) ─────────────────
+
+/// `list_functions` is the engine's registry-generated function name table —
+/// the source for the formula bar's autocomplete (constitution §7: the bundle
+/// MUST source completion names from the ENGINE, never a TS list). It returns
+/// only IMPLEMENTED rows (offering an unimplemented function would mislead),
+/// each carrying its name/family/arity, and is independent of the loaded
+/// workbook (the registry is build-time fixed).
+#[test]
+fn sheet_js_list_functions_from_registry() {
+    let s = SheetSession::new();
+    let fns = s.list_functions();
+
+    // The registry is large — the table is non-trivial (the funcs.rs test
+    // asserts >=80 rows total; implemented is a subset but still substantial).
+    assert!(
+        fns.len() >= 50,
+        "expected a substantial implemented-function table, got {}",
+        fns.len()
+    );
+
+    // SUM is registered, implemented, variadic (min 1, no max).
+    let sum = fns
+        .iter()
+        .find(|f| f.name == "SUM")
+        .expect("SUM is a registered implemented function");
+    assert_eq!(sum.min_args, 1);
+    assert_eq!(sum.max_args, None, "SUM is variadic");
+    assert!(!sum.family.is_empty(), "SUM carries a family tag");
+
+    // Names are canonical UPPERCASE and unique (the registry enforces both;
+    // the completion UI relies on it for prefix matching + dedup).
+    let mut names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
+    for n in &names {
+        assert!(
+            n.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+            "function name {n:?} must be UPPERCASE"
+        );
+    }
+    let before = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(before, names.len(), "function names must be unique");
+
+    // VLOOKUP rides along (a different family) — proves it is not an agg-only
+    // slice.
+    assert!(
+        fns.iter().any(|f| f.name == "VLOOKUP"),
+        "VLOOKUP should be in the implemented table"
+    );
+
+    // The table is independent of the workbook — a fresh empty workbook and a
+    // loaded one return the same registry (it is build-time fixed).
+    let loaded = SheetSession::load_xlsx(&fixture("02-formulas.xlsx")).expect("load 02");
+    assert_eq!(
+        loaded.list_functions().len(),
+        fns.len(),
+        "the function registry is workbook-independent"
+    );
+}

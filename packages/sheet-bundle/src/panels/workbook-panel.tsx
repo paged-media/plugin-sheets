@@ -162,6 +162,27 @@ export function makeWorkbookPanel(
       );
     }, [needle, replacement, matchCase, entireCell, inFormulas]);
 
+    // New cell style from the selected cell (S-04). Thin glue over
+    // session.newCellStyleFromSelection — the engine owns the lowering, the
+    // platform owns the style mint + the cell read; this only routes the name.
+    const [styleName, setStyleName] = useState("Cell style");
+    const [styleMsg, setStyleMsg] = useState<string | null>(null);
+    const onNewCellStyle = useCallback(async () => {
+      const res = await session.newCellStyleFromSelection(
+        styleName.trim() || "Cell style",
+      );
+      if (!res.ok) {
+        setStyleMsg(res.message);
+        return;
+      }
+      const captured = `Captured ${res.capturedCount} propert${res.capturedCount === 1 ? "y" : "ies"}`;
+      setStyleMsg(
+        res.applied
+          ? `${captured}; style applied to the cell.`
+          : `${captured}; ${res.applyMessage ?? "style created (not applied)"}.`,
+      );
+    }, [styleName]);
+
     const sheets = st.engine ? st.engine.listSheets() : [];
 
     return (
@@ -461,6 +482,47 @@ export function makeWorkbookPanel(
                 ))}
               </ul>
             )}
+
+            {/* New cell style from the selected cell (S-04). Honest about the
+             *  residual: the style is minted + populated from the cell's
+             *  appearance; applying it BACK is wire-shape-only today (the
+             *  message reports whether the apply took). */}
+            <div style={kicker}>New cell style</div>
+            <input
+              data-sheet-cellstyle-name
+              type="text"
+              value={styleName}
+              onChange={(e) => setStyleName(e.target.value)}
+              placeholder="Style name"
+              style={input}
+            />
+            <div style={{ marginTop: "var(--space-1, 4px)" }}>
+              <button
+                type="button"
+                data-sheet-cellstyle-new
+                onClick={() => void onNewCellStyle()}
+                style={primaryButton}
+              >
+                New style from selected cell
+              </button>
+            </div>
+            {styleMsg && (
+              <p data-sheet-cellstyle-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                {styleMsg}
+              </p>
+            )}
+            <p
+              data-sheet-cellstyle-note
+              style={{
+                margin: "var(--space-1, 4px) 0 0",
+                font: "10px/1.5 var(--font-sans, sans-serif)",
+                color: "var(--pg-muted-fg)",
+              }}
+            >
+              Captures fill + borders from the selected cell over a lowered
+              table. Applying the style to cells is pending the platform Table
+              style surface.
+            </p>
           </>
         )}
 

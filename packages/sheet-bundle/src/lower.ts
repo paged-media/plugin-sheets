@@ -120,11 +120,29 @@ function frameIdOf(id: ElementId): string | null {
  *  spec §2.2 degradation (tab-aligned text + drawn rules). */
 export type LowerLane = "native-table" | "tab-text";
 
+/** What a successful native-table lowering produced — the frame, its
+ *  resolved story, and the minted table id (S-04: the cell-style consumer
+ *  addresses this table's cells). Reported via [`LowerLaneOptions.onLowered`]
+ *  so the return type (the frame id string) stays unchanged for existing
+ *  callers. */
+export interface LoweredTableInfo {
+  frameId: string;
+  storyId: string;
+  tableId: string;
+  sheet: number;
+  range: string;
+}
+
 /** Lane options for [`lowerSelectionToFrame`]. */
 export interface LowerLaneOptions {
   /** Force a lane; default `"native-table"`. The tab-text fallback also
    *  engages at runtime when the host rejects `insertTable`. */
   lane?: LowerLane;
+  /** Called when a NATIVE TABLE landed (not the tab-text fallback) with the
+   *  resolved frame/story/table ids — lets the session record the lowered
+   *  table so a later "new style from cell" can address its cells (S-04).
+   *  Never called on the fallback (no native table to address). */
+  onLowered?: (info: LoweredTableInfo) => void;
 }
 
 /**
@@ -262,6 +280,11 @@ export async function lowerSelectionToFrame(
     return frameId;
   }
   const tableId = tableOutcome.createdId.id as string;
+
+  // S-04 — report the resolved native table so the session can address its
+  // cells for "new style from cell". Only the native-table lane reports
+  // (the tab-text fallback has no table to address).
+  opts?.onLowered?.({ frameId, storyId, tableId, sheet, range });
 
   // Phase 3 — ONE batch: pour each cell's formatted text into its table
   // cell, then the decor (merges → setCellSpan; style fills/borders + grid

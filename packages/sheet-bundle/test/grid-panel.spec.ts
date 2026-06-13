@@ -100,6 +100,10 @@ function fakeEngine() {
     },
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 2, cols: 2 }],
     listCharts: () => [],
+    listFunctions: () => [
+      { name: "SUM", family: "math", minArgs: 1, maxArgs: null },
+      { name: "SUMIF", family: "math", minArgs: 2, maxArgs: 3 },
+    ],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
   };

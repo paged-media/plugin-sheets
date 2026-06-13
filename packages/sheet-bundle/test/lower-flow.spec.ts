@@ -67,6 +67,7 @@ function fakeEngine(): SheetEngine {
     setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 1, cols: 2 }],
     listCharts: () => [],
+    listFunctions: () => [],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
   };

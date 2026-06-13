@@ -53,12 +53,20 @@ export {
   columnOrder,
   pageTableMutations,
   tableCellOps,
+  tableCellPositionOf,
   tableContentBatch,
   tableDecorOps,
   tableInsertOp,
   type PageTableOps,
   type TableDecor,
 } from "./lower-to-table";
+
+export {
+  isCellStylePath,
+  planCellStyleFromEntries,
+  type CellStylePlan,
+  type ReadEntry,
+} from "./cell-style";
 
 export {
   DEFAULT_GRID_SVG_OPTIONS,
@@ -76,6 +84,15 @@ export {
   type GridSvgOptions,
   type GridViewport,
 } from "./grid";
+
+export {
+  applyCompletion,
+  arityHint,
+  completionTokenAt,
+  matchFunctions,
+  type CompletionToken,
+  type FunctionEntry,
+} from "./completions";
 
 export {
   chartGeometryToMutations,

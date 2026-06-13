@@ -145,6 +145,17 @@ export interface ChartInfo {
   seriesCount: number;
 }
 
+/** One registered function for the formula-bar autocomplete (S-04). The
+ *  list is the ENGINE's registry-generated name table (constitution §7 —
+ *  the completion names are the engine's truth, NEVER a hand-kept TS list).
+ *  `maxArgs` null = variadic. Only implemented functions appear. */
+export interface FunctionInfo {
+  name: string;
+  family: string;
+  minArgs: number;
+  maxArgs: number | null;
+}
+
 /** The stable engine contract the bundle codes against. Every method is
  *  a forward to the wasm surface; the facade only renames + shapes. */
 export interface SheetEngine {
@@ -242,6 +253,11 @@ export interface SheetEngine {
   /** Enumerate the workbook's charts (M2 charts track, spec §8.4). Parsed
    *  from the XLSX chart parts on load; empty for a chartless workbook. */
   listCharts(): ChartInfo[];
+  /** Enumerate the engine's registered IMPLEMENTED functions for the
+   *  formula-bar autocomplete (S-04). The names come from the engine's
+   *  registry table (constitution §7) — never a TS list. Workbook-
+   *  independent (the registry is build-time fixed). */
+  listFunctions(): FunctionInfo[];
   /** Resolve chart `index`'s series ranges against the live model and
    *  generate its geometry IR for a `wPt × hPt` content box (spec §8.4 —
    *  live to recalc). The IR feeds BOTH the page paged.draw lowering and the
@@ -313,6 +329,7 @@ export interface SheetWasmEngine {
   ): void;
   list_sheets(): SheetInfo[];
   list_charts(): ChartInfo[];
+  list_functions(): FunctionInfo[];
   get_chart_geometry(index: number, w_pt: number, h_pt: number): ChartGeometry;
   free(): void;
 }
@@ -355,6 +372,7 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.set_grid_selection(sheet, anchorRow, anchorCol, rows, cols),
     listSheets: () => wasm.list_sheets(),
     listCharts: () => wasm.list_charts(),
+    listFunctions: () => wasm.list_functions(),
     getChartGeometry: (index, wPt, hPt) =>
       wasm.get_chart_geometry(index, wPt, hPt),
     dispose: () => wasm.free(),

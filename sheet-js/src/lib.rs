@@ -278,6 +278,16 @@ mod wasm {
             to_js(&self.session.list_charts()).unwrap_or(JsValue::NULL)
         }
 
+        /// Enumerate the engine's registered IMPLEMENTED functions for the
+        /// formula-bar autocomplete (S-04). The name table is codegen'd from
+        /// the function registry (`registry/functions/*.yaml`) — the bundle's
+        /// completion list is the engine's truth (constitution §7), never a
+        /// hand-kept TS list. Returns `[{name,family,minArgs,maxArgs}]`
+        /// (`maxArgs` null = variadic).
+        pub fn list_functions(&self) -> JsValue {
+            to_js(&self.session.list_functions()).unwrap_or(JsValue::NULL)
+        }
+
         /// Resolve chart `chart_index`'s series ranges against the live model
         /// and generate its geometry IR for a `w_pt × h_pt` content box (the
         /// same IR the page paged.draw lowering AND the grid view consume).

@@ -187,6 +187,27 @@ pub struct ChartInfo {
     pub series_count: u32,
 }
 
+/// One registered function for the formula-bar autocomplete (S-04 formula
+/// bar). The list is the ENGINE's registry-generated name table (spec §7:
+/// the function table is codegen'd from `registry/functions/*.yaml`; the
+/// bundle MUST source completion names from the engine, never a TS list —
+/// the constitution's registry-driven rule). Only `implemented` functions
+/// are offered (an un-implemented row is uncallable, so completing to it
+/// would mislead). `minArgs`/`maxArgs` (`maxArgs` null = variadic) let the
+/// bundle show a thin arity hint next to the name.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionInfo {
+    /// The canonical UPPERCASE function name (the registry `name`).
+    pub name: String,
+    /// The function family tag (`"agg"`, `"text"`, …) for grouping.
+    pub family: String,
+    /// Minimum argument count.
+    pub min_args: u8,
+    /// Maximum argument count; `None` = variadic (no upper bound).
+    pub max_args: Option<u8>,
+}
+
 /// Workbook metadata for the panel (`dateSystem`/`unparsedFormulas`/`dirty`).
 #[derive(serde::Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1223,6 +1244,28 @@ impl SheetSession {
                 kind: chart_kind_tag(c.model.kind),
                 title: c.model.title.as_ref().map(|t| t.to_string()),
                 series_count: c.model.series.len() as u32,
+            })
+            .collect()
+    }
+
+    /// Enumerate the registered, IMPLEMENTED functions for the formula-bar
+    /// autocomplete (S-04 formula bar). Sourced DIRECTLY from the engine's
+    /// codegen'd registry name table (`sheet_core::funcs::FUNC_META`, emitted
+    /// by `sheet-core/build.rs` from `registry/functions/*.yaml`) — the
+    /// constitution's registry-driven rule made callable: the bundle's
+    /// completions are the engine's truth, never a hand-kept TS list. Only
+    /// `implemented` rows are returned (an unimplemented function is
+    /// uncallable, so offering it would mislead); the table is already sorted
+    /// by id, so the names come back in a stable order.
+    pub fn list_functions(&self) -> Vec<FunctionInfo> {
+        sheet_core::funcs::FUNC_META
+            .iter()
+            .filter(|m| m.implemented)
+            .map(|m| FunctionInfo {
+                name: m.name.to_string(),
+                family: m.family.to_string(),
+                min_args: m.min_args,
+                max_args: m.max_args,
             })
             .collect()
     }

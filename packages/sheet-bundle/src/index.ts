@@ -32,6 +32,7 @@ export {
   type FindMatch,
   type FindOptions,
   type FrameBox,
+  type FunctionInfo,
   type GridSceneOptions,
   type LowerOptions,
   type PaginateOptions,
@@ -58,6 +59,7 @@ export {
 // the explicit fallback), exported for the flow spec.
 export {
   lowerSelectionToFrame,
+  type LoweredTableInfo,
   type LowerLane,
   type LowerLaneOptions,
 } from "./lower";

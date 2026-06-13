@@ -93,3 +93,10 @@
   provenance: ["sheet-js/src/core.rs::replace_all", "Engine::enter parses before mutating"]
   tests:
     rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_replace_skip"]
+
+- id: sheet.edit.functions.list
+  title: "list_functions exposes the engine's registry-generated function name table (name/family/arity, implemented-only) — the formula-bar autocomplete's source of truth (constitution §7: completion names come from the ENGINE, never a TS list)"
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::list_functions", "sheet-core/build.rs FUNC_META codegen", "spec §7 registry-driven dispatch"]
+  tests:
+    rust: ["sheet-conformance/tests/js_surface.rs::sheet_js_list_functions"]

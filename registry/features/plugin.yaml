@@ -64,3 +64,24 @@
   provenance: ["sheet-js find_all/replace_all (sheet.edit.find.* / replace.*)"]
   tests:
     vitest: ["packages/sheet-bundle/test/sort-find.spec.ts"]
+
+- id: sheet.plugin.formula-bar
+  title: "Formula bar — grid-panel input bound to the selected cell: prefills the re-enterable INPUT (engine.getCellInput), commits through the journaled editCell lane, and autocompletes function names from the ENGINE registry (engine.listFunctions; pure prefix match in host-model, never a TS name list)"
+  status: implemented
+  provenance: ["sheet-js list_functions (sheet.edit.functions.list)", "constitution §7 registry-driven completion", "ADR-012 journaled editCell"]
+  tests:
+    vitest:
+      - "packages/sheet-host-model/test/completions.spec.ts"
+      - "packages/sheet-bundle/test/formula-bar.spec.ts"
+
+- id: sheet.plugin.cell-style.from-cell
+  title: "New cell style from selection — composes existing platform doors (B-19 elementProperties read + createCellStyle selfId-mint + setStyleProperty populate); the grid-coord→lowered-tableCell mapping is derived from the lowered IR (tableCellPositionOf over the last-lowered table). HONEST RESIDUAL: appliedCellStyle apply-back is wire-shape-only (UnsupportedProperty until the Table NodeId surface lands) — minting/populating land, apply reported true/false honestly"
+  status: implemented
+  provenance:
+    - "plugin-api createCellStyle / setStyleProperty / setElementProperty (appliedCellStyle)"
+    - "plugin-api host.document.elementProperties (B-19), tableCell ElementId addressing"
+    - "wire.d.ts CellStyleSummary: AppliedCellStyle wire-shape-only residual"
+  tests:
+    vitest:
+      - "packages/sheet-host-model/test/cell-style.spec.ts"
+      - "packages/sheet-bundle/test/cell-style.spec.ts"

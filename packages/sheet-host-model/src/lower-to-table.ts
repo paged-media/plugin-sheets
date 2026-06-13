@@ -41,6 +41,25 @@ export function columnOrder(content: LoweredContent): number[] {
   return content.cols.map((c) => c.index);
 }
 
+/** The 0-based table (row, col) POSITION of a model cell `(modelRow,
+ *  modelCol)` in a lowered region, or null when that cell is outside the
+ *  lowered range. This is the SAME mapping `tableCellOps`/`tableDecorOps`
+ *  use to address cells (model col → its index in `columnOrder`; model row →
+ *  its index in the lowered row order). It lets a consumer that knows a
+ *  model coordinate (e.g. the grid selection) address the corresponding
+ *  native `tableCell` in the frame this region lowered to (S-04). PURE. */
+export function tableCellPositionOf(
+  content: LoweredContent,
+  modelRow: number,
+  modelCol: number,
+): { row: number; col: number } | null {
+  const row = content.rows.findIndex((r) => r.index === modelRow);
+  if (row < 0) return null;
+  const col = columnOrder(content).indexOf(modelCol);
+  if (col < 0) return null;
+  return { row, col };
+}
+
 /** Phase-2 op: create the table in an already-resolved story. `rows`/`cols`
  *  are the lowered grid extent; `columnWidths` (pt) are caller-measured
  *  (font metrics, S-13), falling back to the IR's char-based widths;

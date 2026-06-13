@@ -120,6 +120,10 @@ function fakeWasm() {
         },
       ];
     },
+    list_functions() {
+      calls.push({ method: "list_functions", args: [] });
+      return [{ name: "SUM", family: "math", minArgs: 1, maxArgs: null }];
+    },
     get_chart_geometry(index, wPt, hPt) {
       calls.push({ method: "get_chart_geometry", args: [index, wPt, hPt] });
       return geometry;
@@ -166,6 +170,9 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(engine.listCharts()).toEqual([
       { index: 0, hostSheet: 0, kind: "column", title: "Q1", seriesCount: 1 },
     ]);
+    expect(engine.listFunctions()).toEqual([
+      { name: "SUM", family: "math", minArgs: 1, maxArgs: null },
+    ]);
     expect(engine.getChartGeometry(0, 360, 240)).toBe(geometry);
     engine.dispose();
 
@@ -180,6 +187,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "set_grid_selection",
       "list_sheets",
       "list_charts",
+      "list_functions",
       "get_chart_geometry",
       "free",
     ]);
@@ -194,7 +202,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     ]); // paginate
     expect(calls[6].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
     expect(calls[7].args).toEqual([0, 1, 2, 3, 4]);
-    expect(calls[10].args).toEqual([0, 360, 240]); // get_chart_geometry
+    expect(calls[11].args).toEqual([0, 360, 240]); // get_chart_geometry
   });
 
   it("dispose maps to free()", () => {

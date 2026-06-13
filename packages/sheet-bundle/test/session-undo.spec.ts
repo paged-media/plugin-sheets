@@ -54,6 +54,7 @@ function statefulEngine() {
     setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 9, cols: 9 }],
     listCharts: () => [],
+    listFunctions: () => [],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},
   };

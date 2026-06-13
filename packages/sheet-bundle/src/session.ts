@@ -8,12 +8,14 @@
 import type {
   BundleHost,
   DataProviderInfo,
+  ElementId,
   ProviderRecordSet,
   SceneLayerSurface,
 } from "@paged-media/plugin-api";
 import {
   gridSceneToSceneLayer,
   hitCell,
+  type FunctionEntry,
   type GridCell,
   type GridScene,
   type GridSelection,
@@ -29,8 +31,13 @@ import {
   type FindOptions,
   type SheetEngine,
 } from "./engine";
-import { lowerSelectionToFrame } from "./lower";
+import { lowerSelectionToFrame, type LoweredTableInfo } from "./lower";
 import { lowerChartToFrame } from "./lower-chart";
+import {
+  planCellStyleFromEntries,
+  tableCellPositionOf,
+  type ReadEntry,
+} from "@paged-media/sheet-host-model";
 
 /** S-08 persistence keys: the workbook bytes live in `host.blob` (binary),
  *  its display name in the KV `host.storage`. Per-plugin — the last
@@ -171,6 +178,17 @@ export interface WorkbookSession {
    *  only drives the write + signal. Returns false when there is no engine
    *  / active sheet or the write throws (never throws). */
   editCell(sheet: number, row: number, col: number, input: string): boolean;
+  /** S-04 formula bar — the re-enterable INPUT text of `(row, col)` on the
+   *  active sheet (`engine.getCellInput`: `"=…"` for a formula, the literal
+   *  for a value, `""` for empty/OOB). The formula bar prefills with this so
+   *  editing a formula cell shows its formula, not the computed display.
+   *  Returns "" when there is no engine / active sheet (never throws). */
+  cellInputAt(row: number, col: number): string;
+  /** S-04 formula bar — the engine's registry-generated function name table
+   *  for the autocomplete (constitution §7: the completion names are the
+   *  ENGINE's, never a TS list). Cached after the first call (the registry
+   *  is build-time fixed). Empty when there is no engine (never throws). */
+  functionList(): readonly FunctionEntry[];
   /** ADR-012 Tier 1 — undo one step of the in-session journal. An OPEN
    *  cell-edit buffer unwinds first (= cancel, no Operation); then each
    *  call re-enters the previous INPUT of the latest committed cell edit.
@@ -221,6 +239,34 @@ export interface WorkbookSession {
   /** Jump to a cell (a find hit): activate its sheet if needed and select
    *  it in the grid (the panel + any in-frame grid re-render). */
   goToCell(sheet: number, row: number, col: number): void;
+  /** S-04 — mint a NEW cell style named `name` from the selected cell's
+   *  current appearance, over the last-lowered native table. Composes from
+   *  existing platform doors (the RFI verdict): read the cell's properties
+   *  (B-19 `elementProperties`), `createCellStyle` (selfId-minted — the
+   *  null-createdId precedent), `setStyleProperty` to populate it, then
+   *  ATTEMPT `setElementProperty{appliedCellStyle}` to apply it back.
+   *
+   *  HONEST RESIDUAL (verified against the plugin-api contract): applying a
+   *  cell style via `appliedCellStyle` is wire-shape-only today
+   *  ("UnsupportedProperty until the Table NodeId surface lands",
+   *  wire.d.ts CellStyleSummary). So the style is minted + populated (these
+   *  land), and the apply is reported as `applied` true/false honestly.
+   *
+   *  Returns the outcome: the minted style id, the count of captured
+   *  properties, and whether the apply-back took. `ok:false` carries the
+   *  reason (no lowered table / no selection / mint rejected). Never throws. */
+  newCellStyleFromSelection(
+    name: string,
+  ): Promise<
+    | {
+        ok: true;
+        styleId: string;
+        capturedCount: number;
+        applied: boolean;
+        applyMessage: string | null;
+      }
+    | { ok: false; message: string }
+  >;
   /** Re-emit the loaded workbook as XLSX bytes for the exporter
    *  contribution (S-06). Preservation-first (`engine.saveXlsx` — the
    *  lazy-verbatim re-emit, §10.2). Returns the bytes + a suggested file
@@ -314,6 +360,14 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // C-1 / S-02 — the last frame this session lowered into (the target for
   // the in-frame grid) + the lazily-obtained scene-layer surface.
   let lastFrameId: string | null = null;
+
+  // S-04 — the last NATIVE TABLE this session lowered (frame/story/table ids
+  // + the sheet/range it projects). "New style from cell" addresses this
+  // table's cells; null until a range is lowered to a native table.
+  let lastLoweredTable: LoweredTableInfo | null = null;
+  // S-04 — a per-session counter so minted cell-style ids are unique within
+  // one session (paired with a timestamp so they are unique across sessions).
+  let nextCellStyleSeq = 1;
   let sceneSurface: SceneLayerSurface | null = null;
   const sceneChannel = (): SceneLayerSurface | null => {
     if (!host.supports("rendering.sceneLayer@1")) return null;
@@ -335,6 +389,11 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // re-renders with this text overlaid until commit (→ engine.setCell) or
   // cancel. `null` ⇒ not editing (the context is not "dirty").
   let cellEdit: { row: number; col: number; text: string } | null = null;
+
+  // S-04 formula bar — the engine's function name table, cached after the
+  // first read (the registry is build-time fixed; one wasm call suffices for
+  // the whole session). Null until first requested.
+  let functionCache: readonly FunctionEntry[] | null = null;
 
   // ADR-012 Tier 1 — the in-session undo JOURNAL: one entry per COMMITTED
   // cell edit (Tier 0 already coalesced keystrokes into the commit).
@@ -601,6 +660,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       state.engine.loadXlsx(bytes);
       state.fileName = name;
       state.gridSelection = null;
+      lastLoweredTable = null; // the prior table belonged to the old workbook
       editJournal = [];
       journalCursor = 0;
       const sheets = state.engine.listSheets();
@@ -664,6 +724,13 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         state.engine,
         state.activeSheet,
         state.selectedRange,
+        {
+          // S-04 — record the resolved native table so "new style from cell"
+          // can address its cells.
+          onLowered: (info) => {
+            lastLoweredTable = info;
+          },
+        },
       );
       if (id) lastFrameId = id; // remember the in-frame grid target (S-02)
       return id;
@@ -826,6 +893,33 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       return true;
     },
 
+    cellInputAt(row, col) {
+      // S-04 formula bar — re-enterable input (engine.getCellInput), so the
+      // bar shows a cell's FORMULA, not its computed display. Never throws.
+      if (!state.engine || state.activeSheet === null) return "";
+      try {
+        return state.engine.getCellInput(state.activeSheet, row, col) ?? "";
+      } catch (err) {
+        host.log.warn("cellInputAt: engine read failed", err);
+        return "";
+      }
+    },
+
+    functionList() {
+      // S-04 formula bar — the engine's registry function table (constitution
+      // §7), cached for the session. Never throws (empty on failure / no
+      // engine).
+      if (functionCache) return functionCache;
+      if (!state.engine) return [];
+      try {
+        functionCache = state.engine.listFunctions();
+        return functionCache;
+      } catch (err) {
+        host.log.warn("functionList: engine read failed", err);
+        return [];
+      }
+    },
+
     undoCellEdit() {
       // An open buffer unwinds first — Cmd-Z mid-typing = cancel the
       // in-flight edit (no Operation was committed for it).
@@ -971,6 +1065,133 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         defaultRangeForActive();
       }
       applyGridSelection(row, col, 1, 1);
+    },
+
+    async newCellStyleFromSelection(name: string) {
+      // S-04 — thin glue (§3): the engine owns the lowering/appearance, the
+      // platform owns style minting + the cell-property read. This routes
+      // the selected cell's model coords → the lowered table cell, reads its
+      // properties, and mints/populates/attempts-to-apply a cell style.
+      if (!lastLoweredTable) {
+        return {
+          ok: false as const,
+          message:
+            "no lowered table — lower a range to a frame first, then pick a cell",
+        };
+      }
+      const sel = state.gridSelection;
+      if (!sel || state.engine === null || state.activeSheet === null) {
+        return { ok: false as const, message: "select a cell first" };
+      }
+      // The lowered table belongs to ONE (sheet, range). A style-from-cell
+      // only makes sense over that table's own sheet.
+      if (state.activeSheet !== lastLoweredTable.sheet) {
+        return {
+          ok: false as const,
+          message:
+            "the selected cell is on a different sheet than the lowered table",
+        };
+      }
+
+      // Map the selection anchor (MODEL coords) → the lowered table cell
+      // (row/col POSITION) via the engine's lowered IR for the bound range —
+      // the SAME mapping the table pour uses (tableCellPositionOf). When the
+      // selection is outside the lowered range, fall back to the table's
+      // first cell (the honest derivable subset — explicit in the UI wording).
+      let content;
+      try {
+        content = state.engine.getRangeLowered(
+          lastLoweredTable.sheet,
+          lastLoweredTable.range,
+          { includeGridRules: true },
+        );
+      } catch (err) {
+        host.log.warn("newCellStyleFromSelection: lower read failed", err);
+        return { ok: false as const, message: "could not read the lowered range" };
+      }
+      const pos =
+        tableCellPositionOf(content, sel.anchorRow, sel.anchorCol) ??
+        // Outside the lowered range → first cell of the table (documented
+        // residual: the per-cell mapping is exact for in-range cells; this
+        // keeps the affordance honest rather than guessing).
+        { row: 0, col: 0 };
+      const fromFirstCell =
+        tableCellPositionOf(content, sel.anchorRow, sel.anchorCol) === null;
+
+      const cellEid: ElementId = {
+        kind: "tableCell",
+        id: {
+          story_id: lastLoweredTable.storyId,
+          table_id: lastLoweredTable.tableId,
+          row: pos.row,
+          col: pos.col,
+        },
+      };
+
+      // Read the cell's current properties (B-19). The engine may return a
+      // thin entry set for a table cell (the Table NodeId surface is still
+      // landing) — we carry whatever cell-appearance entries it gives.
+      let entries: ReadEntry[] = [];
+      try {
+        const props = await host.document.elementProperties(cellEid);
+        entries = (props?.entries ?? []) as ReadEntry[];
+      } catch (err) {
+        host.log.warn("newCellStyleFromSelection: elementProperties failed", err);
+      }
+
+      // Mint + populate the style (these DO land). The id is ours (selfId) —
+      // createCellStyle may return createdId:null for collection creates.
+      const styleId = `pgsheet.cellstyle.${Date.now().toString(36)}.${(
+        nextCellStyleSeq++
+      ).toString(36)}`;
+      const plan = planCellStyleFromEntries(styleId, name, entries);
+
+      try {
+        const created = await host.document.mutate(plan.createOp);
+        if (!created.applied) {
+          host.log.warn("newCellStyleFromSelection: createCellStyle rejected", created);
+          return { ok: false as const, message: "the host rejected createCellStyle" };
+        }
+        for (const op of plan.propertyOps) {
+          const r = await host.document.mutate(op);
+          if (!r.applied) {
+            host.log.warn("newCellStyleFromSelection: setStyleProperty rejected", r);
+          }
+        }
+      } catch (err) {
+        host.log.error("newCellStyleFromSelection: mint/populate threw", err);
+        return { ok: false as const, message: "minting the cell style failed" };
+      }
+
+      // Attempt the APPLY-BACK. wire.d.ts marks appliedCellStyle wire-shape-
+      // only (UnsupportedProperty until the Table NodeId surface lands), so a
+      // rejection here is EXPECTED — reported honestly, never faked.
+      let applied = false;
+      let applyMessage: string | null = null;
+      try {
+        const r = await host.document.mutate(plan.applyOp(cellEid));
+        applied = r.applied;
+        if (!r.applied) {
+          applyMessage =
+            "style created but not applied to the cell — appliedCellStyle is " +
+            "not yet supported on table cells (Table NodeId surface pending)";
+          host.log.info(`newCellStyleFromSelection: ${applyMessage}`);
+        }
+      } catch (err) {
+        applyMessage =
+          "style created but the apply-back threw (appliedCellStyle pending)";
+        host.log.info("newCellStyleFromSelection: apply-back threw", err);
+      }
+
+      emitter.emit();
+      return {
+        ok: true as const,
+        styleId,
+        capturedCount: plan.capturedPaths.length,
+        applied,
+        applyMessage:
+          applyMessage ?? (fromFirstCell ? "captured from the table's first cell" : null),
+      };
     },
 
     discoverDatasets() {
