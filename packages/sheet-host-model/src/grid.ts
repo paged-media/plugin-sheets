@@ -93,12 +93,31 @@ export interface GridCommentMarker {
   y: number;
 }
 
+/** One conditional-formatting DATA BAR drawn in a grid viewport (spec
+ *  §8.2/§10.4 — the page-draw geometry lane, mirrored on the grid). Its
+ *  absolute `(row, col)` + the viewport-local rect (`x`, `y`, `w`, `h`, pt): the
+ *  bar fills `fillFraction ∈ [0, 1]` of the cell width, inset from the cell
+ *  edges. `fill` is the bar colour as `#RRGGBB`. GEOMETRY the engine already
+ *  computed — the panel just draws a filled rect (the SAME bar the page lowering
+ *  emits, so it reads identically on both surfaces). Mirror of the Rust
+ *  `sheet_grid::GridDataBar`. */
+export interface GridDataBar {
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fillFraction: number;
+  fill: string;
+}
+
 /** The complete grid scene for one viewport (spec §8.1): the windowed
  *  geometry, the visible populated cells, the style table, the gridlines
  *  (viewport-local content-space rules, h/v), the optional selection
- *  rectangle, the optional frozen-pane split, and the cell-comment markers.
- *  The panel turns this into an SVG it overlays the sheet frame with; it never
- *  computes any of it. */
+ *  rectangle, the optional frozen-pane split, the cell-comment markers, and
+ *  the conditional-formatting data bars. The panel turns this into an SVG it
+ *  overlays the sheet frame with; it never computes any of it. */
 export interface GridScene {
   viewport: GridViewport;
   cells: GridCell[];
@@ -111,6 +130,10 @@ export interface GridScene {
   /** Cell-comment indicators for the visible commented cells (spec §10.2,
    *  preserve-first display). Absent/empty when none. */
   comments?: GridCommentMarker[];
+  /** Conditional-formatting data bars for the visible numeric cells a
+   *  `dataBar` rule covers (spec §8.2/§10.4 — drawn geometry, not a fill).
+   *  Absent/empty when none. */
+  databars?: GridDataBar[];
 }
 
 /** Tunable geometry for `gridSceneToSvg` — paint-time constants the panel
@@ -146,6 +169,10 @@ export interface GridSvgOptions {
   commentColor: string;
   /** Cell-comment indicator triangle leg length (pt). */
   commentSize: number;
+  /** Conditional-formatting data-bar opacity wash (0–1) — the bar is drawn
+   *  behind the cell value, so a light alpha keeps the text legible (spec
+   *  §8.2/§10.4). The bar's hue comes from the rule (`GridDataBar.fill`). */
+  dataBarOpacity: number;
 }
 
 /** Sober defaults; the panel overrides the colour fields from the token
@@ -165,6 +192,7 @@ export const DEFAULT_GRID_SVG_OPTIONS: GridSvgOptions = {
   freezeWidth: 1.25,
   commentColor: "#d93636",
   commentSize: 4,
+  dataBarOpacity: 0.85,
 };
 
 /** Total viewport width (pt) — the trailing x boundary (0 when empty). */
@@ -389,6 +417,32 @@ function commentMarkersSvg(scene: GridScene, o: GridSvgOptions): string {
     .join("");
 }
 
+/** Build the conditional-formatting data-bar `<rect>`s (spec §8.2/§10.4): one
+ *  filled rect per visible data bar, in viewport-local pt with the engine-given
+ *  geometry (already inset + proportional). Drawn UNDER the cell text (so the
+ *  value reads over the bar, like Excel) with a light opacity wash. "" when the
+ *  scene carries no data bars. Each bar's `(row, col)` is absolute; only those
+ *  inside the window draw (the engine already windowed them, but we re-check
+ *  defensively against a hand-built scene). PURE geometry — zero spreadsheet
+ *  semantics (the engine computed the proportion). */
+function dataBarsSvg(scene: GridScene, o: GridSvgOptions): string {
+  const bars = scene.databars ?? [];
+  if (bars.length === 0) return "";
+  const vp = scene.viewport;
+  const parts: string[] = [];
+  for (const b of bars) {
+    const ci = b.col - vp.firstCol;
+    const ri = b.row - vp.firstRow;
+    if (ci < 0 || ci >= vp.cols || ri < 0 || ri >= vp.rows) continue;
+    if (b.w <= 0 || b.h <= 0) continue; // a zero-fraction bar draws nothing
+    parts.push(
+      `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" ` +
+        `fill="${xmlEscape(b.fill)}" fill-opacity="${o.dataBarOpacity}"/>`,
+    );
+  }
+  return parts.join("");
+}
+
 /** Build the selection `<rect>` (fill wash + stroke), or "" when there is
  *  no visible selection. */
 function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
@@ -411,7 +465,8 @@ function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
  * frame at any zoom (vector-crisp by construction).
  *
  * Layer order (back to front): cell fills → gridlines → cell borders →
- * cell text → frozen-pane split → comment markers → selection chrome.
+ * data bars → cell text → frozen-pane split → comment markers → selection
+ * chrome. (Data bars sit behind the value text, like Excel.)
  */
 export function gridSceneToSvg(
   scene: GridScene,
@@ -425,6 +480,7 @@ export function gridSceneToSvg(
     fillRects(scene, vp) +
     gridLines(scene.gridlines, o) +
     cellBorders(scene, vp, o) +
+    dataBarsSvg(scene, o) +
     cellTexts(scene, vp, o) +
     freezeSplitSvg(scene, o) +
     commentMarkersSvg(scene, o) +
@@ -552,6 +608,23 @@ export function gridSceneToSceneLayer(
       ],
       paint: gridPaint,
       width: o.gridWidth,
+    });
+  }
+
+  // 2.5 — conditional-formatting data bars (spec §8.2/§10.4): one filled rect
+  //       per visible bar, drawn over fills + gridlines but UNDER the cell text
+  //       (so the value reads over the bar). The geometry is engine-computed
+  //       (inset + proportional); a light opacity keeps text legible.
+  for (const b of scene.databars ?? []) {
+    const ci = b.col - vp.firstCol;
+    const ri = b.row - vp.firstRow;
+    if (ci < 0 || ci >= vp.cols || ri < 0 || ri >= vp.rows) continue;
+    if (b.w <= 0 || b.h <= 0) continue;
+    const paint = cssColorToScenePaint(b.fill);
+    items.push({
+      kind: "fillPath",
+      path: rectPath(b.x, b.y, b.x + b.w, b.y + b.h),
+      paint: { ...paint, a: paint.a * o.dataBarOpacity },
     });
   }
 

@@ -44,11 +44,12 @@
 
 use sheet_core::{Align, Cell, CellValue, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
+use sheet_lower::condfmt::{self, SheetCondFmt};
 use sheet_lower::{LoweredStyle, RuleSet};
 
 // Re-use the page-lowering geometry rulings so a column is the same width on
 // both surfaces (spec §8.2 — character-unit columns, point rows).
-use sheet_lower::{CHAR_TO_PT, DEFAULT_COL_CHARS, DEFAULT_ROW_PT};
+use sheet_lower::{CHAR_TO_PT, DATABAR_INSET_PT, DEFAULT_COL_CHARS, DEFAULT_ROW_PT};
 
 // ---- The grid scene IR (FROZEN wire shape; serde camelCase). ----
 
@@ -78,6 +79,39 @@ pub struct GridScene {
     /// sheet's commented cells. Read-only display affordance — comments are
     /// never enforced, only shown.
     pub comments: Vec<GridCommentMarker>,
+    /// Conditional-formatting DATA BARS for the VISIBLE numeric cells covered by
+    /// a `dataBar` cf rule (spec §8.2/§10.4 — the same drawn-rect geometry the
+    /// page lowering emits, so a data bar reads identically on both surfaces).
+    /// Each is one proportional rect in viewport-local pt, sized to the cell's
+    /// value over the bar's domain. Empty unless the caller supplies the sheet's
+    /// conditional-format model (`grid_scene_with_cf`); a non-numeric cell, an
+    /// uncovered cell, or a degenerate domain yields no bar.
+    pub databars: Vec<GridDataBar>,
+}
+
+/// One conditional-formatting DATA BAR drawn in a grid viewport (spec §8.2 — the
+/// vector page-draw lane, mirrored on the grid surface). Its absolute
+/// `(row, col)` plus the viewport-local rect (`x`, `y`, `w`, `h`, pt): the bar
+/// fills `fill_fraction ∈ [0, 1]` of the cell width, inset from the cell edges by
+/// [`sheet_lower::DATABAR_INSET_PT`] (the same inset the page lowering uses), so
+/// the bar reads inside the cell without touching the gridlines. `fill` is the
+/// bar colour as `#RRGGBB`. The renderer draws a filled rect; a data bar is
+/// GEOMETRY, never a cell style fill, so a cell can show both its style and a bar.
+#[derive(serde::Serialize, Debug, PartialEq, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GridDataBar {
+    pub row: u32,
+    pub col: u32,
+    /// The rect's viewport-local top-left + size (pt).
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    /// The bar's value share of the cell width, `[0, 1]` (`w` already encodes it;
+    /// carried so a renderer can label/animate the bar).
+    pub fill_fraction: f64,
+    /// The bar fill colour, `#RRGGBB`.
+    pub fill: String,
 }
 
 /// One cell-comment indicator on a grid cell (preserve-first display). Its
@@ -250,6 +284,44 @@ pub fn grid_scene_with_comments(
     opts: &GridOptions,
     comment_cells: &[(u32, u32)],
 ) -> GridScene {
+    grid_scene_with_cf(
+        model,
+        sheet,
+        first_row,
+        first_col,
+        max_width_pt,
+        max_height_pt,
+        opts,
+        comment_cells,
+        &SheetCondFmt::default(),
+    )
+}
+
+/// As [`grid_scene_with_comments`], plus the sheet's conditional-format model
+/// (`cf`): every numeric cell visible in the window that a `dataBar` cf rule
+/// covers yields a [`GridDataBar`] — a proportional drawn rect in viewport-local
+/// pt, sized by the SAME `(value - lo) / (hi - lo)` clamp and inset geometry the
+/// page lowering uses ([`sheet_lower::lower_range_condfmt`]), so a data bar reads
+/// identically on the grid and the page (spec §8.2/§10.4 cross-surface parity).
+/// An empty `cf` reproduces [`grid_scene_with_comments`] exactly (no data bars).
+///
+/// Data bars are GEOMETRY, not a style fill, so this never touches the cell
+/// styles table — a cell can show its style AND a bar (Excel layers them). Only
+/// the data-bar facet of cf is rendered in-grid in this track; cellIs / colour-
+/// scale style overrides remain a page-lowering lane (the grid keeps key-0 styles
+/// in Phase A, matching how it does not yet render cf style overrides).
+#[allow(clippy::too_many_arguments)]
+pub fn grid_scene_with_cf(
+    model: &SheetModel,
+    sheet: SheetId,
+    first_row: u32,
+    first_col: u32,
+    max_width_pt: f64,
+    max_height_pt: f64,
+    opts: &GridOptions,
+    comment_cells: &[(u32, u32)],
+    cf: &SheetCondFmt,
+) -> GridScene {
     let ws = model.sheet(sheet);
 
     // ---- Window the columns: accumulate widths until max_width_pt. ----
@@ -374,6 +446,53 @@ pub fn grid_scene_with_comments(
         }
     }
 
+    // ---- Conditional-formatting DATA BARS (spec §8.2/§10.4 — the drawn-rect
+    // geometry lane, mirrored from the page lowering). For each VISIBLE numeric
+    // cell a `dataBar` rule covers, emit one proportional rect in viewport-local
+    // pt. The proportion + inset math is `sheet_lower::condfmt::databar_for` +
+    // the page lowering's inset rule, so a bar is identical on both surfaces.
+    // cf ranges + the value domain are in MODEL (absolute) coordinates. ----
+    let mut databars: Vec<GridDataBar> = Vec::new();
+    if !cf.is_empty() {
+        if let Some(ws) = ws {
+            // The covering range's numeric (min, max), memoized — the same lazy
+            // domain `lower_range_condfmt` uses (`cf_domain`), so the derived
+            // endpoints match the page surface exactly.
+            let mut domain_cache: std::collections::HashMap<
+                condfmt::CfRange,
+                Option<(f64, f64)>,
+            > = std::collections::HashMap::new();
+            for (&(r, c), cell) in ws.cells.range((first_row, first_col)..=(row_end, col_end)) {
+                if c < first_col || c > col_end {
+                    continue; // outside the column band for this row
+                }
+                if let Some((frac, rgb)) = condfmt::databar_for(cf, r, c, &cell.value, &mut |rng| {
+                    grid_cf_domain(Some(ws), rng, &mut domain_cache)
+                }) {
+                    let ci = (c - first_col) as usize;
+                    let ri = (r - first_row) as usize;
+                    let cell_x = x_offsets[ci];
+                    let cell_w = x_offsets[ci + 1] - cell_x;
+                    let cell_y = y_offsets[ri];
+                    let cell_h = y_offsets[ri + 1] - cell_y;
+                    // The SAME inset rule as the page lowering's `databar_rect`.
+                    let inset = DATABAR_INSET_PT.min(cell_w / 4.0).min(cell_h / 4.0);
+                    let avail_w = (cell_w - 2.0 * inset).max(0.0);
+                    databars.push(GridDataBar {
+                        row: r,
+                        col: c,
+                        x: cell_x + inset,
+                        y: cell_y + inset,
+                        w: avail_w * frac.clamp(0.0, 1.0),
+                        h: (cell_h - 2.0 * inset).max(0.0),
+                        fill_fraction: frac,
+                        fill: format!("#{:02X}{:02X}{:02X}", rgb.0, rgb.1, rgb.2),
+                    });
+                }
+            }
+        }
+    }
+
     // ---- Frozen-pane split (spec §8.1). Sum the frozen leading rows'/cols'
     // pt extents from the sheet origin (independent of the scroll origin — the
     // band is always the FIRST `freeze_rows`/`freeze_cols` of the sheet). ----
@@ -408,7 +527,43 @@ pub fn grid_scene_with_comments(
         selection: None,
         freeze,
         comments: comment_markers,
+        databars,
     }
+}
+
+/// The cf data-bar / colour-scale domain `(min, max)` of a covering range: the
+/// min/max of the NUMERIC cell values in that range (model coordinates),
+/// memoized. `None` when the range holds no numeric cells (a degenerate bar
+/// paints nothing). The grid analogue of the page lowering's `cf_domain`, so a
+/// derived (min/max) data-bar endpoint matches on both surfaces.
+fn grid_cf_domain(
+    ws: Option<&sheet_core::Worksheet>,
+    rng: condfmt::CfRange,
+    cache: &mut std::collections::HashMap<condfmt::CfRange, Option<(f64, f64)>>,
+) -> Option<(f64, f64)> {
+    if let Some(&hit) = cache.get(&rng) {
+        return hit;
+    }
+    let (r0, c0, r1, c1) = rng;
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    if let Some(ws) = ws {
+        for r in r0..=r1 {
+            for c in c0..=c1 {
+                if let Some(&CellValue::Number(n)) = ws.cell(r, c).map(|cell| &cell.value) {
+                    lo = lo.min(n);
+                    hi = hi.max(n);
+                }
+            }
+        }
+    }
+    let out = if lo.is_finite() && hi.is_finite() {
+        Some((lo, hi))
+    } else {
+        None
+    };
+    cache.insert(rng, out);
+    out
 }
 
 /// Column width in pt: explicit `col_widths` (xlsx chars × `CHAR_TO_PT`) or
@@ -753,5 +908,136 @@ mod tests {
         assert!(json.contains("\"styleKey\""));
         assert!(!json.contains("first_row"));
         assert!(!json.contains("x_offsets"));
+    }
+
+    /// A data-bar cf model over A1:A5 (derived [10,90] domain) yields one
+    /// `GridDataBar` per visible numeric cell, with `(value-lo)/(hi-lo)` clamped
+    /// fractions and the rule colour — the same proportion math the page lowering
+    /// uses. Geometry is viewport-local + inside the cell box.
+    fn databar_cf(range: (u32, u32, u32, u32), rgb: (u8, u8, u8)) -> SheetCondFmt {
+        SheetCondFmt {
+            blocks: vec![condfmt::CfBlock {
+                ranges: vec![range],
+                rules: vec![condfmt::CfRule {
+                    kind: condfmt::CfRuleKind::DataBar(condfmt::DataBar {
+                        min: None,
+                        max: None,
+                        rgb,
+                    }),
+                    priority: 1,
+                    dxf: sheet_lower::VisualAttrs::default(),
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn sheet_grid_scene_databars_proportional_per_visible_cell() {
+        // A1:A5 = 10,40,70,20,90 → domain [10,90]. Fractions: 0, 0.375, 0.75,
+        // 0.125, 1.0.
+        let (m, s) = model_with(&[
+            (0, 0, num(10.0)),
+            (1, 0, num(40.0)),
+            (2, 0, num(70.0)),
+            (3, 0, num(20.0)),
+            (4, 0, num(90.0)),
+        ]);
+        let cf = databar_cf((0, 0, 4, 0), (0x63, 0x8E, 0xC6));
+        let scene = grid_scene_with_cf(
+            &m,
+            s,
+            0,
+            0,
+            300.0,
+            200.0,
+            &GridOptions::default(),
+            &[],
+            &cf,
+        );
+        assert_eq!(scene.databars.len(), 5, "one bar per A-column numeric cell");
+        let frac = |row: u32| {
+            scene
+                .databars
+                .iter()
+                .find(|b| b.row == row && b.col == 0)
+                .unwrap()
+                .fill_fraction
+        };
+        assert!((frac(0) - 0.0).abs() < 1e-9);
+        assert!((frac(1) - 0.375).abs() < 1e-9);
+        assert!((frac(2) - 0.75).abs() < 1e-9);
+        assert!((frac(4) - 1.0).abs() < 1e-9);
+        // Geometry: inset, positive height, width never exceeds the cell, and the
+        // colour is the rule colour. Cell A3's bar starts at its row's top edge.
+        let cell_w = 44.2575_f64; // one default column
+        for b in &scene.databars {
+            assert_eq!(b.fill, "#638EC6");
+            assert!(b.h > 0.0);
+            assert!(b.w <= cell_w);
+            assert!(b.x >= 0.0 && b.y >= 0.0);
+        }
+        let b2 = scene.databars.iter().find(|b| b.row == 2).unwrap();
+        // A3 top edge = 2 default rows down = 30 pt; the bar is inset 1.5 pt.
+        assert!((b2.y - (30.0 + 1.5)).abs() < 1e-9);
+        // The bar width = 0.75 of the inset-available width (cell_w - 2*1.5).
+        assert!((b2.w - 0.75 * (cell_w - 3.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sheet_grid_scene_databars_windowed_and_numeric_only() {
+        // A far-below numeric cell (still in the cf range) must NOT bar — only
+        // visible cells materialize. A text cell never bars.
+        let (m, s) = model_with(&[
+            (0, 0, num(10.0)),
+            (1, 0, text("hi")), // non-numeric → no bar
+            (900_000, 0, num(90.0)), // far below the window → not visible
+        ]);
+        let cf = databar_cf((0, 0, 900_000, 0), (1, 2, 3));
+        let scene = grid_scene_with_cf(
+            &m,
+            s,
+            0,
+            0,
+            120.0,
+            45.0,
+            &GridOptions::default(),
+            &[],
+            &cf,
+        );
+        // Only the visible numeric A1 bars.
+        assert_eq!(scene.databars.len(), 1);
+        assert_eq!((scene.databars[0].row, scene.databars[0].col), (0, 0));
+    }
+
+    #[test]
+    fn sheet_grid_scene_no_databars_when_cf_empty() {
+        let (m, s) = model_with(&[(0, 0, num(5.0))]);
+        let scene = grid_scene(&m, s, 0, 0, 200.0, 90.0, &GridOptions::default());
+        assert!(scene.databars.is_empty());
+        // The wire shape always carries the (empty) databars array.
+        let json = serde_json::to_string(&scene).unwrap();
+        assert!(json.contains("\"databars\":[]"));
+    }
+
+    #[test]
+    fn sheet_grid_scene_databar_camelcase_wire_shape() {
+        let (m, s) = model_with(&[(0, 0, num(50.0)), (1, 0, num(100.0))]);
+        let cf = databar_cf((0, 0, 1, 0), (0x12, 0x34, 0x56));
+        let scene = grid_scene_with_cf(
+            &m,
+            s,
+            0,
+            0,
+            200.0,
+            90.0,
+            &GridOptions::default(),
+            &[],
+            &cf,
+        );
+        let json = serde_json::to_string(&scene).unwrap();
+        assert!(json.contains("\"databars\""));
+        assert!(json.contains("\"fillFraction\""));
+        assert!(json.contains("\"fill\":\"#123456\""));
+        assert!(!json.contains("fill_fraction"));
     }
 }

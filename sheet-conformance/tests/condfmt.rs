@@ -365,6 +365,76 @@ fn sheet_lower_condfmt_databar() {
     );
 }
 
+/// Cross-surface parity (spec §8.1/§8.2): the SHEETS-MODE GRID renders the
+/// same data bars as the page lowering. `sheet_grid::grid_scene_with_cf` emits
+/// one `GridDataBar` per visible numeric D cell with the SAME fill fraction +
+/// colour the page `LoweredContent.databars` carries (the bars are computed by
+/// the shared `condfmt::databar_for` + the shared inset rule), so a data bar
+/// reads identically on both surfaces. Non-numeric / uncovered cells get none.
+#[test]
+fn sheet_lower_condfmt_databar_grid_parity() {
+    let doc = open_fixture();
+    let cf = doc.lowered_conditional_formats(0);
+
+    // The page bars over A1:E5 (the fixture's range), keyed by (row, col).
+    let page = lower_full(&doc);
+    let page_d: std::collections::BTreeMap<u32, (f64, String)> = page
+        .databars
+        .iter()
+        .filter(|b| b.col == 3)
+        .map(|b| (b.row, (b.fill_fraction, b.fill.clone())))
+        .collect();
+    assert_eq!(page_d.len(), 5, "page lowering: 5 D-column bars");
+
+    // The grid scene over a viewport wide+tall enough to show A1:E5. The data
+    // bars carry ABSOLUTE (row, col); the D column is absolute col 3.
+    let scene = sheet_grid::grid_scene_with_cf(
+        &doc.model,
+        0,
+        0,
+        0,
+        400.0,
+        200.0,
+        &sheet_grid::GridOptions::default(),
+        &[],
+        &cf,
+    );
+    let grid_d: std::collections::BTreeMap<u32, (f64, String)> = scene
+        .databars
+        .iter()
+        .filter(|b| b.col == 3)
+        .map(|b| (b.row, (b.fill_fraction, b.fill.clone())))
+        .collect();
+    assert_eq!(grid_d.len(), 5, "grid scene: 5 D-column bars");
+
+    // Same fraction + colour per row on both surfaces (cross-surface parity).
+    for row in 0..5u32 {
+        let (pf, pc) = &page_d[&row];
+        let (gf, gc) = &grid_d[&row];
+        assert!((pf - gf).abs() < 1e-9, "D row {row}: fraction parity");
+        assert_eq!(pc, gc, "D row {row}: colour parity");
+    }
+
+    // The grid geometry is positive + inside its cell, and the empty-cf grid
+    // scene carries NO bars (the bars come only from a data-bar cf rule).
+    for b in scene.databars.iter().filter(|b| b.col == 3) {
+        assert_eq!(b.fill, "#638EC6");
+        assert!(b.w >= 0.0 && b.h > 0.0);
+    }
+    let none = sheet_grid::grid_scene_with_cf(
+        &doc.model,
+        0,
+        0,
+        0,
+        400.0,
+        200.0,
+        &sheet_grid::GridOptions::default(),
+        &[],
+        &sheet_lower::SheetCondFmt::default(),
+    );
+    assert!(none.databars.is_empty(), "empty cf → no in-grid bars");
+}
+
 // ── sheet.lower.condfmt.iconset (preserve-only T2 floor) ─────────────────────
 
 /// An iconSet rule is preserve-only in T2: parsed + round-tripped, never

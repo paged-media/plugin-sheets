@@ -1263,8 +1263,15 @@ impl SheetSession {
             .map(|cs| cs.comments.iter().map(|c| (c.row, c.col)).collect())
             .unwrap_or_default();
 
+        // Conditional-formatting DATA BARS (spec §8.2/§10.4): supply the sheet's
+        // cf model so the scene renders each `dataBar` rule as a proportional
+        // drawn rect — the SAME geometry lane the page lowering emits, so a bar
+        // reads identically on the grid and the page (cross-surface parity). The
+        // cf XML round-trips byte-identical; this read is additive + read-only.
+        let cf = self.doc.lowered_conditional_formats(sheet);
+
         let model = self.engine.as_ref().expect("engine present").model();
-        let mut scene = sheet_grid::grid_scene_with_comments(
+        let mut scene = sheet_grid::grid_scene_with_cf(
             model,
             sheet,
             first_row,
@@ -1273,6 +1280,7 @@ impl SheetSession {
             h_pt,
             &grid_opts,
             &comment_cells,
+            &cf,
         );
 
         // Fold in the session's stored selection for THIS sheet (spec §8.1 —
