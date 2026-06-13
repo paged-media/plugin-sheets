@@ -312,3 +312,114 @@ fn sheet_calc_iterative_circular_with_iteration_downstream_reads_settled() {
     e.enter(0, 0, 3, "=A1+1").unwrap();
     approx(&e, 0, 3, 26.0, 1e-6);
 }
+
+// =================================================================
+// HARDENING (Phase 9 conservative sweep) — robustness of the EXISTING
+// iterate loop: non-numeric oscillation, multiple disjoint cycles in one
+// recalc, and a non-finite/negative max_change. These exercise the SAME
+// `iterate_cycle` path (no engine change); the registry-pointer prefixes
+// (`sheet_calc_iterative_convergence` / `_max_change` / `_circular_with_iteration`)
+// keep the coverage gate satisfied without new rows.
+// =================================================================
+
+#[test]
+fn sheet_calc_iterative_convergence_nonnumeric_oscillation_runs_to_cap() {
+    // A cycle whose value oscillates to/from a non-number can never "settle":
+    // `iterate::cell_delta` returns INFINITY across a numeric<->non-numeric
+    // flip, so the largest delta never falls below max_change and the system
+    // runs to max_iter and is reported non-converged (rather than falsely
+    // declaring convergence). A1 = IF(ISNUMBER(A1), "x", 1) flips 1 <-> "x"
+    // every pass: seed 0 (number) -> "x" -> 1 -> "x" -> ... never stable.
+    let mut e = engine();
+    e.set_iterative(true, 20, 1e-9);
+    let r = e.enter(0, 0, 0, "=IF(ISNUMBER(A1),\"x\",1)").unwrap();
+    assert!(r.circular.is_empty(), "iteration on: no #REF!");
+    assert_eq!(
+        r.non_converged,
+        vec![cr(0, 0)],
+        "a numeric<->non-numeric oscillation cannot settle — must hit the cap"
+    );
+    // The last iterate is left in place (Excel-style); it is one of the two
+    // oscillation states, never a spurious convergence value.
+    match val(&e, 0, 0) {
+        CellValue::Number(_) | CellValue::Text(_) => {}
+        other => panic!("expected the last oscillation state, got {other:?}"),
+    }
+}
+
+#[test]
+fn sheet_calc_iterative_circular_with_iteration_two_disjoint_cycles() {
+    // Two structurally-independent cycles present in one recalc are iterated as
+    // ONE circular region (Excel-style: the engine iterates the whole set of
+    // circular cells together under a single global convergence verdict — the
+    // topo layer returns all un-orderable cells as one `cycle` set, and
+    // `iterate_cycle` runs them in one Gauss-Seidel sweep). Cycle 1 (convergent,
+    // cols A/B): A1 = B1*0.5+10, B1 = A1+5 -> A1=25, B1=30. Cycle 2 (divergent,
+    // col D): D1 = D1+1 -> grows unboundedly. The convergent members reach their
+    // correct fixed point, but because the GLOBAL max-delta (driven by the
+    // never-settling D1) stays above max_change, the whole region is reported
+    // non-converged — the values are right, the convergence LABEL is whole-set.
+    let mut e = engine();
+    e.set_iterative(true, 100, 1e-9);
+    e.enter(0, 0, 0, "=B1*0.5+10").unwrap();
+    e.enter(0, 0, 1, "=A1+5").unwrap();
+    e.enter(0, 0, 3, "=D1+1").unwrap();
+    let r = e.recalc_all();
+    assert!(r.circular.is_empty(), "iteration on: no #REF!");
+    // The divergent member forces a whole-region non-convergence report.
+    assert!(
+        r.non_converged.contains(&cr(0, 3)),
+        "the divergent member (D1) must be reported non-converged, got {:?}",
+        r.non_converged
+    );
+    assert!(
+        r.non_converged.contains(&cr(0, 0)) && r.non_converged.contains(&cr(0, 1)),
+        "the whole circular region shares ONE convergence verdict (global \
+         max-delta) — the convergent members ride the same non-converged report \
+         while D1 diverges, got {:?}",
+        r.non_converged
+    );
+    // CRUCIALLY: the convergent members still hold their CORRECT fixed-point
+    // values — the global non-convergence label does not corrupt them. This is
+    // the robustness property the hardening test pins: a divergent neighbour in
+    // the same region does not poison a convergent cell's value.
+    approx(&e, 0, 0, 25.0, 1e-6);
+    approx(&e, 0, 1, 30.0, 1e-6);
+    approx(&e, 0, 3, 100.0, 0.0); // 100 passes of +1 from the 0 seed.
+}
+
+#[test]
+fn sheet_calc_iterative_max_change_nonfinite_or_negative_runs_to_cap() {
+    // Robustness of the convergence predicate `max_delta <= max_change` for a
+    // pathological delta. A NEGATIVE max_change can never be satisfied by a
+    // non-negative max_delta, so a convergent system runs to the full max_iter
+    // (it still keeps its last — correct — iterate, just without early-exit).
+    // This proves the loop terminates cleanly (the cap, not the delta, bounds
+    // it) rather than looping forever or panicking.
+    let mut e_neg = engine();
+    e_neg.set_iterative(true, 200, -1.0);
+    convergent_system(&mut e_neg);
+    let r_neg = e_neg.enter(0, 0, 1, "=A1+5").unwrap();
+    assert!(r_neg.circular.is_empty());
+    // No early-exit possible -> the whole cycle is reported non-converged even
+    // though the values are at the fixed point (the predicate, not accuracy,
+    // decides the label). The stored values are still the correct fixed point.
+    assert!(
+        !r_neg.non_converged.is_empty(),
+        "a negative max_change never early-exits — runs to the cap, reported non-converged"
+    );
+    approx(&e_neg, 0, 0, 25.0, 1e-6);
+
+    // A NaN max_change: every `max_delta <= NaN` is false, so likewise no
+    // early-exit — the cap bounds the loop and it terminates cleanly.
+    let mut e_nan = engine();
+    e_nan.set_iterative(true, 200, f64::NAN);
+    convergent_system(&mut e_nan);
+    let r_nan = e_nan.enter(0, 0, 1, "=A1+5").unwrap();
+    assert!(r_nan.circular.is_empty());
+    assert!(
+        !r_nan.non_converged.is_empty(),
+        "a NaN max_change never early-exits — runs to the cap"
+    );
+    approx(&e_nan, 0, 0, 25.0, 1e-6);
+}
