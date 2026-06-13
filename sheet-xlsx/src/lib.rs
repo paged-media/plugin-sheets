@@ -54,6 +54,7 @@ pub use parts::conditional_format::{
     CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, SheetConditionalFormats,
 };
 pub use parts::external_link::{ExternalBook, ExternalLinks};
+pub use parts::freeze::FreezePanes;
 pub use parts::styles::{VisualStyle, VisualStyles};
 
 use opc::{ModeledKind, OpcContainer, PartEntry};
@@ -123,6 +124,14 @@ pub struct XlsxDocument {
     /// (`sheet_calc::external::resolve_cached`), never for re-emit. Empty when
     /// the workbook references no external books (the common case).
     pub external_links: ExternalLinks,
+
+    /// Frozen-pane split per sheet (spec §8.1 — the sheets-mode grid view),
+    /// derived from each worksheet's captured `<sheetViews><pane>` subtree.
+    /// ADDITIVE + READ-ONLY: the `<sheetViews>` subtree STILL round-trips
+    /// byte-identical via the verbatim capture (preserve.rs); this is read-only
+    /// derived state for the grid surface, never written back. A sheet with no
+    /// frozen pane has no entry (the common case).
+    pub freeze_panes: BTreeMap<SheetId, parts::freeze::FreezePanes>,
 
     /// The OPC container (ordered parts + content types) for re-write.
     container: OpcContainer,
@@ -255,6 +264,7 @@ impl XlsxDocument {
             SheetId,
             parts::conditional_format::SheetConditionalFormats,
         > = BTreeMap::new();
+        let mut freeze_panes: BTreeMap<SheetId, parts::freeze::FreezePanes> = BTreeMap::new();
 
         for sref in &parsed_wb.sheets {
             let target = wb_rels.target_of(&sref.rid).ok_or_else(|| {
@@ -339,6 +349,16 @@ impl XlsxDocument {
             )?;
             if !cf.is_empty() {
                 conditional_formats.insert(sid, cf);
+            }
+
+            // Freeze panes (spec §8.1): the `<sheetViews><pane>` split sits in
+            // the worksheet's BEFORE-sheetData captures (an unmodeled
+            // `<sheetViews>` child). ADDITIVE parse — the captured bytes are
+            // untouched (the view still round-trips byte-identical).
+            if let Some(fp) = parts::freeze::parse_all(
+                parsed_ws.captured.before().map(|c| c.bytes.as_slice()),
+            )? {
+                freeze_panes.insert(sid, fp);
             }
 
             worksheet_parts.push(ws_part.clone());
@@ -459,6 +479,7 @@ impl XlsxDocument {
             conditional_formats,
             charts,
             external_links,
+            freeze_panes,
             container,
             bindings,
         })
@@ -513,6 +534,14 @@ impl XlsxDocument {
             Some(cf) => cf.to_lower(&self.dxfs),
             None => sheet_lower::SheetCondFmt::default(),
         }
+    }
+
+    /// The frozen-pane split of a sheet (spec §8.1), or the default `(0, 0)`
+    /// no-freeze when the sheet carries none. Read-only derived state from the
+    /// worksheet's captured `<sheetViews><pane>` (the bytes round-trip
+    /// byte-identical); the grid surface renders the split.
+    pub fn freeze_panes_of(&self, sheet: SheetId) -> parts::freeze::FreezePanes {
+        self.freeze_panes.get(&sheet).copied().unwrap_or_default()
     }
 
     /// The worksheet part name bound to a model sheet (test/consumer helper).

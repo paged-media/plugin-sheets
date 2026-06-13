@@ -213,6 +213,45 @@ describe("sheet_grid_scene_to_svg: geometry", () => {
   });
 });
 
+// sheet.grid.freeze.render — the frozen-pane split is drawn as a heavier rule
+// at the frozen band edge (spec §8.1) when the viewport shows the sheet origin.
+describe("sheet_grid_scene_freeze: split rendering", () => {
+  function frozenScene(): GridScene {
+    const s = scene2x2();
+    // Freeze the first column (40pt band) + the first row (20pt band).
+    s.freeze = { rows: 1, cols: 1, frozenWidthPt: 40, frozenHeightPt: 20 };
+    return s;
+  }
+
+  it("draws a horizontal + vertical split rule at the frozen band edges", () => {
+    const svg = gridSceneToSvg(frozenScene());
+    const o = DEFAULT_GRID_SVG_OPTIONS;
+    // Horizontal split at y = frozenHeightPt (20), spanning the width (80).
+    expect(svg).toContain(
+      `<line x1="0" y1="20" x2="80" y2="20" ` +
+        `stroke="${o.freezeColor}" stroke-width="${o.freezeWidth}"/>`,
+    );
+    // Vertical split at x = frozenWidthPt (40), spanning the height (40).
+    expect(svg).toContain(
+      `<line x1="40" y1="0" x2="40" y2="40" ` +
+        `stroke="${o.freezeColor}" stroke-width="${o.freezeWidth}"/>`,
+    );
+  });
+
+  it("draws no split when nothing is frozen", () => {
+    const svg = gridSceneToSvg(scene2x2());
+    expect(svg).not.toContain(DEFAULT_GRID_SVG_OPTIONS.freezeColor);
+  });
+
+  it("omits the split when scrolled past the origin (band off-screen)", () => {
+    const s = frozenScene();
+    s.viewport.firstRow = 5;
+    s.viewport.firstCol = 5;
+    const svg = gridSceneToSvg(s);
+    expect(svg).not.toContain(DEFAULT_GRID_SVG_OPTIONS.freezeColor);
+  });
+});
+
 describe("sheet_grid_selection: rect clamp", () => {
   it("returns null when there is no selection", () => {
     expect(selectionRect(scene2x2())).toBeNull();

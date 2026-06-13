@@ -1,0 +1,36 @@
+# sheet.grid.freeze.* (T1/M1, spec §8.1 — the sheets-mode grid view)
+# — frozen-pane split. The worksheet's <sheetViews><pane> split is read
+# ADDITIVELY (read-only) into the FreezePanes model the grid surface renders;
+# the <sheetViews> XML round-trips byte-identical via the worksheet verbatim
+# capture (preservation invariant, spec §10.2). A frozen pane is a VIEW setting
+# (not analyst-grade machinery), so it is legitimately interpreted + rendered —
+# the publishing-first scope cut (pivot/validation/what-if) does not apply.
+#
+# STATUS: LANDED. The <pane state="frozen"> split (xSplit=frozen cols, ySplit=
+# frozen rows) parses from the captured <sheetViews>; the grid scene carries a
+# GridFreeze with the frozen row/col band's pt extents so the SDK surface holds
+# the leading rows/cols fixed while the body scrolls. A pure pixel SPLIT (no
+# frozen header) is NOT interpreted (out of publishing scope) but still
+# round-trips verbatim.
+
+- id: sheet.grid.freeze.parse
+  title: XLSX sheetViews/pane frozen-split parse + byte-identical round-trip
+  tier: implemented
+  status: implemented
+  ruling: "ADDITIVE parse: the <sheetViews> subtree is an unmodeled <worksheet> child captured verbatim (BeforeSheetData) — it round-trips byte-identical — AND the frozen <pane> (state=frozen|frozenSplit, xSplit=frozen cols, ySplit=frozen rows) is parsed alongside into the read-only FreezePanes model. A pure pixel split (state=split / absent) is NOT a frozen header (out of publishing scope) and records no freeze; a 0/0 split records none. Read-only derived state, never written back (the same discipline as VisualStyles / the cf model)."
+  provenance: ["ECMA-376 §18.3.1.85 (sheetView), §18.3.1.66 (pane)", "spec §8.1 (sheets-mode grid view), §10.2 (preservation invariant)"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/freeze.rs::sheet_grid_freeze_parse"
+      - "sheet-xlsx/src/parts/freeze.rs::parse_frozen"
+
+- id: sheet.grid.freeze.render
+  title: The grid surface renders the frozen row/column split (the frozen-header view)
+  tier: implemented
+  status: implemented
+  ruling: "The grid scene carries a GridFreeze (frozen rows/cols + the frozen band's pt extents, summed from the sheet origin independent of the scroll origin) so the SDK rendering surface holds the leading rows/columns fixed while the body scrolls — the §8.1 frozen-header view. The split feeds via GridOptions (the JS get_grid_scene reads the workbook's stored split, the panel may override). A no-freeze workbook yields a scene with no frozen band."
+  provenance: ["spec §8.1 (grid rendering surface)", "ECMA-376 §18.3.1.66 (pane)"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/freeze.rs::sheet_grid_freeze_render"
+      - "sheet-grid/src/lib.rs::sheet_grid_scene_freeze"

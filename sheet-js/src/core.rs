@@ -171,6 +171,19 @@ pub struct SheetInfo {
     pub cols: u32,
 }
 
+/// A worksheet's frozen-pane split for the panel/grid (spec §8.1). Read-only
+/// derived state parsed from the workbook's `<sheetViews><pane>` (which still
+/// round-trips byte-identical). Only sheets WITH a frozen pane are reported.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FreezeInfo {
+    pub sheet: u16,
+    /// Leading rows held fixed at the top.
+    pub rows: u32,
+    /// Leading columns held fixed at the left.
+    pub cols: u32,
+}
+
 /// One chart in the workbook (M2 charts track, spec §8.4) for the panel's
 /// chart list. `index` is the position in the engine's parsed-chart vector (the
 /// handle [`SheetSession::get_chart_geometry`] takes); `hostSheet` is the model
@@ -232,11 +245,16 @@ pub struct LowerOptions {
 
 /// Grid-scene options forwarded verbatim from the TS `GridSceneOptions` (serde
 /// defaults so an absent/partial object is accepted). `include_gridlines`
-/// toggles the [`sheet_grid::RuleSet`] at every visible track boundary.
+/// toggles the [`sheet_grid::RuleSet`] at every visible track boundary;
+/// `freeze_rows`/`freeze_cols` OVERRIDE the workbook's stored frozen-pane split
+/// for this scene (spec §8.1 — the panel may pass them, else the engine reads
+/// the workbook's own `<sheetViews><pane>` split).
 #[derive(serde::Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GridSceneOptions {
     pub include_gridlines: Option<bool>,
+    pub freeze_rows: Option<u32>,
+    pub freeze_cols: Option<u32>,
 }
 
 /// One frame's content box, deserialized from the TS chain's content boxes
@@ -1196,8 +1214,14 @@ impl SheetSession {
             )));
         }
 
+        // The frozen-pane split (spec §8.1): the caller may override it; else
+        // we read the workbook's own stored split (parsed from the worksheet's
+        // `<sheetViews><pane>` on load — read-only, round-trips byte-identical).
+        let stored = self.doc.freeze_panes_of(sheet);
         let grid_opts = sheet_grid::GridOptions {
             include_gridlines: opts.include_gridlines.unwrap_or(true),
+            freeze_rows: opts.freeze_rows.unwrap_or(stored.rows),
+            freeze_cols: opts.freeze_cols.unwrap_or(stored.cols),
         };
         let model = self.engine.as_ref().expect("engine present").model();
         let mut scene =
@@ -1301,6 +1325,32 @@ impl SheetSession {
                 series_count: c.model.series.len() as u32,
             })
             .collect()
+    }
+
+    /// Enumerate the worksheets that carry a FROZEN PANE (spec §8.1), as
+    /// `[{sheet,rows,cols}]` in sheet order. Read-only derived state parsed
+    /// from each worksheet's `<sheetViews><pane>` on load (the view still
+    /// round-trips byte-identical — preservation invariant, spec §10.2). Empty
+    /// for a workbook with no frozen panes (the common case). The grid surface
+    /// also folds the split into the scene (`get_grid_scene`); this list lets
+    /// the panel show which sheets have one.
+    pub fn list_freeze_panes(&self) -> Vec<FreezeInfo> {
+        // The model lives in the engine after load (the doc model is a
+        // placeholder); use the engine's sheet count, then read the doc's
+        // freeze map (keyed by SheetId regardless of where the model sits).
+        let sheet_count = self.engine.as_ref().expect("engine present").model().sheets.len();
+        let mut out = Vec::new();
+        for sid in 0..sheet_count as SheetId {
+            let fp = self.doc.freeze_panes_of(sid);
+            if !fp.is_none() {
+                out.push(FreezeInfo {
+                    sheet: sid,
+                    rows: fp.rows,
+                    cols: fp.cols,
+                });
+            }
+        }
+        out
     }
 
     /// Enumerate the registered, IMPLEMENTED functions for the formula-bar

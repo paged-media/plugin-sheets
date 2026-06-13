@@ -52,9 +52,22 @@ export interface LowerOptions {
 }
 
 /** Options the grid-scene windowing honours (forwarded verbatim to wasm —
- *  the engine windows in Rust, spec §8.1). */
+ *  the engine windows in Rust, spec §8.1). `freezeRows`/`freezeCols` OVERRIDE
+ *  the workbook's stored frozen-pane split for this scene; omit them to use
+ *  the workbook's own `<sheetViews><pane>` split (the engine reads it). */
 export interface GridSceneOptions {
   includeGridlines?: boolean;
+  freezeRows?: number;
+  freezeCols?: number;
+}
+
+/** One worksheet's frozen-pane split (spec §8.1) — read-only derived state
+ *  parsed from the workbook's `<sheetViews><pane>` (which still round-trips
+ *  byte-identical). Only sheets WITH a frozen pane are reported. */
+export interface FreezeInfo {
+  sheet: number;
+  rows: number;
+  cols: number;
 }
 
 /** One frame's content box for pagination (the host chain link's content
@@ -261,6 +274,10 @@ export interface SheetEngine {
   /** Enumerate the workbook's charts (M2 charts track, spec §8.4). Parsed
    *  from the XLSX chart parts on load; empty for a chartless workbook. */
   listCharts(): ChartInfo[];
+  /** Enumerate the worksheets with a FROZEN PANE (spec §8.1). Read-only
+   *  derived state parsed from the workbook's `<sheetViews><pane>` on load
+   *  (the view round-trips byte-identical); empty when none are frozen. */
+  listFreezePanes(): FreezeInfo[];
   /** Enumerate the engine's registered IMPLEMENTED functions for the
    *  formula-bar autocomplete (S-04). The names come from the engine's
    *  registry table (constitution §7) — never a TS list. Workbook-
@@ -338,6 +355,7 @@ export interface SheetWasmEngine {
   ): void;
   list_sheets(): SheetInfo[];
   list_charts(): ChartInfo[];
+  list_freeze_panes(): FreezeInfo[];
   list_functions(): FunctionInfo[];
   get_chart_geometry(index: number, w_pt: number, h_pt: number): ChartGeometry;
   free(): void;
@@ -382,6 +400,7 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.set_grid_selection(sheet, anchorRow, anchorCol, rows, cols),
     listSheets: () => wasm.list_sheets(),
     listCharts: () => wasm.list_charts(),
+    listFreezePanes: () => wasm.list_freeze_panes(),
     listFunctions: () => wasm.list_functions(),
     getChartGeometry: (index, wPt, hPt) =>
       wasm.get_chart_geometry(index, wPt, hPt),

@@ -30,6 +30,9 @@ sheet-fn = { path = "../sheet-fn" }
 sheet-format = { path = "../sheet-format" }
 sheet-xlsx = { path = "../sheet-xlsx" }
 sheet-lower = { path = "../sheet-lower" }
+# The sheets-mode grid surface (spec §8.1): the freeze-pane conformance test
+# renders the frozen split through `sheet_grid::grid_scene`.
+sheet-grid = { path = "../sheet-grid" }
 # The M2 charts track (spec §8.4): the chart conformance test parses the
 # corpus chart fixture into ChartModel and projects it through the pure
 # `sheet_chart::generate` geometry IR.

@@ -673,6 +673,47 @@ fn sheet_js_get_grid_scene_windows_populated_sheet() {
     assert!(!json.contains("x_offsets"));
 }
 
+// ── sheet.grid.freeze.render (JS surface) ───────────────────────────────────
+
+/// The JS surface folds the workbook's stored frozen-pane split into the grid
+/// scene (spec §8.1) and `list_freeze_panes` reports it. Loading 11-freeze.xlsx
+/// (1 col + 2 rows frozen): `get_grid_scene` carries the `GridFreeze` band, and
+/// `list_freeze_panes` lists the sheet. A no-freeze workbook reports neither.
+#[test]
+fn sheet_grid_freeze_render_via_js_surface() {
+    let s = SheetSession::load_xlsx(&fixture("11-freeze.xlsx")).expect("load 11-freeze");
+
+    // list_freeze_panes reports the frozen sheet.
+    let panes = s.list_freeze_panes();
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].sheet, 0);
+    assert_eq!(panes[0].rows, 2);
+    assert_eq!(panes[0].cols, 1);
+
+    // get_grid_scene folds the STORED split into the scene (no option override).
+    let scene = s
+        .get_grid_scene(0, 0, 0, 300.0, 120.0, GridSceneOptions::default())
+        .expect("grid scene over the frozen sheet");
+    let fz = scene.freeze.expect("the scene carries the frozen band");
+    assert_eq!(fz.rows, 2);
+    assert_eq!(fz.cols, 1);
+    assert!(fz.frozen_width_pt > 0.0 && fz.frozen_height_pt > 0.0);
+
+    // The wire shape carries the camelCase `freeze` band.
+    let json = serde_json::to_string(&scene).unwrap();
+    assert!(json.contains("\"freeze\""));
+    assert!(json.contains("\"frozenWidthPt\""));
+    assert!(json.contains("\"frozenHeightPt\""));
+
+    // A no-freeze workbook reports no panes + a scene with no frozen band.
+    let plain = SheetSession::load_xlsx(&fixture("01-minimal.xlsx")).expect("load 01");
+    assert!(plain.list_freeze_panes().is_empty());
+    let plain_scene = plain
+        .get_grid_scene(0, 0, 0, 300.0, 120.0, GridSceneOptions::default())
+        .unwrap();
+    assert!(plain_scene.freeze.is_none());
+}
+
 /// `set_grid_selection` records a rectangle that the NEXT `get_grid_scene` for
 /// the same sheet folds into `GridScene.selection`; the wire JSON carries the
 /// camelCase `anchorRow`/`anchorCol`/`rows`/`cols` grid.ts expects. A selection

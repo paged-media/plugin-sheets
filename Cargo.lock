@@ -881,6 +881,7 @@ dependencies = [
  "sheet-core",
  "sheet-fn",
  "sheet-format",
+ "sheet-grid",
  "sheet-js",
  "sheet-lower",
  "sheet-parser",

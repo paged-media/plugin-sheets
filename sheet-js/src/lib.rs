@@ -294,6 +294,12 @@ mod wasm {
             to_js(&self.session.list_charts()).unwrap_or(JsValue::NULL)
         }
 
+        /// Enumerate the worksheets with a FROZEN PANE (spec §8.1):
+        /// `[{sheet,rows,cols}]`. The split also folds into `get_grid_scene`.
+        pub fn list_freeze_panes(&self) -> JsValue {
+            to_js(&self.session.list_freeze_panes()).unwrap_or(JsValue::NULL)
+        }
+
         /// Enumerate the engine's registered IMPLEMENTED functions for the
         /// formula-bar autocomplete (S-04). The name table is codegen'd from
         /// the function registry (`registry/functions/*.yaml`) — the bundle's

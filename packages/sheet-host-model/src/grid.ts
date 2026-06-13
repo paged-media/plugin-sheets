@@ -69,17 +69,32 @@ export interface GridSelection {
   cols: number;
 }
 
+/** The frozen-pane split rendered in a viewport (spec §8.1). `rows`/`cols`
+ *  are the leading SHEET rows/columns held fixed; `frozenWidthPt`/
+ *  `frozenHeightPt` are the pt extents of those frozen bands (the split line
+ *  sits there). `null`/absent when no pane is frozen. Mirror of the Rust
+ *  `sheet_grid::GridFreeze`. */
+export interface GridFreeze {
+  rows: number;
+  cols: number;
+  frozenWidthPt: number;
+  frozenHeightPt: number;
+}
+
 /** The complete grid scene for one viewport (spec §8.1): the windowed
  *  geometry, the visible populated cells, the style table, the gridlines
- *  (viewport-local content-space rules, h/v), and the optional selection
- *  rectangle. The panel turns this into an SVG it overlays the sheet
- *  frame with; it never computes any of it. */
+ *  (viewport-local content-space rules, h/v), the optional selection
+ *  rectangle, and the optional frozen-pane split. The panel turns this into
+ *  an SVG it overlays the sheet frame with; it never computes any of it. */
 export interface GridScene {
   viewport: GridViewport;
   cells: GridCell[];
   styles: LoweredStyle[];
   gridlines: Rules;
   selection?: GridSelection | null;
+  /** The frozen-pane split (spec §8.1); `null`/absent when nothing is
+   *  frozen. The panel draws a heavier split rule at the band edge. */
+  freeze?: GridFreeze | null;
 }
 
 /** Tunable geometry for `gridSceneToSvg` — paint-time constants the panel
@@ -107,6 +122,10 @@ export interface GridSvgOptions {
   selectionFill: string;
   /** Selection stroke width (pt). */
   selectionWidth: number;
+  /** Frozen-pane split-line colour (spec §8.1). */
+  freezeColor: string;
+  /** Frozen-pane split-line width (pt) — heavier than a gridline. */
+  freezeWidth: number;
 }
 
 /** Sober defaults; the panel overrides the colour fields from the token
@@ -122,6 +141,8 @@ export const DEFAULT_GRID_SVG_OPTIONS: GridSvgOptions = {
   selectionColor: "#2b6cb0",
   selectionFill: "rgba(43,108,176,0.12)",
   selectionWidth: 1.5,
+  freezeColor: "#808080",
+  freezeWidth: 1.25,
 };
 
 /** Total viewport width (pt) — the trailing x boundary (0 when empty). */
@@ -299,6 +320,34 @@ export function selectionRect(scene: GridScene): [number, number, number, number
   return [x, y, w, h];
 }
 
+/** Build the frozen-pane split `<line>`s (spec §8.1): a heavier rule at the
+ *  bottom edge of the frozen row band and the right edge of the frozen column
+ *  band. v1 draws the split only when the viewport shows the sheet origin
+ *  (`firstRow`/`firstCol` 0) — i.e. the frozen band is on screen; a scrolled-
+ *  past composite (the frozen band pinned over a scrolled body) is a panel
+ *  follow-on. "" when no pane is frozen or the band is off-screen. */
+function freezeSplitSvg(scene: GridScene, o: GridSvgOptions): string {
+  const fz = scene.freeze;
+  if (!fz) return "";
+  const vp = scene.viewport;
+  const w = viewportWidthPt(scene);
+  const h = viewportHeightPt(scene);
+  const line = (x1: number, y1: number, x2: number, y2: number): string =>
+    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ` +
+    `stroke="${o.freezeColor}" stroke-width="${o.freezeWidth}"/>`;
+  const parts: string[] = [];
+  // Horizontal split at the frozen row band's bottom edge (only when the
+  // origin row is on screen and the band fits in the viewport).
+  if (fz.rows > 0 && vp.firstRow === 0 && fz.frozenHeightPt <= h) {
+    parts.push(line(0, fz.frozenHeightPt, w, fz.frozenHeightPt));
+  }
+  // Vertical split at the frozen column band's right edge.
+  if (fz.cols > 0 && vp.firstCol === 0 && fz.frozenWidthPt <= w) {
+    parts.push(line(fz.frozenWidthPt, 0, fz.frozenWidthPt, h));
+  }
+  return parts.join("");
+}
+
 /** Build the selection `<rect>` (fill wash + stroke), or "" when there is
  *  no visible selection. */
 function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
@@ -321,7 +370,7 @@ function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
  * frame at any zoom (vector-crisp by construction).
  *
  * Layer order (back to front): cell fills → gridlines → cell borders →
- * cell text → selection chrome.
+ * cell text → frozen-pane split → selection chrome.
  */
 export function gridSceneToSvg(
   scene: GridScene,
@@ -336,6 +385,7 @@ export function gridSceneToSvg(
     gridLines(scene.gridlines, o) +
     cellBorders(scene, vp, o) +
     cellTexts(scene, vp, o) +
+    freezeSplitSvg(scene, o) +
     selectionSvg(scene, o);
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" ` +

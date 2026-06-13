@@ -49,6 +49,7 @@ function fakeEngine() {
     setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 4, cols: 4 }],
     listCharts: () => [],
+    listFreezePanes: () => [],
     listFunctions: () => [],
     getChartGeometry: () => ({ widthPt: 0, heightPt: 0, prims: [] }),
     dispose() {},

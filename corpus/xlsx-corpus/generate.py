@@ -780,6 +780,156 @@ def gen_10_extlink():
     write_zip("10-extlink.xlsx", members)
 
 
+CT_COMMENTS = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"
+RT_COMMENTS = NS_R + "/comments"
+
+
+def gen_11_freeze():
+    """11: a FROZEN PANE (spec §8.1, the sheets-mode grid view). Sheet1's
+    <sheetViews> carries a frozen pane holding the first column + the first two
+    rows fixed (xSplit=1 frozen cols, ySplit=2 frozen rows, state="frozen").
+    <sheetViews> is an unmodeled <worksheet> child (BeforeSheetData), so it
+    round-trips via the verbatim capture; the freeze split is parsed additively
+    (read-only) for the grid surface."""
+    rows = (
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>Hdr</t></is></c>'
+        '<c r="B1" t="n"><v>1</v></c></row>'
+        '<row r="2"><c r="A2" t="inlineStr"><is><t>Sub</t></is></c>'
+        '<c r="B2" t="n"><v>2</v></c></row>'
+        '<row r="3"><c r="A3" t="inlineStr"><is><t>row</t></is></c>'
+        '<c r="B3" t="n"><v>3</v></c></row>'
+    )
+    sheet_views = (
+        '<sheetViews><sheetView tabSelected="1" workbookViewId="0">'
+        '<pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/>'
+        '<selection pane="bottomRight" activeCell="B3" sqref="B3"/>'
+        "</sheetView></sheetViews>"
+    )
+    sheet1 = ws("A1:B3", rows, extras_before=sheet_views)
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+        ])),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook([("Sheet1", 1, "rId1")])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+        ])),
+        ("xl/worksheets/sheet1.xml", sheet1),
+    ]
+    write_zip("11-freeze.xlsx", members)
+
+
+def gen_12_datavalidation():
+    """12: DATA VALIDATION (publishing-first: PRESERVED, never interpreted as a
+    runtime constraint — spec §1.1/§11, T∞). Sheet1!B2:B4 carries a list
+    validation (an inline "Yes,No,Maybe" dropdown); B6 a whole-number
+    constraint (1..100); B8 a date constraint. <dataValidations> is an unmodeled
+    <worksheet> child (AfterSheetData), so it round-trips byte-identical via the
+    verbatim capture; the validations are parsed ADDITIVELY (read-only inventory)
+    so a panel can REPORT that they exist — they are NEVER enforced on edits."""
+    rows = (
+        '<row r="2"><c r="B2" t="inlineStr"><is><t>Yes</t></is></c></row>'
+        '<row r="6"><c r="B6" t="n"><v>42</v></c></row>'
+        '<row r="8"><c r="B8" t="n"><v>45000</v></c></row>'
+    )
+    dv = (
+        '<dataValidations count="3">'
+        '<dataValidation type="list" allowBlank="1" showDropDown="0" '
+        'showInputMessage="1" showErrorMessage="1" sqref="B2:B4">'
+        '<formula1>"Yes,No,Maybe"</formula1></dataValidation>'
+        '<dataValidation type="whole" operator="between" allowBlank="1" '
+        'showErrorMessage="1" sqref="B6">'
+        '<formula1>1</formula1><formula2>100</formula2></dataValidation>'
+        '<dataValidation type="date" operator="greaterThan" allowBlank="1" '
+        'sqref="B8"><formula1>43000</formula1></dataValidation>'
+        "</dataValidations>"
+    )
+    sheet1 = ws("B2:B8", rows, extras_after=dv)
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+        ])),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook([("Sheet1", 1, "rId1")])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+        ])),
+        ("xl/worksheets/sheet1.xml", sheet1),
+    ]
+    write_zip("12-datavalidation.xlsx", members)
+
+
+def gen_13_comments():
+    """13: CELL COMMENTS / NOTES (preserve-first; spec §10.2). Sheet1 references
+    a comments part (xl/comments1.xml) through its OWN .rels; the part holds two
+    comments (A1 by 'Alice', C3 by 'Bob') with an authors table. The comments
+    part is an OPAQUE OPC part (round-trips byte-identical); the worksheet's
+    <legacyDrawing>/<drawing> link to the VML is captured verbatim. We parse the
+    comments part ADDITIVELY (read-only) so the grid can show an indicator + the
+    panel can list them — authoring is preserve-first (we never rewrite the part).
+    """
+    rows = (
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>cell</t></is></c></row>'
+        '<row r="3"><c r="C3" t="n"><v>7</v></c></row>'
+    )
+    # The worksheet links its comments part via its own .rels (rId1).
+    sheet1 = ws("A1:C3", rows, extras_after='<legacyDrawing r:id="rId2"/>')
+    ws_rels = (
+        XML_DECL
+        + f'<Relationships xmlns="{NS_REL}">'
+        f'<Relationship Id="rId1" Type="{RT_COMMENTS}" Target="../comments1.xml"/>'
+        f'<Relationship Id="rId2" Type="{NS_R}/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>'
+        "</Relationships>"
+    )
+    comments = (
+        XML_DECL
+        + f'<comments xmlns="{NS_MAIN}">'
+        "<authors><author>Alice</author><author>Bob</author></authors>"
+        "<commentList>"
+        '<comment ref="A1" authorId="0"><text>'
+        "<r><t>Check this value before publishing.</t></r>"
+        "</text></comment>"
+        '<comment ref="C3" authorId="1"><text>'
+        "<r><t>Sourced from Q3 ledger.</t></r>"
+        "</text></comment>"
+        "</commentList>"
+        "</comments>"
+    )
+    # A minimal VML drawing part (opaque; we never parse it — it round-trips).
+    vml = (
+        '<xml xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:x="urn:schemas-microsoft-com:office:excel">'
+        '<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" '
+        'path="m,l,21600r21600,l21600,xe"/>'
+        "</xml>"
+    )
+    members = [
+        ("[Content_Types].xml", content_types([
+            ("/xl/workbook.xml", CT_WORKBOOK),
+            ("/xl/worksheets/sheet1.xml", CT_WORKSHEET),
+            ("/xl/comments1.xml", CT_COMMENTS),
+        ]) .replace(
+            f'<Default Extension="xml" ContentType="{CT_XML}"/>',
+            f'<Default Extension="xml" ContentType="{CT_XML}"/>'
+            f'<Default Extension="vml" ContentType="{CT_VML}"/>',
+        )),
+        ("_rels/.rels", root_rels()),
+        ("xl/workbook.xml", workbook([("Sheet1", 1, "rId1")])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels([
+            ("rId1", RT_WORKSHEET, "worksheets/sheet1.xml"),
+        ])),
+        ("xl/worksheets/sheet1.xml", sheet1),
+        ("xl/worksheets/_rels/sheet1.xml.rels", ws_rels),
+        ("xl/comments1.xml", comments),
+        ("xl/drawings/vmlDrawing1.vml", vml),
+    ]
+    write_zip("13-comments.xlsx", members)
+
+
 def main():
     gen_01_minimal()
     gen_02_formulas()
@@ -791,6 +941,9 @@ def main():
     gen_08_condfmt()
     gen_09_chart()
     gen_10_extlink()
+    gen_11_freeze()
+    gen_12_datavalidation()
+    gen_13_comments()
 
 
 if __name__ == "__main__":

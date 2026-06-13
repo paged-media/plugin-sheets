@@ -5,6 +5,7 @@
 
 export {
   type Align,
+  type DataBarRect,
   type LoweredCell,
   type LoweredColumn,
   type LoweredRow,
@@ -79,6 +80,7 @@ export {
   viewportHeightPt,
   viewportWidthPt,
   type GridCell,
+  type GridFreeze,
   type GridScene,
   type GridSelection,
   type GridSvgOptions,

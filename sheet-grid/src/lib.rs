@@ -64,6 +64,32 @@ pub struct GridScene {
     pub styles: Vec<LoweredStyle>,
     pub gridlines: RuleSet,
     pub selection: Option<GridSelection>,
+    /// The frozen row/column split rendered in this viewport (spec §8.1). The
+    /// renderer holds the first `rows`/`cols` of the sheet fixed while the rest
+    /// scrolls under them — the classic frozen-header view. `None` (the common
+    /// case) when no pane is frozen. When the scroll origin is past the frozen
+    /// band, the split still names how many leading sheet rows/cols are pinned
+    /// (the renderer composites the frozen band over the scrolled body). */
+    pub freeze: Option<GridFreeze>,
+}
+
+/// The frozen-pane split shown in a grid viewport (spec §8.1). `rows`/`cols`
+/// are the number of leading SHEET rows/columns held fixed; `frozen_width_pt`
+/// / `frozen_height_pt` are the pt extents of those frozen bands (the split
+/// line sits there), so a renderer can draw the pinned band + the split rule
+/// without re-summing widths. The mirror of `sheet_xlsx::FreezePanes` enriched
+/// with the band geometry the grid already computed.
+#[derive(serde::Serialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct GridFreeze {
+    /// Leading sheet rows held fixed at the top.
+    pub rows: u32,
+    /// Leading sheet columns held fixed at the left.
+    pub cols: u32,
+    /// pt width of the frozen column band (sum of the frozen columns' widths).
+    pub frozen_width_pt: f64,
+    /// pt height of the frozen row band (sum of the frozen rows' heights).
+    pub frozen_height_pt: f64,
 }
 
 /// The windowed viewport: the first visible `(row, col)`, how many of each
@@ -115,16 +141,25 @@ pub struct GridSelection {
 }
 
 /// Per-scene options. `include_gridlines` toggles the [`RuleSet`] at every
-/// visible track boundary (like the page lowering's grid rules).
+/// visible track boundary (like the page lowering's grid rules); `freeze_rows`
+/// / `freeze_cols` are the frozen-pane split (spec §8.1) to render — the number
+/// of leading SHEET rows/columns held fixed (0 = none). The grid resolves these
+/// to the [`GridFreeze`] band geometry on the scene.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct GridOptions {
     pub include_gridlines: bool,
+    /// Leading frozen rows (spec §8.1); 0 = no frozen row band.
+    pub freeze_rows: u32,
+    /// Leading frozen columns (spec §8.1); 0 = no frozen column band.
+    pub freeze_cols: u32,
 }
 
 impl Default for GridOptions {
     fn default() -> Self {
         GridOptions {
             include_gridlines: true,
+            freeze_rows: 0,
+            freeze_cols: 0,
         }
     }
 }
@@ -268,6 +303,22 @@ pub fn grid_scene(
         RuleSet::default()
     };
 
+    // ---- Frozen-pane split (spec §8.1). Sum the frozen leading rows'/cols'
+    // pt extents from the sheet origin (independent of the scroll origin — the
+    // band is always the FIRST `freeze_rows`/`freeze_cols` of the sheet). ----
+    let freeze = if opts.freeze_rows == 0 && opts.freeze_cols == 0 {
+        None
+    } else {
+        let frozen_width_pt = (0..opts.freeze_cols).map(|c| col_width_pt(ws, c)).sum();
+        let frozen_height_pt = (0..opts.freeze_rows).map(|r| row_height_pt(ws, r)).sum();
+        Some(GridFreeze {
+            rows: opts.freeze_rows,
+            cols: opts.freeze_cols,
+            frozen_width_pt,
+            frozen_height_pt,
+        })
+    };
+
     GridScene {
         viewport: GridViewport {
             first_row,
@@ -284,6 +335,7 @@ pub fn grid_scene(
         gridlines,
         // The panel supplies selection later (spec §8.1).
         selection: None,
+        freeze,
     }
 }
 
@@ -505,6 +557,7 @@ mod tests {
             35.0,
             &GridOptions {
                 include_gridlines: false,
+                ..GridOptions::default()
             },
         );
         assert!(off.gridlines.h.is_empty());
@@ -519,6 +572,70 @@ mod tests {
         assert!(scene.cells.is_empty());
         assert!(scene.viewport.cols >= 1);
         assert!(scene.viewport.rows >= 1);
+    }
+
+    #[test]
+    fn sheet_grid_scene_freeze_panes_band_geometry() {
+        // Frozen 1 col + 2 rows: the scene carries the split + the band pt
+        // extents (summed from the sheet origin, independent of scroll).
+        let (m, s) = model_with(&[]);
+        let scene = grid_scene(
+            &m,
+            s,
+            0,
+            0,
+            200.0,
+            90.0,
+            &GridOptions {
+                include_gridlines: true,
+                freeze_rows: 2,
+                freeze_cols: 1,
+            },
+        );
+        let fz = scene.freeze.expect("freeze present");
+        assert_eq!(fz.rows, 2);
+        assert_eq!(fz.cols, 1);
+        // 1 default col = 44.2575 pt; 2 default rows = 30 pt.
+        assert!((fz.frozen_width_pt - 44.2575).abs() < 1e-9);
+        assert!((fz.frozen_height_pt - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sheet_grid_scene_freeze_none_when_no_split() {
+        let (m, s) = model_with(&[]);
+        let scene = grid_scene(&m, s, 0, 0, 200.0, 90.0, &GridOptions::default());
+        assert!(scene.freeze.is_none());
+        // The wire omits `freeze` only as null (the field is always present).
+        let json = serde_json::to_string(&scene).unwrap();
+        assert!(json.contains("\"freeze\":null"));
+    }
+
+    #[test]
+    fn sheet_grid_scene_freeze_band_uses_explicit_widths() {
+        // Explicit col width / row height feed the frozen band extents.
+        let mut m = SheetModel::new();
+        let s = m.add_sheet("Sheet1");
+        {
+            let ws = m.sheet_mut(s).unwrap();
+            ws.col_widths.insert(0, 10.0); // 10 ch → 52.5 pt
+            ws.row_heights.insert(0, 30.0); // pt
+        }
+        let scene = grid_scene(
+            &m,
+            s,
+            0,
+            0,
+            300.0,
+            120.0,
+            &GridOptions {
+                include_gridlines: true,
+                freeze_rows: 1,
+                freeze_cols: 1,
+            },
+        );
+        let fz = scene.freeze.unwrap();
+        assert!((fz.frozen_width_pt - 52.5).abs() < 1e-9);
+        assert!((fz.frozen_height_pt - 30.0).abs() < 1e-9);
     }
 
     #[test]
