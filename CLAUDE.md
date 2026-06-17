@@ -19,14 +19,33 @@ launch property.
 Spec (the authority): `thoughts/docs/paged/plugin-sheets/base-idea.md`.
 SDK gap tracker: the cross-repo RFI `thoughts/docs/paged/plugin-platform/rfi-core-sdk-gaps.md` (S-NN ids in §6; per-plugin BREAKAGE_LOG retired 2026-06-12).
 
-Rust crates (Cargo workspace, top level per spec §4): `sheet-core`
-(frozen types + AST), `sheet-parser`, `sheet-calc`, `sheet-fn`,
-`sheet-format`, `sheet-xlsx`, `sheet-lower`, `sheet-js` (wasm-bindgen
-surface), `sheet-conformance` (TEST-ONLY). Reserved T1/T2: `sheet-grid`,
-`sheet-chart`. TS packages (pnpm `packages/*`, draw/web convention):
-`sheet-host-model` (pure LoweredContent→Mutation translation) +
-`sheet-bundle` (manifest + `activate(host)` + workbook panel + engine
-boot).
+**STATUS: M0–M3 shipped** (11 Rust crates, ~1188 nextest; the registry
+rows below are the live ledger). Rust crates (Cargo workspace, top level
+per spec §4): `sheet-core` (frozen types + AST), `sheet-parser`,
+`sheet-calc`, `sheet-fn`, `sheet-format`, `sheet-xlsx`, `sheet-lower`,
+`sheet-grid` (windowed GridScene — the in-frame surface), `sheet-chart`
+(plotters + a custom paged.draw `DrawingBackend` → a frozen ChartGeometry
+IR — NOT charming, NOT hand-rolled SVG), `sheet-js` (wasm-bindgen
+surface), `sheet-conformance` (TEST-ONLY). TS packages (pnpm `packages/*`,
+draw/web convention): `sheet-host-model` (pure LoweredContent→Mutation
+translation) + `sheet-bundle` (manifest + `activate(host)` + workbook
+panel + grid panel + engine boot).
+
+What landed (verified — see `state/registry/features/plugin-sheets.yaml`):
+the calc engine, function library, spill, structured tables, the chart
+engine, and **XLSX round-trip** (preservation-safe both directions). The
+page surface **lowers to a native `<Table>`** (S-03 / `sheet.lower.page`)
+with live **multi-frame pagination** across the host frame chain (S-05).
+The **in-frame grid renders + edits via K-1** (`sheet.grid.inframe`):
+`host.contribute.sceneLayer` paints the windowed grid (C-1 vector v0.39.0
++ text v0.40.0), and the modal edit session is wired end-to-end
+(double-click entry → content-coord cell select → keystroke editor →
+Enter/Esc, session-scoped Cmd-Z per ADR-012) — driven by the editor
+journey `apps/canvas/tests/journey/plugins/sheet.journey.spec.ts` and the
+e2e `sheet-modal-session.spec.ts`. Workbook **persistence** rides
+`host.blob` (OPFS, S-08) + the metadata binding envelope; the
+**data-provider CONSUMER** (S-15, `sheetFromDataset`) sources a sheet from
+a governed dataset.
 
 ## Project State & Feature Matrix (paged-media/state)
 
@@ -92,17 +111,21 @@ half (see "Two-registry split" below).
 - **The bundle touches host surfaces + React only.** No
   `@paged-media/shell`/`client` imports — writes via
   `host.document.mutate`, binding via `setPluginMetadata` (namespace
-  `x-paged:media.paged.sheet`), persistence honesty per S-08 (workbook
-  bytes in-memory only in T0; the panel says so). Panels are factories
-  closing over `BundleHost`; styling = the token layer (`--pg-*`,
-  `--status-*`, `--font-mono`, `--space-*`, `--radius-*`).
-- **Reserved seams stay honest.** editContext/objectType registration
-  now SHIP (the door no longer throws — S-01 partially resolved), but
-  sheets-mode double-click is still NOT wired in T0: it needs the §8.5
-  frame-content coordinate-inversion residual and is gated on the grid
-  surface (S-02). The grid surface (S-02), threading (S-05), importer
-  registration (S-06), workers (S-07), OPFS (S-08) are NOT implemented —
-  the manifest + UI say so explicitly. Never fake them.
+  `x-paged:media.paged.sheet`), persistence via `host.blob` (OPFS,
+  S-08 shipped — per-plugin keyed, restores the LAST imported workbook;
+  the panel says so). Panels are factories closing over `BundleHost`;
+  styling = the token layer (`--pg-*`, `--status-*`, `--font-mono`,
+  `--space-*`, `--radius-*`).
+- **Reserved seams stay honest.** The page-lowering (S-03), pagination
+  (S-05), in-frame grid + K-1 modal edit session (S-02/C-1/K-1), importer
+  registration (S-06/S-11), OPFS persistence (S-08), and the data-provider
+  consumer (S-15) all SHIP now (registry-confirmed). What is still open
+  stays labelled, never faked: per-cell fill/borders await a `tableCell`
+  ElementId kind; the editor-side metrics RPC (K-7) still returns the
+  estimate path; the §8.0 seamless-undo boundary is TBD; in-frame text v1
+  has caveats (default face, upright glyphs); full sheets-MODE (S-01),
+  owned-content interception (S-09), and range clipboard (S-14) are open.
+  The manifest + UI must keep saying so for the unshipped pieces.
 - **CLEAN-ROOM (§3).** `references/` (LibreOffice/IronCalc, IF ever
   mounted) is read-only, analyst-only, gitignored, excluded from all
   artifacts; implementers never read it. **T0: references/ is NOT
