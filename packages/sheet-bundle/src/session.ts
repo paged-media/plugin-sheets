@@ -34,6 +34,7 @@ import {
 } from "./engine";
 import { lowerSelectionToFrame, type LoweredTableInfo } from "./lower";
 import { lowerChartToFrame } from "./lower-chart";
+import { readWorkbookPart, writeWorkbookPart } from "./workbook-part";
 import {
   planCellStyleFromEntries,
   tableCellPositionOf,
@@ -673,10 +674,20 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     return scene;
   }
 
-  /** S-08: persist the imported bytes + name to `host.blob` (best-effort —
-   *  never let a persist failure break an import). Per-plugin keyed: the
-   *  LAST imported workbook is the one restored on reload. */
+  /** S-08: persist the imported bytes + name (best-effort — never let a
+   *  persist failure break an import). Per-plugin keyed: the LAST imported
+   *  workbook is the one restored on reload.
+   *
+   *  Two homes, by design: the `.paged` container PART (the portable one —
+   *  it travels WITH the document, the read PREFERENCE on restore) and the
+   *  per-browser `host.blob` (a fast local cache + backward-compat for hosts
+   *  with no container writer). */
   async function persistWorkbook(bytes: Uint8Array, name: string): Promise<void> {
+    try {
+      await writeWorkbookPart(host, bytes, name);
+    } catch (err) {
+      host.log.warn("workbook container-part persist failed", err);
+    }
     if (!host.supports("storage.blob@1")) return;
     try {
       await host.blob.write(BLOB_KEY, bytes);
@@ -738,6 +749,19 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     async restore() {
+      // Prefer the portable `.paged` container part — it travels WITH the
+      // document, so a fresh browser profile / another machine restores it
+      // even though the per-browser blob is empty there.
+      let fromPart: { bytes: Uint8Array; name: string } | null = null;
+      try {
+        fromPart = await readWorkbookPart(host);
+      } catch (err) {
+        host.log.warn("workbook container-part restore failed", err);
+      }
+      if (fromPart) return loadWorkbook(fromPart.bytes, fromPart.name, false);
+
+      // Fall back to the per-browser blob (S-08 — pre-migration documents, or
+      // a host with no container writer).
       if (!host.supports("storage.blob@1")) return false;
       let bytes: Uint8Array | null;
       try {
@@ -748,7 +772,17 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       }
       if (!bytes) return false; // nothing persisted — no engine boot
       const name = host.storage.get<string>(BLOB_NAME_KEY) ?? "workbook.xlsx";
-      return loadWorkbook(bytes, name, false);
+      const ok = await loadWorkbook(bytes, name, false);
+      // One-time migration: lift the per-browser blob into the container so the
+      // workbook now travels with the document on the next save.
+      if (ok) {
+        try {
+          await writeWorkbookPart(host, bytes, name);
+        } catch (err) {
+          host.log.warn("workbook container-part migration failed", err);
+        }
+      }
+      return ok;
     },
 
     setActiveSheet(id) {

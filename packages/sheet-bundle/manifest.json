@@ -58,6 +58,9 @@
     ],
     "objectTypes": [
       { "type": "sheetFrame", "bakedFallback": "rectangle" }
+    ],
+    "partTypes": [
+      { "type": "workbook", "role": "source", "format": "xlsx", "linkable": false }
     ]
   }
 }
