@@ -42,7 +42,8 @@ import {
   lowerToMutations,
   makeBinding,
   pageTableMutations,
-  tableContentBatch,
+  tableCellOps,
+  tableDecorOps,
   tableInsertOp,
   type LoweredContent,
   type Page,
@@ -106,6 +107,22 @@ async function activePageId(host: BundleHost): Promise<PageId | null> {
   return pages.length > 0 ? pages[0].selfId : null;
 }
 
+/** The bare `table_id` STRING from a created Table ElementId. `insertTable`
+ *  mints a Table addressed by `{ kind: "table", id: { story_id, table_id } }`
+ *  (the wire ElementId::Table is a STRUCTURED id, not a string). The
+ *  cell-addressing ops — `insertText.cell.tableId` and the `tableCell`
+ *  ElementId — need the bare `table_id`. Reading `createdId.id` as a string
+ *  (the old bug) nested the whole `{story_id, table_id}` object as `table_id`,
+ *  so the engine rejected the cell pour with "invalid type: map, expected a
+ *  string" and the table rendered BLANK. Narrow on `kind` to extract it. */
+function tableIdOf(created: ElementId): string {
+  if (created.kind === "table") {
+    return created.id.table_id;
+  }
+  // Defensive: a host minting a bare-string table id (none does today).
+  return created.id as unknown as string;
+}
+
 /** Raw frame id from a created ElementId (the hitTest filter / text ops
  *  key off the string id). */
 function frameIdOf(id: ElementId): string | null {
@@ -113,6 +130,44 @@ function frameIdOf(id: ElementId): string | null {
     return id.id as string;
   }
   return null;
+}
+
+/** Phase 3 — pour a native table's cell content in the engine's TWO apply
+ *  lanes, NOT one batch. The cell text is a TEXT edit (`insertText` with the
+ *  `TextCellAddr` qualifier); the decor (merges → `setCellSpan`, style fills
+ *  + grid rules → `tableCell`-scoped `setElementProperty`) is the FRAME /
+ *  property lane. `Operation::Batch` carries only frame ops — text isn't an
+ *  Operation — so combining them made the engine reject the WHOLE batch
+ *  (`Mutation::Batch` NotImplemented), leaving the table BLANK. Pour each
+ *  cell's text via its own mutate (text lane), then the decor as ONE batch
+ *  (frame lane). The two-lane split costs the single-undo atomicity the
+ *  combined batch had, but it is the only shape the engine applies. */
+async function pourCellContent(
+  host: BundleHost,
+  content: LoweredContent,
+  storyId: string,
+  tableId: string,
+): Promise<void> {
+  // TEXT lane — one InsertText per non-empty cell (insertText can't ride an
+  // Operation::Batch, so it can't be batched with the decor or each other).
+  const pour = tableCellOps(content, storyId, tableId);
+  const pourOps = pour.op === "batch" ? pour.args.ops : [pour];
+  for (const op of pourOps) {
+    const r = await host.document.mutate(op);
+    if (!r.applied) host.log.warn("lower: cell text pour rejected", r);
+  }
+  // FRAME lane — the decor (spans + fills + edge strokes) as ONE batch.
+  const decor = tableDecorOps(content, storyId, tableId);
+  if (decor.unmappedRules > 0) {
+    host.log.warn(
+      `lower: ${decor.unmappedRules} grid rule(s) aligned to no cell boundary ` +
+        "(not drawn natively)",
+    );
+  }
+  if (decor.ops.length > 0) {
+    const r = await host.document.mutate({ op: "batch", args: { ops: decor.ops } });
+    if (!r.applied) host.log.warn("lower: cell decor batch rejected", r);
+  }
 }
 
 /** Which translation lane the page lower drives. `native-table` (the
@@ -279,31 +334,16 @@ export async function lowerSelectionToFrame(
     await host.selection.set([outcome.createdId]);
     return frameId;
   }
-  const tableId = tableOutcome.createdId.id as string;
+  const tableId = tableIdOf(tableOutcome.createdId);
 
   // S-04 — report the resolved native table so the session can address its
   // cells for "new style from cell". Only the native-table lane reports
   // (the tab-text fallback has no table to address).
   opts?.onLowered?.({ frameId, storyId, tableId, sheet, range });
 
-  // Phase 3 — ONE batch: pour each cell's formatted text into its table
-  // cell, then the decor (merges → setCellSpan; style fills/borders + grid
-  // rules → tableCell-scoped cellFillColor / cell*EdgeStrokeWeight).
-  const { batch: cellBatch, unmappedRules } = tableContentBatch(
-    content,
-    storyId,
-    tableId,
-  );
-  if (unmappedRules > 0) {
-    host.log.warn(
-      `lower: ${unmappedRules} grid rule(s) aligned to no cell boundary ` +
-        "(not drawn natively)",
-    );
-  }
-  if (cellBatch.op === "batch" && cellBatch.args.ops.length > 0) {
-    const pour = await host.document.mutate(cellBatch);
-    if (!pour.applied) host.log.warn("lower: phase-3 cell pour rejected", pour);
-  }
+  // Phase 3 — pour the cell text (TEXT lane) then the decor (FRAME lane);
+  // two lanes, never one batch (see pourCellContent).
+  await pourCellContent(host, content, storyId, tableId);
 
   await host.selection.set([outcome.createdId]);
   return frameId;
@@ -461,13 +501,10 @@ async function lowerPageToFrame(
     host.log.warn("chain-lower: insertTable rejected", tableOutcome);
     return null;
   }
-  const tableId = tableOutcome.createdId.id as string;
+  const tableId = tableIdOf(tableOutcome.createdId);
 
-  const cellBatch = ops.cells(tableId);
-  if (cellBatch.op === "batch" && cellBatch.args.ops.length > 0) {
-    const pour = await host.document.mutate(cellBatch);
-    if (!pour.applied) host.log.warn("chain-lower: cell pour rejected", pour);
-  }
+  // Phase 3 — two lanes (text pour + decor batch), never one combined batch.
+  await pourCellContent(host, page.content, storyId, tableId);
   return tableId;
 }
 
