@@ -111,9 +111,15 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
           return { applied: true, createdId: null, pageIds: ["Page/u1"] };
         }
         if (m.op === "insertTable") {
+          // The REAL engine mints a structured Table id
+          // ({kind:"table", id:{story_id, table_id}}) — NOT a bare string.
+          // (The old bare-string mock hid the cell-addressing bug.)
           return {
             applied: true,
-            createdId: { kind: "textFrame", id: "table1" } as ElementId,
+            createdId: {
+              kind: "table",
+              id: { story_id: storyId ?? "Story/u9", table_id: "table1" },
+            } as ElementId,
             pageIds: ["Page/u1"],
           };
         }
@@ -148,7 +154,8 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
 
     expect(id).toBe("frame1");
-    expect(mutations).toHaveLength(3);
+    // phase1 batch + insertTable + 2 cell-text insertText + 1 decor batch.
+    expect(mutations).toHaveLength(5);
     // Phase 1 — frame + binding (NO drawn rules: the table draws borders).
     expect(mutations[0].op).toBe("batch");
     const ops = (mutations[0] as { args: { ops: Array<{ op: string }> } }).args
@@ -166,27 +173,29 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
     expect(tbl.args.cols).toBe(2);
     expect(tbl.args.columnWidths).toHaveLength(2);
     expect(tbl.args.columnWidths[0]).toBeGreaterThan(0); // measured, not 0
-    // Phase 3 — ONE batch: each cell's text poured into its table cell,
-    // then the decor (the engine's h-rule at the bottom boundary becomes
-    // tableCell-scoped bottom-edge strokes on both columns).
-    expect(mutations[2].op).toBe("batch");
-    const cellOps = (mutations[2] as {
-      args: {
-        ops: Array<{
-          op: string;
-          args: { text?: string; cell?: unknown; path?: string; elementId?: unknown };
-        }>;
-      };
-    }).args.ops;
-    const item = cellOps.find((o) => o.args.text === "Item");
-    expect(item?.op).toBe("insertText");
+    // Phase 3 — TWO lanes (NOT one batch): each cell's text via its own
+    // insertText (the text lane can't ride an Operation::Batch), then the
+    // decor (the engine's h-rule at the bottom boundary → tableCell-scoped
+    // bottom-edge strokes on both columns) as ONE batch — the LAST mutation.
+    const tail = mutations.slice(2) as Array<{
+      op: string;
+      args: { text?: string; cell?: unknown; ops?: Array<{ op: string; args: { path?: string; elementId?: unknown } }> };
+    }>;
+    const textPours = tail.filter((o) => o.op === "insertText");
+    expect(textPours).toHaveLength(2);
+    const item = textPours.find((o) => o.args.text === "Item");
     expect(item?.args.cell).toEqual({ tableId: "table1", row: 0, col: 0 });
-    expect(cellOps.find((o) => o.args.text === "Qty")?.args.cell).toEqual({
+    expect(textPours.find((o) => o.args.text === "Qty")?.args.cell).toEqual({
       tableId: "table1",
       row: 0,
       col: 1,
     });
-    const edges = cellOps.filter((o) => o.op === "setElementProperty");
+    const decor = mutations[mutations.length - 1] as {
+      op: string;
+      args: { ops: Array<{ op: string; args: { path?: string; elementId?: unknown } }> };
+    };
+    expect(decor.op).toBe("batch");
+    const edges = decor.args.ops.filter((o) => o.op === "setElementProperty");
     expect(edges).toHaveLength(2); // one per column under the h-rule at 18
     expect(edges.every((o) => o.args.path === "cellBottomEdgeStrokeWeight")).toBe(
       true,
@@ -473,9 +482,13 @@ function fakeChainHost(links: FrameChainLink[]) {
         mutations.push(m);
         if (m.op === "insertTable") {
           tableSeq += 1;
+          // Realistic structured Table id (as the real engine mints).
           return {
             applied: true,
-            createdId: { kind: "textFrame", id: `tbl${tableSeq}` } as ElementId,
+            createdId: {
+              kind: "table",
+              id: { story_id: `Story/f${tableSeq - 1}`, table_id: `tbl${tableSeq}` },
+            } as ElementId,
             pageIds: ["Page/u1"],
           };
         }
@@ -549,13 +562,13 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
     expect(inserts[0].args.storyId).toBe("Story/f0");
     expect(inserts[1].args.storyId).toBe("Story/f1");
 
-    // Each frame got its OWN page's cell text (r0 → f0, r1 → f1).
-    const pours = mutations.filter((m) => m.op === "batch") as Array<{
-      args: { ops: Array<{ args: { text?: string } }> };
+    // Each frame got its OWN page's cell text via individual insertText (the
+    // text lane — NOT a batch), r0 → tbl1, r1 → tbl2.
+    const pours = mutations.filter((m) => m.op === "insertText") as Array<{
+      args: { text?: string; cell?: { tableId?: string } };
     }>;
-    expect(pours).toHaveLength(2);
-    expect(pours[0].args.ops.some((o) => o.args.text === "r0")).toBe(true);
-    expect(pours[1].args.ops.some((o) => o.args.text === "r1")).toBe(true);
+    expect(pours.find((o) => o.args.text === "r0")?.args.cell?.tableId).toBe("tbl1");
+    expect(pours.find((o) => o.args.text === "r1")?.args.cell?.tableId).toBe("tbl2");
 
     expect(result!.tableIds).toEqual(["tbl1", "tbl2"]);
   });
