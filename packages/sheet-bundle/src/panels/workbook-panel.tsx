@@ -526,8 +526,9 @@ export function makeWorkbookPanel(
           </>
         )}
 
-        {/* S-08: be honest about where the workbook lives — persisted to
-         *  local storage when host.blob is wired, in-memory otherwise. */}
+        {/* S-08 / .paged container: be honest about where the workbook lives —
+         *  inside the .paged document (travels with the file) when host.parts
+         *  is wired, else this browser's local store, else in-memory. */}
         <p
           data-sheet-honesty
           style={{
@@ -536,9 +537,11 @@ export function makeWorkbookPanel(
             color: "var(--pg-muted-fg)",
           }}
         >
-          {host.supports("storage.blob@1")
-            ? "Workbook is saved to this browser's local store and restored on reload. The frame binding persists with the document."
-            : "Workbook lives in memory — re-import after reload. The frame binding persists with the document."}
+          {host.supports("storage.parts@1")
+            ? "Workbook is saved inside the document and travels with the .paged file. The frame binding persists with it."
+            : host.supports("storage.blob@1")
+              ? "Workbook is saved to this browser's local store and restored on reload. The frame binding persists with the document."
+              : "Workbook lives in memory — re-import after reload. The frame binding persists with the document."}
         </p>
       </div>
     );
