@@ -234,6 +234,54 @@ fn sheet_xlsx_preserve_unknown_parts() {
     assert!(saved.get("xl/vbaProject.bin").unwrap().starts_with(b"MZ"));
 }
 
+// ── sheet.xlsx.pivot ────────────────────────────────────────────────────────
+
+/// Pivot tables are NEVER interpreted — the publishing-first ruling keeps
+/// them as opaque OPC parts that round-trip byte-identical. A
+/// `pivotCacheDefinition` injected into the minimal fixture must survive an
+/// edit-free open→save unchanged (the preservation invariant, §10.2).
+#[test]
+fn sheet_xlsx_pivot_cache_preserved_byte_identical() {
+    use std::io::Write as _;
+
+    const PIVOT_PART: &str = "xl/pivotCache/pivotCacheDefinition1.xml";
+    let pivot_bytes: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" recordCount="3"/>"#;
+
+    // Inject the pivot part into the minimal workbook (rebuild the zip).
+    let base = load("01-minimal.xlsx");
+    let mut zin = zip::ZipArchive::new(std::io::Cursor::new(&base)).expect("valid base zip");
+    let mut injected = Vec::new();
+    {
+        let mut zout = zip::ZipWriter::new(std::io::Cursor::new(&mut injected));
+        let opts: zip::write::FileOptions<'_, ()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for i in 0..zin.len() {
+            let mut f = zin.by_index(i).unwrap();
+            if f.is_dir() {
+                continue;
+            }
+            let name = f.name().to_string();
+            let mut data = Vec::new();
+            std::io::Read::read_to_end(&mut f, &mut data).unwrap();
+            zout.start_file(name, opts).unwrap();
+            zout.write_all(&data).unwrap();
+        }
+        zout.start_file(PIVOT_PART, opts).unwrap();
+        zout.write_all(pivot_bytes).unwrap();
+        zout.finish().unwrap();
+    }
+
+    // Open → save (no edits) → the pivot cache survives byte-identical.
+    let doc = XlsxDocument::open(&injected).expect("opens a workbook carrying a pivot cache");
+    let out = doc.save().expect("re-saves");
+    let saved: BTreeMap<String, Vec<u8>> = unzip_parts(&out).into_iter().collect();
+    let kept = saved
+        .get(PIVOT_PART)
+        .unwrap_or_else(|| panic!("{PIVOT_PART} dropped — pivot preservation broken"));
+    assert_eq!(kept, pivot_bytes, "pivot cache must round-trip byte-identical");
+}
+
 // ── sheet.xlsx.preserve.unknown-subtrees ────────────────────────────────────
 
 /// Unknown `<worksheet>` children (sheetPr, conditionalFormatting, extLst)
