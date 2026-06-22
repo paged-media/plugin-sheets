@@ -1,8 +1,8 @@
 # CLAUDE.md — paged-media/plugin-sheets
 
 Orientation for Claude sessions in **paged-media/plugin-sheets** — the
-paged.sheet spreadsheet subsystem, delivered as a Paged plugin (private
-repo, And The Next GmbH).
+paged.sheet spreadsheet subsystem, delivered as a Paged plugin (public;
+dual-licensed AGPL-3.0 OR PMEL, And The Next GmbH).
 
 ## What this is
 
