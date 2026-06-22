@@ -12,7 +12,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "build": "tsup src/index.ts --format esm --dts --out-dir dist --clean",
+    "build": "tsup",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
