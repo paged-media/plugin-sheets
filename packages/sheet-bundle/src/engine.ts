@@ -40,7 +40,7 @@ import type {
   GridScene,
   LoweredContent,
   Page,
-} from "@paged-media/sheet-host-model";
+} from "../../sheet-host-model/src";
 
 // ------------------------------------------------------------ facade
 

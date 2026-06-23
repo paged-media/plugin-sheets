@@ -36,7 +36,7 @@ import {
   chartGeometryToMutations,
   makeBinding,
   type ChartPlacement,
-} from "@paged-media/sheet-host-model";
+} from "../../sheet-host-model/src";
 
 import type { SheetEngine } from "./engine";
 

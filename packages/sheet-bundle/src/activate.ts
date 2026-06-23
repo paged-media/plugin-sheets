@@ -32,7 +32,7 @@
 
 import type { BundleHandle, BundleHost } from "@paged-media/plugin-api";
 import { contributePanel } from "@paged-media/plugin-sdk";
-import { parseBinding } from "@paged-media/sheet-host-model";
+import { parseBinding } from "../../sheet-host-model/src";
 
 import manifest from "../manifest.json";
 

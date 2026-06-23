@@ -38,7 +38,7 @@ import {
   type GridCell,
   type GridScene,
   type GridSelection,
-} from "@paged-media/sheet-host-model";
+} from "../../sheet-host-model/src";
 
 import {
   bootEmptyEngine,
@@ -57,7 +57,7 @@ import {
   planCellStyleFromEntries,
   tableCellPositionOf,
   type ReadEntry,
-} from "@paged-media/sheet-host-model";
+} from "../../sheet-host-model/src";
 
 /** S-08 persistence keys: the workbook bytes live in `host.blob` (binary),
  *  its display name in the KV `host.storage`. Per-plugin — the last

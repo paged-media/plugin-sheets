@@ -65,7 +65,7 @@ import {
   tableInsertOp,
   type LoweredContent,
   type Page,
-} from "@paged-media/sheet-host-model";
+} from "../../sheet-host-model/src";
 
 import type { FrameBox, SheetEngine } from "./engine";
 

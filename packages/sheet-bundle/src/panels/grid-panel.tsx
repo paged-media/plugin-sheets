@@ -53,7 +53,7 @@ import {
   matchFunctions,
   type FunctionEntry,
   type GridScene,
-} from "@paged-media/sheet-host-model";
+} from "../../../sheet-host-model/src";
 
 import { columnLabel, type WorkbookSession } from "../session";
 
