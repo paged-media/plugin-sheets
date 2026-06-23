@@ -1,5 +1,5 @@
 {
-  "name": "@paged-media/sheet-bundle",
+  "name": "@paged-media/sheet",
   "private": false,
   "version": "0.1.0-canary.0",
   "type": "module",
@@ -16,9 +16,8 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@paged-media/plugin-api": "canary",
-    "@paged-media/plugin-sdk": "canary",
-    "@paged-media/sheet-host-model": "workspace:*"
+    "@paged-media/plugin-api": "0.2.25-canary.0",
+    "@paged-media/plugin-sdk": "0.2.25-canary.0"
   },
   "peerDependencies": {
     "react": "^18.3.0"
@@ -30,7 +29,8 @@
     "react": "^18.3.1",
     "react-test-renderer": "18.3.1",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "@paged-media/sheet-host-model": "workspace:*"
   },
   "files": [
     "dist",
