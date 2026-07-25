@@ -43,15 +43,24 @@ jobs:
         run: cargo nextest run --workspace --profile ci || true
       - name: coverage gate (the §12.2 verification invariant)
         run: cargo run -p sheet-conformance --bin coverage-gate
-      - uses: paged-media/state/actions/publish-results@main
-        if: ${{ always() }}
+      # Evidence hand-off, INVERTED (2026-07-25). This step used to call
+      # paged-media/state/actions/publish-results@main, but that action lives in the
+      # PRIVATE paged-media/state repo, and GitHub refuses to resolve a private
+      # repo's action from a public workflow ("Unable to resolve action
+      # paged-media/state, not found") — so the job died at SET-UP, before any step
+      # ran, and this lane never published a single result. Follow the inverted
+      # pattern core/ci.yml and plugin-doc use: upload the results as an artifact
+      # and let state PULL it (private state can read a public repo's artifacts).
+      # Consumer: state/.github/workflows/siblings-pull.yml (source=plugin-sheets,
+      # suite=nextest, format=nextest-junit).
+      - name: upload nextest results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
         with:
-          source: plugin-sheets
-          suite: nextest
-          format: nextest-junit
+          name: nextest-junit
           path: target/nextest/ci/junit.xml
-          map: "true"
-          dispatch-token: ${{ secrets.STATE_DISPATCH_TOKEN }}
+          if-no-files-found: error
+          retention-days: 14
 
   wasm:
     runs-on: ubuntu-latest
