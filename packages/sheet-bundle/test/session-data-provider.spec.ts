@@ -91,6 +91,7 @@ function makeFakeEngine(): SheetEngine {
     // (header + 2 data rows) matches the fixture below.
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 3, cols: 3 }],
     listCharts: () => [],
+    addChart: () => 0,
     listFreezePanes: () => [],
     listDataValidations: () => [],
     listComments: () => [],

@@ -121,6 +121,7 @@ function statefulEngine() {
       { id: 1, name: "Sheet2", rows: 4, cols: 4 },
     ],
     listCharts: () => [],
+    addChart: () => 0,
     listFreezePanes: () => [],
     listDataValidations: () => [],
     listComments: () => [],

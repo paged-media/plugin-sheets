@@ -1380,6 +1380,90 @@ impl SheetSession {
             .collect()
     }
 
+    /// AUTHOR a chart over live data (editor-ui-coverage M — the model was
+    /// import-only). Constructs a [`ChartModel`] and appends it to the
+    /// session's chart vector: `values` spans one series per COLUMN;
+    /// `categories` (may be empty) is the shared label range; `kind` ∈
+    /// bar|column|line|area|pie|donut|scatter; empty `title` = none;
+    /// legend on when there is more than one series. Returns the new
+    /// chart index — the same handle `get_chart_geometry` / the lowering
+    /// take, so an authored chart renders and lowers exactly like a
+    /// parsed one. HONEST SCOPE (publishing-first): authored charts live
+    /// on the PAGE — the xlsx writer never re-derives chart parts, so a
+    /// save round-trip carries only the workbook's original charts.
+    pub fn add_chart(
+        &mut self,
+        sheet: u16,
+        values: &str,
+        categories: &str,
+        kind: &str,
+        title: &str,
+    ) -> Result<u32, SessionError> {
+        use sheet_chart::{Axis, ChartKind, ChartModel, Series};
+        self.validate_sheet(sheet)?;
+        let chart_kind = match kind {
+            "bar" => ChartKind::Bar,
+            "column" => ChartKind::Column,
+            "line" => ChartKind::Line,
+            "area" => ChartKind::Area,
+            "pie" => ChartKind::Pie,
+            "donut" => ChartKind::Donut,
+            "scatter" => ChartKind::Scatter,
+            other => {
+                return Err(SessionError(format!(
+                    "unknown chart kind {other:?} (bar|column|line|area|pie|donut|scatter)"
+                )))
+            }
+        };
+        let vr = parse_range(values)?;
+        let (top, bottom) = (vr.r0.min(vr.r1), vr.r0.max(vr.r1));
+        let (left, right) = (vr.c0.min(vr.c1), vr.c0.max(vr.c1));
+        let cell = |row: u32, col: u32| CellRef {
+            sheet: sheet as SheetId,
+            row,
+            col,
+            row_abs: false,
+            col_abs: false,
+        };
+        let cat_ref = if categories.is_empty() {
+            None
+        } else {
+            let cr = parse_range(categories)?;
+            Some(RangeRef {
+                start: cell(cr.r0.min(cr.r1), cr.c0.min(cr.c1)),
+                end: cell(cr.r0.max(cr.r1), cr.c0.max(cr.c1)),
+            })
+        };
+        let series: Vec<Series> = (left..=right)
+            .map(|col| Series {
+                name: None,
+                categories: cat_ref.clone(),
+                values: RangeRef {
+                    start: cell(top, col),
+                    end: cell(bottom, col),
+                },
+                color: None,
+            })
+            .collect();
+        let legend = series.len() > 1;
+        self.doc.charts.push(XlsxChart {
+            host_sheet: sheet as SheetId,
+            model: ChartModel {
+                kind: chart_kind,
+                title: if title.is_empty() {
+                    None
+                } else {
+                    Some(title.into())
+                },
+                series,
+                cat_axis: Axis::default(),
+                val_axis: Axis::default(),
+                legend,
+            },
+        });
+        Ok((self.doc.charts.len() - 1) as u32)
+    }
+
     /// Enumerate the workbook's parsed charts (M2 charts track, spec §8.4):
     /// index (the [`get_chart_geometry`](Self::get_chart_geometry) handle), host
     /// sheet, kind, title, and series count. Empty for a workbook with no

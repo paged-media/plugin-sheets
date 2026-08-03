@@ -58,6 +58,7 @@ function fakeEngine() {
     setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 9, cols: 9 }],
     listCharts: () => [],
+    addChart: () => 0,
     listFreezePanes: () => [],
     listDataValidations: () => [],
     listComments: () => [],

@@ -174,6 +174,15 @@ export interface WorkbookSession {
    *  two-phase flow in lower-chart.ts). `chartIndex` indexes [`listCharts`].
    *  Returns false when there is no engine or the lower fails. */
   lowerChart(chartIndex: number): Promise<boolean>;
+  /** AUTHOR a chart over the ACTIVE sheet's live data (editor-ui-coverage
+   *  M — the model was import-only). Page-side only: never written back
+   *  to the xlsx (the writer re-derives no chart parts). */
+  authorChart(
+    values: string,
+    categories: string,
+    kind: string,
+    title: string,
+  ): { ok: true; index: number } | { ok: false; message: string };
   /** Window the active sheet into a [`GridScene`] for the grid panel (spec
    *  §8.1). Delegates the windowing to `engine.getGridScene` (Rust) and
    *  overlays the session's current [`gridSelection`] onto the scene.
@@ -964,6 +973,28 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       } catch (err) {
         host.log.warn("listCharts: engine call failed", err);
         return [];
+      }
+    },
+
+    authorChart(values, categories, kind, title) {
+      if (!state.engine || state.activeSheet === null) {
+        return { ok: false as const, message: "no workbook loaded" };
+      }
+      try {
+        const index = state.engine.addChart(
+          state.activeSheet,
+          values,
+          categories,
+          kind,
+          title,
+        );
+        emitter.emit();
+        return { ok: true as const, index };
+      } catch (err) {
+        return {
+          ok: false as const,
+          message: err instanceof Error ? err.message : String(err),
+        };
       }
     },
 

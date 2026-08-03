@@ -316,6 +316,17 @@ export interface SheetEngine {
   /** Enumerate the workbook's charts (M2 charts track, spec §8.4). Parsed
    *  from the XLSX chart parts on load; empty for a chartless workbook. */
   listCharts(): ChartInfo[];
+  /** AUTHOR a chart over live data (one series per values column; kind ∈
+   *  bar|column|line|area|pie|donut|scatter). Returns the new chart index
+   *  (same handle the geometry/lowering lanes take). Publishing-first:
+   *  authored charts are page-side only — never written back to xlsx. */
+  addChart(
+    sheet: number,
+    values: string,
+    categories: string,
+    kind: string,
+    title: string,
+  ): number;
   /** Enumerate the worksheets with a FROZEN PANE (spec §8.1). Read-only
    *  derived state parsed from the workbook's `<sheetViews><pane>` on load
    *  (the view round-trips byte-identical); empty when none are frozen. */
@@ -408,6 +419,13 @@ export interface SheetWasmEngine {
   ): void;
   list_sheets(): SheetInfo[];
   list_charts(): ChartInfo[];
+  add_chart(
+    sheet: number,
+    values: string,
+    categories: string,
+    kind: string,
+    title: string,
+  ): number;
   list_freeze_panes(): FreezeInfo[];
   list_data_validations(): DataValidationInfo[];
   list_comments(): CommentInfo[];
@@ -455,6 +473,8 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.set_grid_selection(sheet, anchorRow, anchorCol, rows, cols),
     listSheets: () => wasm.list_sheets(),
     listCharts: () => wasm.list_charts(),
+    addChart: (sheet, values, categories, kind, title) =>
+      wasm.add_chart(sheet, values, categories, kind, title),
     listFreezePanes: () => wasm.list_freeze_panes(),
     listDataValidations: () => wasm.list_data_validations(),
     listComments: () => wasm.list_comments(),

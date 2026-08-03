@@ -427,3 +427,49 @@ fn max_bar_height(g: &ChartGeometry) -> f64 {
         })
         .fold(0.0_f64, f64::max)
 }
+
+// ── sheet.chart.authoring ───────────────────────────────────────────────────
+
+/// AUTHOR a chart over live data (editor-ui-coverage M — the model was
+/// import-only): add_chart constructs a ChartModel (one series per values
+/// column, shared categories, legend iff >1 series) and returns an index the
+/// SAME geometry generator serves. Publishing-first honesty: the xlsx writer
+/// never re-derives chart parts, so a save round-trip carries only the
+/// workbook's ORIGINAL charts — asserted here.
+#[test]
+fn sheet_chart_authoring_add_chart_generates_and_never_saves_back() {
+    let mut session = SheetSession::load_xlsx(&load("09-chart.xlsx")).expect("load 09-chart");
+    let before = session.list_charts().len();
+
+    // Two value columns → two series, legend on; B-column categories.
+    let idx = session
+        .add_chart(0, "B2:C4", "A2:A4", "line", "Authored")
+        .expect("author a chart");
+    assert_eq!(idx as usize, before, "appended at the end");
+    let charts = session.list_charts();
+    assert_eq!(charts.len(), before + 1);
+    let authored = &charts[idx as usize];
+    assert_eq!(authored.kind, "line");
+    assert_eq!(authored.series_count, 2);
+    assert_eq!(authored.title.as_deref(), Some("Authored"));
+
+    // The SAME generator projects it (real geometry, not a stub).
+    let g = session
+        .get_chart_geometry(idx, 300.0, 200.0)
+        .expect("authored chart geometry");
+    assert!(!g.prims.is_empty(), "authored chart draws primitives");
+
+    // Bad inputs stay boundary errors.
+    assert!(session.add_chart(0, "B2:C4", "", "hexagon", "").is_err());
+    assert!(session.add_chart(9, "B2:C4", "", "line", "").is_err());
+
+    // Save: the authored chart does NOT invent an xlsx chart part — the
+    // round-trip carries the original workbook charts only.
+    let saved = session.save_xlsx().expect("save");
+    let reloaded = SheetSession::load_xlsx(&saved).expect("reload");
+    assert_eq!(
+        reloaded.list_charts().len(),
+        before,
+        "authored charts are page-side only (no chart-part write-back)"
+    );
+}

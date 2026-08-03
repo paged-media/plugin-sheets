@@ -312,6 +312,25 @@ mod wasm {
             to_js(&self.session.list_charts()).unwrap_or(JsValue::NULL)
         }
 
+        /// AUTHOR a chart over live data (one series per values column;
+        /// empty `categories` = none; kind ∈ bar|column|line|area|pie|
+        /// donut|scatter; empty title = none). Returns the new chart
+        /// index — the same handle the geometry/lowering lanes take.
+        /// Publishing-first: authored charts are PAGE-side only (the
+        /// xlsx writer never re-derives chart parts).
+        pub fn add_chart(
+            &mut self,
+            sheet: u16,
+            values: &str,
+            categories: &str,
+            kind: &str,
+            title: &str,
+        ) -> Result<u32, JsValue> {
+            self.session
+                .add_chart(sheet, values, categories, kind, title)
+                .map_err(map_err)
+        }
+
         /// Enumerate the worksheets with a FROZEN PANE (spec §8.1):
         /// `[{sheet,rows,cols}]`. The split also folds into `get_grid_scene`.
         pub fn list_freeze_panes(&self) -> JsValue {

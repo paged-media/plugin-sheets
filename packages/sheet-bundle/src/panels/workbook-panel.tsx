@@ -186,6 +186,30 @@ export function makeWorkbookPanel(
     const [styleName, setStyleName] = useState("Cell style");
     const [styleMsg, setStyleMsg] = useState<string | null>(null);
 
+    // Chart authoring (editor-ui-coverage M — the model was import-only).
+    const [chartKind, setChartKind] = useState("column");
+    const [chartValues, setChartValues] = useState("");
+    const [chartCats, setChartCats] = useState("");
+    const [chartTitle, setChartTitle] = useState("");
+    const [chartMsg, setChartMsg] = useState<string | null>(null);
+    const onAuthorChart = useCallback(() => {
+      if (!chartValues.trim()) {
+        setChartMsg("enter a values range (e.g. B2:C8) first");
+        return;
+      }
+      const res = session.authorChart(
+        chartValues.trim(),
+        chartCats.trim(),
+        chartKind,
+        chartTitle.trim(),
+      );
+      setChartMsg(
+        res.ok
+          ? `Chart #${res.index} authored — lower it below (page-side only; not saved into the xlsx).`
+          : res.message,
+      );
+    }, [chartValues, chartCats, chartKind, chartTitle]);
+
     // Function browser (editor-ui-coverage M): filter + copy-to-clipboard.
     const [fnFilter, setFnFilter] = useState("");
     const [fnMsg, setFnMsg] = useState<string | null>(null);
@@ -603,6 +627,93 @@ export function makeWorkbookPanel(
                       {comments.length > 3 ? " · …" : ""} (read-only)
                     </p>
                   )}
+                </div>
+              );
+            })()}
+
+            {/* CHART AUTHORING — the 7-kind chart engine was import-only.
+             *  One series per values column; categories optional. Authored
+             *  charts render + lower through the SAME generator as parsed
+             *  ones, and stay PAGE-side (never written back to the xlsx —
+             *  the publishing-first ruling, asserted in conformance). */}
+            <div style={kicker}>Author chart</div>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              <select
+                data-sheet-chart-kind
+                value={chartKind}
+                onChange={(e) => setChartKind(e.target.value)}
+                style={input}
+              >
+                {["column", "bar", "line", "area", "pie", "donut", "scatter"].map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              <input
+                data-sheet-chart-values
+                type="text"
+                value={chartValues}
+                onChange={(e) => setChartValues(e.target.value)}
+                placeholder="values e.g. B2:C8"
+                style={{ ...input, width: 110 }}
+              />
+              <input
+                data-sheet-chart-cats
+                type="text"
+                value={chartCats}
+                onChange={(e) => setChartCats(e.target.value)}
+                placeholder="labels (opt)"
+                style={{ ...input, width: 90 }}
+              />
+              <input
+                data-sheet-chart-title
+                type="text"
+                value={chartTitle}
+                onChange={(e) => setChartTitle(e.target.value)}
+                placeholder="title (opt)"
+                style={{ ...input, width: 110 }}
+              />
+              <button
+                type="button"
+                data-sheet-chart-author
+                onClick={onAuthorChart}
+                style={primaryButton}
+              >
+                Author
+              </button>
+            </div>
+            {chartMsg && (
+              <p data-sheet-chart-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                {chartMsg}
+              </p>
+            )}
+            {(() => {
+              const eng = st.engine;
+              if (!eng) return null;
+              const charts = eng.listCharts();
+              if (charts.length === 0) return null;
+              return (
+                <div data-sheet-chart-list>
+                  {charts.map((c) => (
+                    <div
+                      key={c.index}
+                      style={{ display: "flex", alignItems: "center", gap: 6, ...body }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        #{c.index} {c.kind}
+                        {c.title ? ` — ${c.title}` : ""} ({c.seriesCount} series)
+                      </span>
+                      <button
+                        type="button"
+                        data-sheet-chart-lower={c.index}
+                        onClick={() => void session.lowerChart(c.index)}
+                        style={{ font: "11px var(--font-sans, sans-serif)", cursor: "pointer" }}
+                      >
+                        Lower to frame
+                      </button>
+                    </div>
+                  ))}
                 </div>
               );
             })()}

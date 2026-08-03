@@ -130,6 +130,10 @@ function fakeWasm() {
       calls.push({ method: "list_sheets", args: [] });
       return [{ id: 0, name: "Sheet1", rows: 10, cols: 4 }];
     },
+    add_chart() {
+      calls.push({ method: "add_chart", args: [] });
+      return 0;
+    },
     list_charts() {
       calls.push({ method: "list_charts", args: [] });
       return [
