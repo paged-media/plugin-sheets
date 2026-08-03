@@ -143,6 +143,7 @@ describe("sheet_plugin_bundle_activate", () => {
       "media.paged.sheet.command.sheetFromDataset",
       "media.paged.sheet.command.copySelection",
       "media.paged.sheet.command.pasteSelection",
+      "media.paged.sheet.command.styleFromCell",
     ]);
   });
 

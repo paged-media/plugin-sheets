@@ -200,6 +200,25 @@ export function activate(host: BundleHost): BundleHandle {
       if (!r.ok) host.log.warn(`pasteAtSelection: ${r.message}`);
     },
   });
+  // S-04 — the palette entry for the panel's style-from-cell affordance
+  // (session.newCellStyleFromSelection was implemented but commandless —
+  // the editor-ui-coverage spec's finding). Auto-named here; the workbook
+  // panel keeps the named form.
+  host.contribute.command({
+    id: "media.paged.sheet.command.styleFromCell",
+    title: "New cell style from selection",
+    category: "Sheet",
+    handler: async () => {
+      const r = await session.newCellStyleFromSelection("Cell style");
+      host.log.info(
+        r.ok
+          ? `styleFromCell: captured ${r.capturedCount} propert${
+              r.capturedCount === 1 ? "y" : "ies"
+            }`
+          : `styleFromCell: ${r.message}`,
+      );
+    },
+  });
 
   // K-1 entry — double-click a lowered sheet frame to ENTER "sheet" mode:
   // the live in-frame grid renders (C-1 sceneLayer); Esc / exit clears it.

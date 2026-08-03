@@ -185,6 +185,22 @@ export function makeWorkbookPanel(
     // platform owns the style mint + the cell read; this only routes the name.
     const [styleName, setStyleName] = useState("Cell style");
     const [styleMsg, setStyleMsg] = useState<string | null>(null);
+
+    // Function browser (editor-ui-coverage M): filter + copy-to-clipboard.
+    const [fnFilter, setFnFilter] = useState("");
+    const [fnMsg, setFnMsg] = useState<string | null>(null);
+    const onCopyFunction = useCallback(async (name: string) => {
+      if (!host.supports("clipboard@1")) {
+        setFnMsg(`${name} — no clipboard door on this host; type it in the grid`);
+        return;
+      }
+      try {
+        await host.clipboard.write({ text: `${name}()` });
+        setFnMsg(`${name}() copied — paste into a cell`);
+      } catch (e) {
+        setFnMsg(`${name}: clipboard write failed (${String(e)})`);
+      }
+    }, []);
     const onNewCellStyle = useCallback(async () => {
       const res = await session.newCellStyleFromSelection(
         styleName.trim() || "Cell style",
@@ -541,6 +557,139 @@ export function makeWorkbookPanel(
               table. Applying the style to cells is pending the platform Table
               style surface.
             </p>
+
+            {/* INSPECT — the three read-only inventories the engine has
+             *  carried all along (freeze panes, data validations, comments)
+             *  with, until now, no panel caller. Preserve-first honesty:
+             *  validations are preserved, never enforced; comments are
+             *  display-only. */}
+            {(() => {
+              const eng = st.engine;
+              if (!eng) return null;
+              const freezes = eng.listFreezePanes();
+              const validations = eng.listDataValidations();
+              const comments = eng.listComments();
+              if (
+                freezes.length === 0 &&
+                validations.length === 0 &&
+                comments.length === 0
+              ) {
+                return null;
+              }
+              return (
+                <div data-sheet-inspect>
+                  <div style={kicker}>Workbook inventory</div>
+                  {freezes.map((f, i) => (
+                    <p key={`f${i}`} data-sheet-freeze style={{ ...body, margin: 0 }}>
+                      {sheets[f.sheet]?.name ?? `Sheet ${f.sheet + 1}`}: frozen{" "}
+                      {f.rows} row{f.rows === 1 ? "" : "s"} · {f.cols} col
+                      {f.cols === 1 ? "" : "s"} (rendered; no toggle yet)
+                    </p>
+                  ))}
+                  {validations.map((v, i) => (
+                    <p key={`v${i}`} data-sheet-validation style={{ ...body, margin: 0 }}>
+                      {sheets[v.sheet]?.name ?? `Sheet ${v.sheet + 1}`}: {v.count}{" "}
+                      data validation{v.count === 1 ? "" : "s"} (
+                      {v.kinds.join(", ")}) — preserved, not enforced
+                    </p>
+                  ))}
+                  {comments.length > 0 && (
+                    <p data-sheet-comments style={{ ...body, margin: 0 }}>
+                      {comments.length} comment{comments.length === 1 ? "" : "s"}:{" "}
+                      {comments
+                        .slice(0, 3)
+                        .map((c) => `${c.author || "?"} @ r${c.row + 1}c${c.col + 1}`)
+                        .join(" · ")}
+                      {comments.length > 3 ? " · …" : ""} (read-only)
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* FUNCTION BROWSER — the 224-function library was reachable only
+             *  by typing into the grid formula bar. Searchable, grouped by
+             *  family, arg counts from the engine's own registry (never a
+             *  hand-kept list). Click copies `NAME(` for pasting into a cell
+             *  when the clipboard door is wired. */}
+            <div style={kicker}>Functions</div>
+            <input
+              data-sheet-fn-filter
+              type="text"
+              value={fnFilter}
+              onChange={(e) => setFnFilter(e.target.value)}
+              placeholder="Filter 224 functions…"
+              style={input}
+            />
+            {fnMsg && (
+              <p style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>{fnMsg}</p>
+            )}
+            <div
+              data-sheet-fn-list
+              style={{ maxHeight: 180, overflowY: "auto", marginTop: "var(--space-1, 4px)" }}
+            >
+              {(() => {
+                const eng = st.engine;
+                if (!eng) return null;
+                const all = eng.listFunctions();
+                const q = fnFilter.trim().toUpperCase();
+                const hitsFn = q
+                  ? all.filter(
+                      (f) =>
+                        f.name.includes(q) || f.family.toUpperCase().includes(q),
+                    )
+                  : all;
+                const byFamily = new Map<string, typeof hitsFn>();
+                for (const f of hitsFn) {
+                  const list = byFamily.get(f.family) ?? [];
+                  list.push(f);
+                  byFamily.set(f.family, list);
+                }
+                return [...byFamily.entries()].map(([family, fns]) => (
+                  <div key={family}>
+                    <div
+                      style={{
+                        font: "10px var(--font-sans, sans-serif)",
+                        color: "var(--pg-muted-fg)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        margin: "var(--space-1, 4px) 0 2px",
+                      }}
+                    >
+                      {family} ({fns.length})
+                    </div>
+                    {fns.map((f) => (
+                      <button
+                        key={f.name}
+                        type="button"
+                        data-sheet-fn={f.name}
+                        title={`${f.name} — ${f.minArgs}${
+                          f.maxArgs === null
+                            ? "+"
+                            : f.maxArgs === f.minArgs
+                              ? ""
+                              : `–${f.maxArgs}`
+                        } arg(s); click to copy`}
+                        onClick={() => void onCopyFunction(f.name)}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          border: "none",
+                          background: "none",
+                          cursor: "pointer",
+                          padding: "1px 0",
+                          font: "11px var(--font-mono, monospace)",
+                          color: "var(--pg-fg)",
+                        }}
+                      >
+                        {f.name}
+                      </button>
+                    ))}
+                  </div>
+                ));
+              })()}
+            </div>
           </>
         )}
 

@@ -65,6 +65,7 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.sheetFromDataset",
       "media.paged.sheet.command.copySelection",
       "media.paged.sheet.command.pasteSelection",
+      "media.paged.sheet.command.styleFromCell",
     ]);
   });
 
