@@ -121,8 +121,9 @@ half (see "Two-registry split" below).
   registration (S-06/S-11), OPFS persistence (S-08), and the data-provider
   consumer (S-15) all SHIP now (registry-confirmed). What is still open
   stays labelled, never faked: per-cell fill/borders await a `tableCell`
-  ElementId kind; the editor-side metrics RPC (K-7) still returns the
-  estimate path; the §8.0 seamless-undo boundary is TBD; in-frame text v1
+  ElementId kind (the editor-side metrics RPC (K-7) is CLOSED — real
+  shaper metrics since v0.38.0, e2e-pinned in the editor's
+  `text-measure.spec.ts`); the §8.0 seamless-undo boundary is TBD; in-frame text v1
   has caveats (default face, upright glyphs); full sheets-MODE (S-01),
   owned-content interception (S-09), and range clipboard (S-14) are open.
   The manifest + UI must keep saying so for the unshipped pieces.
