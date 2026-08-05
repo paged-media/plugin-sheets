@@ -297,7 +297,10 @@ fn sheet_xlsx_pivot_cache_preserved_byte_identical() {
     let kept = saved
         .get(PIVOT_PART)
         .unwrap_or_else(|| panic!("{PIVOT_PART} dropped — pivot preservation broken"));
-    assert_eq!(kept, pivot_bytes, "pivot cache must round-trip byte-identical");
+    assert_eq!(
+        kept, pivot_bytes,
+        "pivot cache must round-trip byte-identical"
+    );
 }
 
 // ── sheet.xlsx.preserve.unknown-subtrees ────────────────────────────────────

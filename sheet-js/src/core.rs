@@ -812,7 +812,13 @@ impl SheetSession {
                 vec![id]
             }
             None => {
-                let n = self.engine.as_ref().expect("engine present").model().sheets.len();
+                let n = self
+                    .engine
+                    .as_ref()
+                    .expect("engine present")
+                    .model()
+                    .sheets
+                    .len();
                 (0..n as u16).collect()
             }
         };
@@ -883,7 +889,13 @@ impl SheetSession {
                 vec![id]
             }
             None => {
-                let n = self.engine.as_ref().expect("engine present").model().sheets.len();
+                let n = self
+                    .engine
+                    .as_ref()
+                    .expect("engine present")
+                    .model()
+                    .sheets
+                    .len();
                 (0..n as u16).collect()
             }
         };
@@ -1209,8 +1221,7 @@ impl SheetSession {
         let model = self.engine.as_ref().expect("engine present").model();
         let mut cache = FormatCache::default();
         let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
-        let mut rows: Vec<Vec<String>> =
-            Vec::with_capacity((bottom - top + 1) as usize);
+        let mut rows: Vec<Vec<String>> = Vec::with_capacity((bottom - top + 1) as usize);
         for r in top..=bottom {
             let mut row = Vec::with_capacity((right - left + 1) as usize);
             for c in left..=right {
@@ -1505,7 +1516,7 @@ impl SheetSession {
         let series: Vec<Series> = (left..=right)
             .map(|col| Series {
                 name: None,
-                categories: cat_ref.clone(),
+                categories: cat_ref,
                 values: RangeRef {
                     start: cell(top, col),
                     end: cell(bottom, col),
@@ -1564,7 +1575,13 @@ impl SheetSession {
         // The model lives in the engine after load (the doc model is a
         // placeholder); use the engine's sheet count, then read the doc's
         // freeze map (keyed by SheetId regardless of where the model sits).
-        let sheet_count = self.engine.as_ref().expect("engine present").model().sheets.len();
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
         let mut out = Vec::new();
         for sid in 0..sheet_count as SheetId {
             let fp = self.doc.freeze_panes_of(sid);
@@ -1586,7 +1603,13 @@ impl SheetSession {
     /// grid shows an indicator (folded into `get_grid_scene`); this carries the
     /// text for the panel/hover. Empty for a workbook with no comments.
     pub fn list_comments(&self) -> Vec<CommentInfo> {
-        let sheet_count = self.engine.as_ref().expect("engine present").model().sheets.len();
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
         let mut out = Vec::new();
         for sid in 0..sheet_count as SheetId {
             let Some(cs) = self.doc.comments_of(sid) else {
@@ -1614,7 +1637,13 @@ impl SheetSession {
     /// `<dataValidations>` XML round-trips byte-identical regardless (the parse
     /// is read-only). Empty for a workbook with no validations.
     pub fn list_data_validations(&self) -> Vec<DataValidationInfo> {
-        let sheet_count = self.engine.as_ref().expect("engine present").model().sheets.len();
+        let sheet_count = self
+            .engine
+            .as_ref()
+            .expect("engine present")
+            .model()
+            .sheets
+            .len();
         let mut out = Vec::new();
         for sid in 0..sheet_count as SheetId {
             let Some(dv) = self.doc.data_validations_of(sid) else {

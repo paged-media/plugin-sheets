@@ -274,7 +274,13 @@ const ES_MONTHS_ABBR: [&str; 12] = [
     "ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sep.", "oct.", "nov.", "dic.",
 ];
 const ES_DAYS_FULL: [&str; 7] = [
-    "domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
+    "domingo",
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
 ];
 const ES_DAYS_ABBR: [&str; 7] = ["dom.", "lun.", "mar.", "mié.", "jue.", "vie.", "sáb."];
 

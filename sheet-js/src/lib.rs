@@ -61,8 +61,7 @@ pub mod core;
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use crate::core::{
-        FindOptions, FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg,
-        SheetSession,
+        FindOptions, FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg, SheetSession,
     };
     use wasm_bindgen::prelude::*;
 
@@ -163,7 +162,10 @@ mod wasm {
                 serde_wasm_bindgen::from_value(opts)
                     .map_err(|e| JsValue::from_str(&e.to_string()))?
             };
-            let hits = self.session.find_all(sheet, needle, opts).map_err(map_err)?;
+            let hits = self
+                .session
+                .find_all(sheet, needle, opts)
+                .map_err(map_err)?;
             to_js(&hits)
         }
 
@@ -243,11 +245,7 @@ mod wasm {
         /// formatted DISPLAY strings (K-6 / S-14 — the clipboard copy
         /// interchange). Returns `string[][]` (row-major, `""` for empty
         /// cells). Junk endpoints / an OOB sheet are boundary errors.
-        pub fn get_range_values(
-            &self,
-            sheet: u16,
-            range: &str,
-        ) -> Result<JsValue, JsValue> {
+        pub fn get_range_values(&self, sheet: u16, range: &str) -> Result<JsValue, JsValue> {
             let rows = self
                 .session
                 .get_range_values(sheet, range)

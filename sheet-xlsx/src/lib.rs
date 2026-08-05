@@ -68,10 +68,10 @@ pub mod write;
 
 pub use error::XlsxError;
 pub use parts::chart::{ParsedChart as XlsxChart, SheetResolver as ChartSheetResolver};
+pub use parts::comments::{CellComment, SheetComments};
 pub use parts::conditional_format::{
     CfBlock, CfOperator, CfRule, CfRuleKind, ColorScale, DataBar, SheetConditionalFormats,
 };
-pub use parts::comments::{CellComment, SheetComments};
 pub use parts::data_validation::{DataValidation, DvKind, SheetDataValidations};
 pub use parts::external_link::{ExternalBook, ExternalLinks};
 pub use parts::freeze::FreezePanes;
@@ -307,10 +307,8 @@ impl XlsxDocument {
             parts::conditional_format::SheetConditionalFormats,
         > = BTreeMap::new();
         let mut freeze_panes: BTreeMap<SheetId, parts::freeze::FreezePanes> = BTreeMap::new();
-        let mut data_validations: BTreeMap<
-            SheetId,
-            parts::data_validation::SheetDataValidations,
-        > = BTreeMap::new();
+        let mut data_validations: BTreeMap<SheetId, parts::data_validation::SheetDataValidations> =
+            BTreeMap::new();
         let mut comments: BTreeMap<SheetId, parts::comments::SheetComments> = BTreeMap::new();
 
         for sref in &parsed_wb.sheets {
@@ -424,9 +422,9 @@ impl XlsxDocument {
             // the worksheet's BEFORE-sheetData captures (an unmodeled
             // `<sheetViews>` child). ADDITIVE parse — the captured bytes are
             // untouched (the view still round-trips byte-identical).
-            if let Some(fp) = parts::freeze::parse_all(
-                parsed_ws.captured.before().map(|c| c.bytes.as_slice()),
-            )? {
+            if let Some(fp) =
+                parts::freeze::parse_all(parsed_ws.captured.before().map(|c| c.bytes.as_slice()))?
+            {
                 freeze_panes.insert(sid, fp);
             }
 

@@ -183,7 +183,8 @@ mod tests {
     #[test]
     fn parse_all_finds_first_frozen() {
         let pm = br#"<pageMargins left="0.7"/>"#;
-        let sv = br#"<sheetViews><sheetView><pane ySplit="3" state="frozen"/></sheetView></sheetViews>"#;
+        let sv =
+            br#"<sheetViews><sheetView><pane ySplit="3" state="frozen"/></sheetView></sheetViews>"#;
         let subtrees: Vec<&[u8]> = vec![pm, sv];
         let fp = parse_all(subtrees.into_iter()).unwrap().unwrap();
         assert_eq!(fp.rows, 3);

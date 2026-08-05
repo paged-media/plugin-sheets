@@ -401,7 +401,10 @@ fn sheet_grid_clipboard_copy_range_values() {
     // A1:B3 — a 3×2 grid of formatted display strings.
     let grid = s.get_range_values(0, "A1:B3").expect("values A1:B3");
     assert_eq!(grid.len(), 3, "3 rows");
-    assert!(grid.iter().all(|r| r.len() == 2), "rectangular, 2 cols each");
+    assert!(
+        grid.iter().all(|r| r.len() == 2),
+        "rectangular, 2 cols each"
+    );
     // The display strings ARE the formatted values (A1=2, A3=SUM=5, B3=concat).
     assert_eq!(grid[0][0], "2", "A1");
     assert_eq!(grid[2][0], "5", "A3 = SUM(A1:A2), the formula's DISPLAY");
@@ -438,7 +441,8 @@ fn sheet_grid_clipboard_copy_caps_full_sheet() {
         "message names the cap: {err}"
     );
     // The session remains usable after the rejection.
-    s.set_cell(0, 0, 0, "42").expect("set_cell works after rejection");
+    s.set_cell(0, 0, 0, "42")
+        .expect("set_cell works after rejection");
     assert_eq!(
         s.get_range_values(0, "A1").expect("A1 after rejection"),
         vec![vec!["42".to_string()]]
@@ -779,7 +783,9 @@ fn sheet_xlsx_comments_via_js_surface() {
     assert_eq!(a1.sheet, 0);
     assert_eq!(a1.author, "Alice");
     assert_eq!(a1.text, "Check this value before publishing.");
-    assert!(cs.iter().any(|c| (c.row, c.col) == (2, 2) && c.author == "Bob"));
+    assert!(cs
+        .iter()
+        .any(|c| (c.row, c.col) == (2, 2) && c.author == "Bob"));
 
     // The grid scene marks the visible commented cells.
     let scene = s

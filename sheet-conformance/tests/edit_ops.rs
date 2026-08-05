@@ -110,7 +110,10 @@ fn sheet_edit_sort_values_numeric_rows_move_and_dependents_recalc() {
         .iter()
         .find(|e| e.row == 0 && e.col == 0)
         .expect("A1 edit recorded");
-    assert_eq!((a1.prev_input.as_str(), a1.next_input.as_str()), ("100", "9"));
+    assert_eq!(
+        (a1.prev_input.as_str(), a1.next_input.as_str()),
+        ("100", "9")
+    );
 }
 
 /// Descending reverses the order; the sort is STABLE — duplicate keys keep
@@ -146,12 +149,7 @@ fn sheet_edit_sort_values_key_col_out_of_range_is_boundary() {
 /// `has_header` pins the range's first row — it never moves; the body sorts.
 #[test]
 fn sheet_edit_sort_header_row_is_pinned() {
-    let mut s = session_with(&[
-        (0, 0, "Amount"),
-        (1, 0, "30"),
-        (2, 0, "10"),
-        (3, 0, "20"),
-    ]);
+    let mut s = session_with(&[(0, 0, "Amount"), (1, 0, "30"), (2, 0, "10"), (3, 0, "20")]);
 
     s.sort_range(0, "A1:A4", 0, true, true).expect("sort");
 
@@ -263,7 +261,9 @@ fn sheet_edit_find_values_matches_display_text() {
         (2, 0, "nothing"),
     ]);
 
-    let hits = s.find_all(Some(0), "30", opts(false, false, false)).expect("find");
+    let hits = s
+        .find_all(Some(0), "30", opts(false, false, false))
+        .expect("find");
     let coords: Vec<(u32, u32)> = hits.iter().map(|h| (h.row, h.col)).collect();
     assert_eq!(coords, [(0, 0), (1, 0)]);
     assert_eq!(hits[0].excerpt, "total 30");
@@ -281,10 +281,17 @@ fn sheet_edit_find_values_matches_display_text() {
 fn sheet_edit_find_formulas_matches_input_text() {
     let s = session_with(&[(0, 0, "1"), (1, 0, "2"), (2, 0, "=SUM(A1:A2)")]);
 
-    let without = s.find_all(Some(0), "SUM", opts(false, false, false)).expect("find");
-    assert!(without.is_empty(), "display surface must not expose the formula text");
+    let without = s
+        .find_all(Some(0), "SUM", opts(false, false, false))
+        .expect("find");
+    assert!(
+        without.is_empty(),
+        "display surface must not expose the formula text"
+    );
 
-    let with = s.find_all(Some(0), "SUM", opts(false, false, true)).expect("find");
+    let with = s
+        .find_all(Some(0), "SUM", opts(false, false, true))
+        .expect("find");
     assert_eq!(with.len(), 1);
     assert_eq!((with[0].row, with[0].col), (2, 0));
     assert_eq!(with[0].excerpt, "=SUM(A1:A2)");
@@ -298,10 +305,14 @@ fn sheet_edit_find_formulas_matches_input_text() {
 fn sheet_edit_find_case_sensitivity_toggle() {
     let s = session_with(&[(0, 0, "Alpha"), (1, 0, "ALPHA"), (2, 0, "alpha")]);
 
-    let insensitive = s.find_all(Some(0), "alpha", opts(false, false, false)).expect("find");
+    let insensitive = s
+        .find_all(Some(0), "alpha", opts(false, false, false))
+        .expect("find");
     assert_eq!(insensitive.len(), 3);
 
-    let sensitive = s.find_all(Some(0), "alpha", opts(true, false, false)).expect("find");
+    let sensitive = s
+        .find_all(Some(0), "alpha", opts(true, false, false))
+        .expect("find");
     assert_eq!(sensitive.len(), 1);
     assert_eq!(sensitive[0].row, 2);
 }
@@ -314,14 +325,20 @@ fn sheet_edit_find_case_sensitivity_toggle() {
 fn sheet_edit_find_entire_cell_requires_whole_text() {
     let s = session_with(&[(0, 0, "net"), (1, 0, "network"), (2, 0, "NET")]);
 
-    let partial = s.find_all(Some(0), "net", opts(false, false, false)).expect("find");
+    let partial = s
+        .find_all(Some(0), "net", opts(false, false, false))
+        .expect("find");
     assert_eq!(partial.len(), 3);
 
-    let entire = s.find_all(Some(0), "net", opts(false, true, false)).expect("find");
+    let entire = s
+        .find_all(Some(0), "net", opts(false, true, false))
+        .expect("find");
     let rows: Vec<u32> = entire.iter().map(|h| h.row).collect();
     assert_eq!(rows, [0, 2]); // "network" excluded; "NET" folds equal
 
-    let entire_cased = s.find_all(Some(0), "net", opts(true, true, false)).expect("find");
+    let entire_cased = s
+        .find_all(Some(0), "net", opts(true, true, false))
+        .expect("find");
     assert_eq!(entire_cased.len(), 1);
     assert_eq!(entire_cased[0].row, 0);
 }
@@ -413,6 +430,10 @@ fn sheet_edit_replace_skip_spilled_cells_reported_not_shadowed() {
     assert_eq!(res.occurrences, 0);
     assert!(res.edits.is_empty());
     assert_eq!(res.skipped.len(), 1);
-    assert!(res.skipped[0].reason.contains("spilled"), "got: {}", res.skipped[0].reason);
+    assert!(
+        res.skipped[0].reason.contains("spilled"),
+        "got: {}",
+        res.skipped[0].reason
+    );
     assert_eq!(s.get_cell_display(0, 1, 0), "2"); // intact
 }

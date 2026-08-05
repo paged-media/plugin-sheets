@@ -346,7 +346,11 @@ fn sheet_format_locale_latin_tier() {
             "fr" => Locale::FrFr,
             "es" => Locale::EsEs,
             "it" => Locale::ItIt,
-            other => panic!("latin corpus {}:{}: unknown locale {other:?}", path.display(), lineno + 1),
+            other => panic!(
+                "latin corpus {}:{}: unknown locale {other:?}",
+                path.display(),
+                lineno + 1
+            ),
         };
         let (id, code, value) = (cols[1], cols[2], cols[3]);
         let expected = cols.get(4).copied().unwrap_or("");
@@ -359,7 +363,10 @@ fn sheet_format_locale_latin_tier() {
         );
         rows += 1;
     }
-    assert!(rows >= 30, "latin corpus must carry >= 30 rows (has {rows})");
+    assert!(
+        rows >= 30,
+        "latin corpus must carry >= 30 rows (has {rows})"
+    );
 
     // 2) Targeted separator asserts per locale.
     assert_eq!(fmt("#,##0.00", 1234.5, Locale::FrFr), "1 234,50"); // fr: space group

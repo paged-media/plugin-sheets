@@ -98,9 +98,11 @@ fn sheet_xlsx_comments_parse() {
         "xl/comments1.xml round-trips byte-identical (opaque part)"
     );
     let orig_vml = part_bytes(&raw, "xl/drawings/vmlDrawing1.vml").unwrap();
-    let saved_vml =
-        part_bytes(&out, "xl/drawings/vmlDrawing1.vml").expect("VML part re-emitted");
-    assert_eq!(orig_vml, saved_vml, "the VML drawing round-trips byte-identical");
+    let saved_vml = part_bytes(&out, "xl/drawings/vmlDrawing1.vml").expect("VML part re-emitted");
+    assert_eq!(
+        orig_vml, saved_vml,
+        "the VML drawing round-trips byte-identical"
+    );
 }
 
 // ── sheet.grid.comments.indicator ───────────────────────────────────────────
@@ -131,7 +133,11 @@ fn sheet_grid_comments_indicator() {
         &cells,
     );
     assert_eq!(scene.comments.len(), 2, "both commented cells are marked");
-    let a1 = scene.comments.iter().find(|m| (m.row, m.col) == (0, 0)).unwrap();
+    let a1 = scene
+        .comments
+        .iter()
+        .find(|m| (m.row, m.col) == (0, 0))
+        .unwrap();
     // Marker at A1's top-right corner: x = col 0 right edge, y = row 0 top.
     assert!((a1.x - 44.2575).abs() < 1e-9);
     assert!((a1.y - 0.0).abs() < 1e-9);

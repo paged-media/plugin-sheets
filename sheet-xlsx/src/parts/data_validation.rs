@@ -289,7 +289,10 @@ impl RuleAccum {
 
 /// Parse a `sqref` (space-separated A1 ranges) into 0-based inclusive boxes.
 fn parse_sqref(sqref: &str) -> Vec<(u32, u32, u32, u32)> {
-    sqref.split_whitespace().filter_map(parse_one_range).collect()
+    sqref
+        .split_whitespace()
+        .filter_map(parse_one_range)
+        .collect()
 }
 
 /// Parse one `A1` or `A1:B2` token into `(r0, c0, r1, c1)` 0-based inclusive.

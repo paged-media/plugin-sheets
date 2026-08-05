@@ -476,10 +476,8 @@ pub fn grid_scene_with_cf(
             // The covering range's numeric (min, max), memoized — the same lazy
             // domain `lower_range_condfmt` uses (`cf_domain`), so the derived
             // endpoints match the page surface exactly.
-            let mut domain_cache: std::collections::HashMap<
-                condfmt::CfRange,
-                Option<(f64, f64)>,
-            > = std::collections::HashMap::new();
+            let mut domain_cache: std::collections::HashMap<condfmt::CfRange, Option<(f64, f64)>> =
+                std::collections::HashMap::new();
             for (&(r, c), cell) in ws.cells.range((first_row, first_col)..=(row_end, col_end)) {
                 if c < first_col || c > col_end {
                     continue; // outside the column band for this row
@@ -961,17 +959,8 @@ mod tests {
             (4, 0, num(90.0)),
         ]);
         let cf = databar_cf((0, 0, 4, 0), (0x63, 0x8E, 0xC6));
-        let scene = grid_scene_with_cf(
-            &m,
-            s,
-            0,
-            0,
-            300.0,
-            200.0,
-            &GridOptions::default(),
-            &[],
-            &cf,
-        );
+        let scene =
+            grid_scene_with_cf(&m, s, 0, 0, 300.0, 200.0, &GridOptions::default(), &[], &cf);
         assert_eq!(scene.databars.len(), 5, "one bar per A-column numeric cell");
         let frac = |row: u32| {
             scene
@@ -1007,21 +996,11 @@ mod tests {
         // visible cells materialize. A text cell never bars.
         let (m, s) = model_with(&[
             (0, 0, num(10.0)),
-            (1, 0, text("hi")), // non-numeric → no bar
+            (1, 0, text("hi")),      // non-numeric → no bar
             (900_000, 0, num(90.0)), // far below the window → not visible
         ]);
         let cf = databar_cf((0, 0, 900_000, 0), (1, 2, 3));
-        let scene = grid_scene_with_cf(
-            &m,
-            s,
-            0,
-            0,
-            120.0,
-            45.0,
-            &GridOptions::default(),
-            &[],
-            &cf,
-        );
+        let scene = grid_scene_with_cf(&m, s, 0, 0, 120.0, 45.0, &GridOptions::default(), &[], &cf);
         // Only the visible numeric A1 bars.
         assert_eq!(scene.databars.len(), 1);
         assert_eq!((scene.databars[0].row, scene.databars[0].col), (0, 0));
@@ -1041,17 +1020,7 @@ mod tests {
     fn sheet_grid_scene_databar_camelcase_wire_shape() {
         let (m, s) = model_with(&[(0, 0, num(50.0)), (1, 0, num(100.0))]);
         let cf = databar_cf((0, 0, 1, 0), (0x12, 0x34, 0x56));
-        let scene = grid_scene_with_cf(
-            &m,
-            s,
-            0,
-            0,
-            200.0,
-            90.0,
-            &GridOptions::default(),
-            &[],
-            &cf,
-        );
+        let scene = grid_scene_with_cf(&m, s, 0, 0, 200.0, 90.0, &GridOptions::default(), &[], &cf);
         let json = serde_json::to_string(&scene).unwrap();
         assert!(json.contains("\"databars\""));
         assert!(json.contains("\"fillFraction\""));
