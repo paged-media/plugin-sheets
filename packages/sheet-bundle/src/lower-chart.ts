@@ -39,6 +39,7 @@ import {
 } from "../../sheet-host-model/src";
 
 import type { SheetEngine } from "./engine";
+import { readKnownSwatchIds } from "./swatch-mints";
 
 /** The default chart-frame content box, pt (a sensible publishing size; the
  *  user repositions/resizes after — the geometry is regenerated to fit). */
@@ -101,7 +102,21 @@ export async function lowerChartToFrame(
   // re-resolved on recalc). contentVersion 0: T0 has no revision counter.
   const binding = makeBinding(sheetName, `chart:${chartIndex}`, 0);
 
-  const { batch, texts } = chartGeometryToMutations(geom, placement, binding);
+  // The colour swatches this chart references ride INSIDE the phase-1
+  // batch, at deterministic content-addressed ids. Read what the document
+  // already carries so an existing colour is REFERENCED, not re-created:
+  // core refuses a duplicate `createSwatch` and the refusal fails the whole
+  // batch, so before this read a second `lowerChartToFrame` — of the same
+  // chart OR of any other chart, since every chart shares the axis grey —
+  // landed NOTHING (measured: scene tree unchanged at 18 nodes). A failed
+  // read mints nothing rather than gamble the batch; the art still lands,
+  // unpainted. See `swatch-mints.ts`.
+  const { batch, texts } = chartGeometryToMutations(
+    geom,
+    placement,
+    binding,
+    await readKnownSwatchIds(host),
+  );
   if (
     batch.op === "batch" &&
     (batch as { args: { ops: unknown[] } }).args.ops.length === 0

@@ -68,3 +68,42 @@
     vitest:
       - "packages/sheet-host-model/test/lower-to-table.spec.ts"
       - "packages/sheet-bundle/test/lower-flow.spec.ts"
+
+# RULING (measured against core's REAL engine — paged-run + the CPU
+# rasterizer — over the exact ops this plugin emits, not read off the
+# source). AN IDEMPOTENT-*LOOKING* MINT INSIDE A BATCH IS NOT IDEMPOTENT.
+# Every swatch paged.sheet mints sits at a deterministic, content-addressed
+# id (palette.ts), so a second lowering asks for ids the document already
+# has. Core refuses a `createSwatch` whose selfId exists
+# (`OperationError::DuplicateNodeId`) and a refused child fails the WHOLE
+# `Operation::Batch`: `apply_batch` rolls back every sibling. The damage is
+# therefore never confined to the redundant mint.
+#   chart 0 lowered, then lowered AGAIN   -> 2nd batch applied:false,
+#                                            scene tree 18 -> 18 nodes
+#   chart 0, then a DIFFERENT chart       -> 2nd batch applied:false (every
+#                                            chart carries the axis grey
+#                                            #888888, so a workbook's SECOND
+#                                            chart never landed at all)
+#   the same batch with its mints STRIPPED -> applied:true, 18 nodes, art
+#                                            present but UNPAINTED
+# That last row licenses the degradation: an unresolvable colorRef is a
+# paint miss, not an op error. So every minting lane READS the document's
+# swatches first and emits only the absent ids, and a FAILED read
+# (`KnownSwatchIds === null`) mints NOTHING — never gamble the batch to
+# save a colour. After the fix, same harness: re-lower applied:true,
+# 18 -> 34 nodes, swatch count unchanged; second chart applied:true,
+# 18 -> 33 nodes, one new swatch.
+- id: sheet.lower.swatch-mint-dedupe
+  title: Every lane that mints a document swatch inside a batch reads first and mints only what is absent (a duplicate createSwatch is batch-fatal)
+  tier: implemented
+  status: implemented
+  provenance:
+    - "core paged-mutate apply/layer.rs::apply_create_swatch — DuplicateNodeId on an existing selfId"
+    - "core paged-mutate apply/layer.rs::apply_batch — a child failure rolls back the whole batch"
+    - "core paged-canvas model.rs::apply_mixed_batch / roll_back_batch — the same all-or-nothing on the mixed lane"
+    - "palette.ts::swatchMintOps — the one pure mint-list implementation (chart / dataBar / cellFill / cellText)"
+    - "sheet-bundle swatch-mints.ts::readKnownSwatchIds — the one host read, shared by the page lower and the chart lower"
+  tests:
+    vitest:
+      - "packages/sheet-host-model/test/palette.spec.ts"
+      - "packages/sheet-bundle/test/lower-flow.spec.ts"

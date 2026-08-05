@@ -40,6 +40,7 @@ import {
   paletteEntryToSummary,
   paletteRgb255,
   paletteSwatchId,
+  swatchMintOps,
   workbookPalette,
 } from "../src/palette";
 
@@ -292,5 +293,196 @@ describe("sheet_plugin_swatch_palette: cell colours are minted, not raw hex", ()
         (e) => e.facet === "cellText",
       ),
     ).toBe(false);
+  });
+});
+
+// ── THE MINT GUARD (sheet.lower.swatch-mint-dedupe) ─────────────────────
+//
+// An idempotent-LOOKING mint inside a batch is not idempotent. Every id
+// above is content-addressed, so a second lowering asks for ids the
+// document already has — and core refuses a duplicate `createSwatch`,
+// which fails the WHOLE `Operation::Batch`. Measured against core's real
+// engine over the exact ops these translators emit: lowering a chart
+// twice (and lowering ANY second chart, since every chart shares the axis
+// grey `#888888`) left the scene tree unchanged at 18 nodes — the second
+// chart never landed. The same batch with its mints STRIPPED still
+// applied (18 nodes, art present but unpainted), which is why a failed
+// read degrades the colour rather than the batch.
+
+describe("sheet_lower_swatch_mint_dedupe: mint only what is absent", () => {
+  const HEXES = ["4E79A7", "F28E2B"];
+
+  it("mints every colour when the caller consults no document", () => {
+    expect(swatchMintOps("chart", HEXES).map((m) => m.op)).toEqual([
+      "createSwatch",
+      "createSwatch",
+    ]);
+  });
+
+  it("SKIPS a colour the document already carries", () => {
+    const known = new Set(["Color/uPagedSheetChart4E79A7"]);
+    const minted = mintedSpecs({
+      op: "batch",
+      args: { ops: swatchMintOps("chart", HEXES, known) },
+    } as unknown as Mutation);
+    expect(minted.map((s) => s.selfId)).toEqual([
+      "Color/uPagedSheetChartF28E2B",
+    ]);
+  });
+
+  it("mints NOTHING when the swatch read FAILED (null ≠ 'there are none')", () => {
+    // Minting blind risks a duplicate, and a duplicate takes the whole
+    // batch down. Minting nothing costs only colour.
+    expect(swatchMintOps("chart", HEXES, null)).toEqual([]);
+    expect(swatchMintOps("dataBar", ["638EC6"], null)).toEqual([]);
+  });
+
+  it("matches on the FACETED id, so one facet never masks another", () => {
+    // A cellFill swatch of the same hue must not suppress the chart mint.
+    const known = new Set(["Color/uPagedSheetCellFill4E79A7"]);
+    expect(
+      swatchMintOps("chart", ["4E79A7"], known).map(
+        (m) => (m.args as { spec: SwatchSpec }).spec.selfId,
+      ),
+    ).toEqual(["Color/uPagedSheetChart4E79A7"]);
+  });
+});
+
+describe("sheet_lower_swatch_mint_dedupe: every minting lane honours it", () => {
+  const GEOM = chartGeom([
+    { kind: "rect", x: 0, y: 0, w: 10, h: 10, fill: "#4E79A7", stroke: "#888888", strokeW: 1 },
+  ]);
+  const BARS = content({
+    databars: [
+      { row: 0, col: 0, x: 0, y: 0, w: 20, h: 10, fillFraction: 0.8, fill: "#638EC6" },
+    ],
+  });
+  const CELLS = content({
+    styles: [
+      {
+        key: 0,
+        bold: false,
+        italic: false,
+        fontSizePt: null,
+        fontName: null,
+        fillRgb: null,
+        textRgb: null,
+        borderTop: false,
+        borderRight: false,
+        borderBottom: false,
+        borderLeft: false,
+      },
+      {
+        key: 1,
+        bold: false,
+        italic: false,
+        fontSizePt: null,
+        fontName: null,
+        fillRgb: "#FFFF00",
+        textRgb: "#F00",
+        borderTop: false,
+        borderRight: false,
+        borderBottom: false,
+        borderLeft: false,
+      },
+    ],
+  });
+
+  it("a RE-LOWER of the same chart mints nothing (the batch is not gambled)", () => {
+    const first = mintedSpecs(
+      chartGeometryToMutations(
+        GEOM,
+        { pageId: "page-1", bounds: [0, 0, 120, 200] },
+        BINDING,
+      ).batch,
+    );
+    expect(first).toHaveLength(2);
+
+    // The document now carries exactly what the first lowering minted.
+    const known = new Set(first.map((s) => s.selfId!));
+    const { batch } = chartGeometryToMutations(
+      GEOM,
+      { pageId: "page-1", bounds: [0, 0, 120, 200] },
+      BINDING,
+      known,
+    );
+    expect(mintedSpecs(batch)).toEqual([]);
+    // The GEOMETRY is untouched — only the redundant mints are gone, and
+    // the fill still names the swatch that is already in the document.
+    const ops = (batch.args as { ops: Mutation[] }).ops;
+    expect(ops.some((m) => m.op === "insertPath")).toBe(true);
+    expect(
+      ops.some(
+        (m) =>
+          m.op === "setElementProperty" &&
+          (m.args as { path: string; value: { value: string } }).path ===
+            "frameFillColor" &&
+          (m.args as { value: { value: string } }).value.value ===
+            "Color/uPagedSheetChart4E79A7",
+      ),
+    ).toBe(true);
+  });
+
+  it("a SECOND, DIFFERENT chart mints only its NEW colour", () => {
+    // The real failure was not the literal re-lower: two different charts
+    // share the axis grey, so a workbook's second chart never landed.
+    const other = chartGeom([
+      { kind: "rect", x: 0, y: 0, w: 10, h: 10, fill: "#3366CC", stroke: "#888888", strokeW: 1 },
+    ]);
+    const known = new Set([
+      "Color/uPagedSheetChart4E79A7",
+      "Color/uPagedSheetChart888888",
+    ]);
+    const minted = mintedSpecs(
+      chartGeometryToMutations(
+        other,
+        { pageId: "page-1", bounds: [0, 0, 120, 200] },
+        BINDING,
+        known,
+      ).batch,
+    );
+    expect(minted.map((s) => s.selfId)).toEqual([
+      "Color/uPagedSheetChart3366CC",
+    ]);
+  });
+
+  it("the tab-text lane's data bars dedupe, and the FRAME survives a failed read", () => {
+    const known = new Set(["Color/uPagedSheetDataBar638EC6"]);
+    const deduped = lowerToMutations(
+      BARS,
+      { pageId: "page-1", bounds: [0, 0, 100, 100] },
+      BINDING,
+      known,
+    ).batch;
+    expect(mintedSpecs(deduped)).toEqual([]);
+
+    // A failed read mints nothing — but the frame, the rules and the
+    // binding still ride the batch (only the bar colour degrades).
+    const blind = lowerToMutations(
+      BARS,
+      { pageId: "page-1", bounds: [0, 0, 100, 100] },
+      BINDING,
+      null,
+    ).batch;
+    expect(mintedSpecs(blind)).toEqual([]);
+    const ops = (blind.args as { ops: Mutation[] }).ops;
+    expect(ops[0].op).toBe("insertTextFrame");
+    expect(ops.some((m) => m.op === "insertPath")).toBe(true);
+    expect(ops.some((m) => m.op === "setPluginMetadata")).toBe(true);
+  });
+
+  it("the cell-fill and cell-text mint lists dedupe on their own facets", () => {
+    expect(
+      cellFillSwatchOps(CELLS, new Set(["Color/uPagedSheetCellFillFFFF00"])),
+    ).toEqual([]);
+    expect(cellFillSwatchOps(CELLS, null)).toEqual([]);
+    expect(
+      cellTextSwatchOps(CELLS, new Set(["Color/uPagedSheetCellTextFF0000"])),
+    ).toEqual([]);
+    expect(cellTextSwatchOps(CELLS, null)).toEqual([]);
+    // A cellFill id in the known set does NOT suppress the cellText mint.
+    expect(
+      cellTextSwatchOps(CELLS, new Set(["Color/uPagedSheetCellFillFF0000"])),
+    ).toHaveLength(1);
   });
 });

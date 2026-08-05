@@ -69,6 +69,7 @@ import {
 } from "../../sheet-host-model/src";
 
 import type { FrameBox, SheetEngine } from "./engine";
+import { readKnownSwatchIds } from "./swatch-mints";
 
 /** Per-column width (pt) from the document's font metrics (S-13). For
  *  each column, measure the widest formatted cell text via the host
@@ -188,33 +189,22 @@ async function pourCellContent(
   }
   // The swatch READ only happens when there is something to mint (an
   // unstyled region — what `getRangeLowered` emits today — costs no extra
-  // host round-trip). `null` means the read FAILED, which is not "the
-  // document has none": minting blind risks a duplicate, and core's refusal
-  // of a duplicate `createSwatch` fails the WHOLE batch, taking the fills
-  // and edge strokes with it. So a failed read mints nothing — the fills
-  // degrade to unpainted (the pre-fix behaviour), never to lost decor. Same
-  // ruling the ADR-023 Swatches provider makes before an `editSwatch`.
+  // host round-trip). `readKnownSwatchIds` returns `null` when the read
+  // FAILED, and `swatchMintOps` mints nothing for `null`: minting blind
+  // risks a duplicate, and core's refusal of a duplicate `createSwatch`
+  // fails the WHOLE batch, taking the fills and edge strokes with it. So a
+  // failed read degrades the fills to unpainted (the pre-fix behaviour),
+  // never to lost decor. Same ruling the ADR-023 Swatches provider makes
+  // before an `editSwatch`.
   const wanted = cellFillSwatchOps(content);
-  const existing = wanted.length === 0 ? null : await existingSwatchIds(host);
-  const mints = existing === null ? [] : cellFillSwatchOps(content, existing);
+  const mints =
+    wanted.length === 0
+      ? []
+      : cellFillSwatchOps(content, await readKnownSwatchIds(host));
   const ops = [...mints, ...decor.ops];
   if (ops.length > 0) {
     const r = await host.document.mutate({ op: "batch", args: { ops } });
     if (!r.applied) host.log.warn("lower: cell decor batch rejected", r);
-  }
-}
-
-/** The document's current swatch ids, or `null` when the read itself
- *  failed (which is NOT the same as "there are none" — see the caller). */
-async function existingSwatchIds(
-  host: BundleHost,
-): Promise<ReadonlySet<string> | null> {
-  try {
-    const rows = await host.document.collection<{ selfId: string }>("swatches");
-    return new Set(rows.map((s) => s.selfId));
-  } catch (err) {
-    host.log.warn("lower: document swatch read failed", err);
-    return null;
   }
 }
 
@@ -399,14 +389,27 @@ export async function lowerSelectionToFrame(
 
 /** The retained tab-text lane (spec §2.2 degradation): the pure
  *  `lowerToMutations` batch (frame + drawn rules + binding), then the
- *  tab/newline text pour into the resolved story. */
+ *  tab/newline text pour into the resolved story.
+ *
+ *  The data-bar swatch mints ride INSIDE that phase-1 batch, so the
+ *  document's swatches are read first and an already-present colour is
+ *  referenced rather than re-created: a duplicate `createSwatch` fails the
+ *  whole batch, which here would cost the FRAME, the rules and the binding
+ *  — not just a bar's colour. The read is skipped when the region carries
+ *  no bars (today's `getRangeLowered` never emits any — Rust's
+ *  `lower_range` is not the condfmt lowering — so this normally costs no
+ *  extra host round-trip). */
 async function lowerTabTextToFrame(
   host: BundleHost,
   content: LoweredContent,
   placement: { pageId: PageId; bounds: [number, number, number, number] },
   binding: ReturnType<typeof makeBinding>,
 ): Promise<string | null> {
-  const { batch, text } = lowerToMutations(content, placement, binding);
+  const known =
+    (content.databars ?? []).length === 0
+      ? undefined
+      : await readKnownSwatchIds(host);
+  const { batch, text } = lowerToMutations(content, placement, binding, known);
 
   // Snapshot story ids before the frame insert (see newStoryId).
   const storiesBefore = await storyIdsSnapshot(host);

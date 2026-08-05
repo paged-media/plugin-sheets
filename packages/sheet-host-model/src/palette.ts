@@ -43,7 +43,11 @@
 // spreadsheet semantics (the colours are DECIDED in Rust: `fill_rgb` /
 // `text_rgb` on `LoweredStyle`, the chart palette in `sheet-chart`).
 
-import type { SwatchSpec, SwatchSummary } from "@paged-media/plugin-api";
+import type {
+  Mutation,
+  SwatchSpec,
+  SwatchSummary,
+} from "@paged-media/plugin-api";
 
 import type { ChartGeometry } from "./chart";
 import type { LoweredContent, LoweredStyle } from "./lowered";
@@ -278,6 +282,84 @@ export function workbookPalette(sources: PaletteSources): PaletteEntry[] {
     for (const hex of distinctCellFillHexes(region)) push("cellFill", hex);
   }
   return [...byId.values()];
+}
+
+/**
+ * What the caller KNOWS about the swatches the document already carries:
+ *
+ *  - a `ReadonlySet` — the ids read from `document.collection("swatches")`;
+ *  - `null` — the read FAILED, so the document's swatches are UNKNOWN;
+ *  - omitted — the caller is not consulting the document at all (a pure
+ *    test, or a caller that knows the target is virgin).
+ *
+ * The type is deliberately the RETURN TYPE of the read door, so a driver
+ * can pass the read straight through and the ruling for each case lives
+ * in one place ([`swatchMintOps`]) instead of at every call site.
+ */
+export type KnownSwatchIds = ReadonlySet<string> | null;
+
+/**
+ * THE mint list for a set of palette colours: one `createSwatch` per
+ * colour the document does not already carry.
+ *
+ * ── THE HAZARD THIS EXISTS FOR ──────────────────────────────────────
+ *
+ * AN IDEMPOTENT-*LOOKING* MINT INSIDE A BATCH IS NOT IDEMPOTENT. Every
+ * swatch id here is content-addressed (`paletteSwatchId`), so re-running
+ * a lowering asks for the SAME ids — which reads like a harmless no-op
+ * and is not one. Core REFUSES a `createSwatch` whose `selfId` already
+ * exists (`OperationError::DuplicateNodeId`), and a refused child fails
+ * the WHOLE `Operation::Batch`: `apply_batch` rolls back every sibling
+ * already applied and returns `BatchFailed`. The damage is therefore
+ * never confined to the redundant mint — it is the entire batch.
+ *
+ * Measured against core's real engine (paged-run + the CPU rasterizer)
+ * over the exact ops this plugin emits:
+ *
+ *   chart 0 lowered, then lowered AGAIN   → 2nd batch applied:false,
+ *                                           scene nodes 18 → 18 (the
+ *                                           whole second chart lost)
+ *   chart 0, then a DIFFERENT chart       → 2nd batch applied:false
+ *                                           (they share the axis grey
+ *                                           `#888888`, so a workbook's
+ *                                           SECOND chart never landed)
+ *   the same batch minus its mints        → applied:true, 18 nodes,
+ *                                           art present but UNPAINTED
+ *
+ * That last row is the licence for the degradation below: a colorRef
+ * naming a swatch the document lacks does NOT reject the op — the paint
+ * lookup just misses. So dropping mints costs colour; keeping a
+ * duplicate mint costs everything.
+ *
+ * ── THE RULING ──────────────────────────────────────────────────────
+ *
+ * `knownSwatchIds === null` (the read failed) mints NOTHING. Minting
+ * blind risks a duplicate, and a duplicate takes the batch down with it;
+ * minting nothing costs only the colours, which is exactly the state the
+ * caller was in before it minted anything at all. NEVER GAMBLE THE BATCH
+ * TO SAVE A COLOUR.
+ *
+ * Any plugin that mints document resources inside a batch has this same
+ * exposure — swatches, styles, layers, anything core keys by id. Read
+ * first, mint only what is absent, and degrade the *resource* rather
+ * than the batch when you cannot read.
+ *
+ * PURE: data in, `Mutation[]` out.
+ */
+export function swatchMintOps(
+  facet: PaletteFacet,
+  canonHexes: readonly string[],
+  knownSwatchIds?: KnownSwatchIds,
+): Mutation[] {
+  // A failed read is not "the document has none" — see the ruling above.
+  if (knownSwatchIds === null) return [];
+  const ops: Mutation[] = [];
+  for (const canonHex of canonHexes) {
+    if (knownSwatchIds?.has(paletteSwatchId(facet, canonHex))) continue;
+    const spec: SwatchSpec = paletteEntryToSpec(paletteEntry(facet, canonHex));
+    ops.push({ op: "createSwatch", args: { spec } });
+  }
+  return ops;
 }
 
 /** Project a palette entry onto core's `swatches` ROW shape. `kind`

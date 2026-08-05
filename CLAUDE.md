@@ -108,6 +108,24 @@ half (see "Two-registry split" below).
   validation, what-if, external links, VBA execution are NEVER
   interpreted — they round-trip preserved. This is a product decision,
   not a deferral; don't "helpfully" implement them.
+- **A MINT INSIDE A BATCH IS NOT IDEMPOTENT, however idempotent it
+  looks.** paged.sheet mints document swatches at deterministic,
+  content-addressed ids, so re-running a lowering asks for ids the
+  document already has — which reads like a harmless no-op and is not
+  one. Core REFUSES a `createSwatch` whose `selfId` exists
+  (`DuplicateNodeId`) and a refused child fails the WHOLE
+  `Operation::Batch` (`apply_batch` rolls back every sibling). The damage
+  is never confined to the redundant mint: measured against the real
+  engine, lowering a chart twice — or lowering ANY second chart, since
+  every chart shares the axis grey — landed *nothing*, not merely a lost
+  colour. So every lane that mints inside a batch **reads the document
+  first (`readKnownSwatchIds`) and emits only the absent ids
+  (`swatchMintOps`); a FAILED read mints NOTHING** — the batch still
+  applies and only the colour degrades (an unresolvable colorRef is a
+  paint miss, not an op error). Never gamble the batch to save a colour.
+  This generalises past swatches to **any** document resource core keys
+  by id (styles, layers, groups) and past this plugin to any plugin that
+  mints inside a batch. Registry: `sheet.lower.swatch-mint-dedupe`.
 - **The bundle touches host surfaces + React only.** No
   `@paged-media/shell`/`client` imports — writes via
   `host.document.mutate`, binding via `setPluginMetadata` (namespace

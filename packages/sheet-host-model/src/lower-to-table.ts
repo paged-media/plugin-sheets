@@ -53,16 +53,15 @@ import type {
   ElementId,
   Mutation,
   PropertyPath,
-  SwatchSpec,
 } from "@paged-media/plugin-api";
 
 import type { LoweredContent, Page } from "./lowered";
 import {
   distinctCellFillHexes,
   normalizePaletteHex,
-  paletteEntry,
-  paletteEntryToSpec,
   paletteSwatchId,
+  swatchMintOps,
+  type KnownSwatchIds,
 } from "./palette";
 
 /** The table's column order (ascending model indices) — the mapping from
@@ -243,29 +242,23 @@ export interface TableDecor {
  * the deterministic content-addressed id `palette.ts` owns — exactly the
  * discipline `chart.ts` and the data-bar lane already follow.
  *
- * `existingSwatchIds` skips ids the document already carries. This is NOT
- * an optimisation: core REFUSES a duplicate `createSwatch`, and a refused
- * op fails its whole `Operation::Batch` — verified live, a batch whose
- * first op re-creates an existing swatch drops the sibling fills too. So a
- * re-lower of the same range would otherwise lose all its decor. A caller
- * that cannot read the document's swatches should pass nothing and accept
- * unminted (unpainted) fills rather than risk the batch.
+ * `knownSwatchIds` skips ids the document already carries, and mints
+ * NOTHING when the read failed (`null`). This is NOT an optimisation:
+ * core REFUSES a duplicate `createSwatch` and the refusal fails the whole
+ * `Operation::Batch` — see [`swatchMintOps`], which owns that ruling and
+ * the live measurements behind it.
  *
  * PURE: data in, Mutation[] out.
  */
 export function cellFillSwatchOps(
   content: LoweredContent,
-  existingSwatchIds?: ReadonlySet<string>,
+  knownSwatchIds?: KnownSwatchIds,
 ): Mutation[] {
-  const ops: Mutation[] = [];
-  for (const canonHex of distinctCellFillHexes(content)) {
-    if (existingSwatchIds?.has(paletteSwatchId("cellFill", canonHex))) continue;
-    const spec: SwatchSpec = paletteEntryToSpec(
-      paletteEntry("cellFill", canonHex),
-    );
-    ops.push({ op: "createSwatch", args: { spec } });
-  }
-  return ops;
+  return swatchMintOps(
+    "cellFill",
+    distinctCellFillHexes(content),
+    knownSwatchIds,
+  );
 }
 
 /** Build the decor ops (merges + fills + edge strokes) for a resolved
@@ -397,16 +390,16 @@ export function tableDecorOps(
  *  — ONE undoable step. Text pours BEFORE spans so cell addressing targets
  *  the pre-merge grid (span anchors are the spans' top-left cells, the only
  *  ones the IR populates). The swatch mints lead because a `cellFillColor`
- *  names one; pass `existingSwatchIds` so an already-present swatch is not
+ *  names one; pass `knownSwatchIds` so an already-present swatch is not
  *  re-created (core refuses a duplicate and the refusal fails the batch —
- *  see `cellFillSwatchOps`). */
+ *  see `swatchMintOps`). */
 export function tableContentBatch(
   content: LoweredContent,
   storyId: string,
   tableId: string,
-  existingSwatchIds?: ReadonlySet<string>,
+  knownSwatchIds?: KnownSwatchIds,
 ): { batch: Mutation; unmappedRules: number } {
-  const swatches = cellFillSwatchOps(content, existingSwatchIds);
+  const swatches = cellFillSwatchOps(content, knownSwatchIds);
   const pour = tableCellOps(content, storyId, tableId);
   const pourOps = pour.op === "batch" ? pour.args.ops : [pour];
   const decor = tableDecorOps(content, storyId, tableId);

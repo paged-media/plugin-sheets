@@ -529,6 +529,172 @@ describe("sheet_chart_lower_paged_draw: bundle two-phase flow", () => {
   });
 });
 
+// ── the mint guard on the chart lane (sheet.lower.swatch-mint-dedupe) ───────
+//
+// The chart's swatch mints ride INSIDE its phase-1 batch, at deterministic
+// content-addressed ids. Core refuses a duplicate `createSwatch` and the
+// refusal fails the WHOLE batch, so before this guard a second
+// `lowerChartToFrame` landed NOTHING — not just a lost colour, the whole
+// chart. Measured against core's real engine (paged-run + the CPU
+// rasterizer) over the exact ops this driver emits:
+//
+//   chart 0, then chart 0 AGAIN   → 2nd batch applied:false, scene tree
+//                                   unchanged at 18 nodes
+//   chart 0, then a DIFFERENT     → 2nd batch applied:false (both charts
+//     chart                         carry the axis grey #888888)
+//   the same batch, mints removed → applied:true, 18 nodes, art present
+//                                   but UNPAINTED
+//
+// The last row is why a FAILED read degrades the colour, not the batch.
+
+const CHART_SWATCH = "Color/uPagedSheetChart4E79A7";
+
+describe("sheet_lower_swatch_mint_dedupe: the chart lane reads before it mints", () => {
+  const batchOps = (mutations: Mutation[]) =>
+    (mutations[0] as { args: { ops: Array<{ op: string; args: any }> } }).args
+      .ops;
+
+  it("a virgin document gets the mint the frameFillColor names", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", []);
+    expect(await lowerChartToFrame(host, fakeChartEngine(), 0)).toBe(true);
+
+    const ops = batchOps(mutations);
+    expect(ops[0].op).toBe("createSwatch");
+    expect(ops[0].args.spec.selfId).toBe(CHART_SWATCH);
+  });
+
+  it("a RE-LOWER does NOT re-mint — so the whole chart still lands", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", [
+      CHART_SWATCH,
+    ]);
+    expect(await lowerChartToFrame(host, fakeChartEngine(), 0)).toBe(true);
+
+    const ops = batchOps(mutations);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    // The geometry is intact and the fill still names the swatch that is
+    // already in the document.
+    expect(ops.some((o) => o.op === "insertPath")).toBe(true);
+    expect(ops.some((o) => o.op === "insertTextFrame")).toBe(true);
+    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
+    expect(
+      ops.find((o) => o.args?.path === "frameFillColor")!.args.value,
+    ).toEqual({ type: "colorRef", value: CHART_SWATCH });
+  });
+
+  it("a FAILED swatch read mints nothing rather than risk the whole chart", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", null);
+    expect(await lowerChartToFrame(host, fakeChartEngine(), 0)).toBe(true);
+
+    const ops = batchOps(mutations);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    // The art still lands (an unresolvable colorRef is a paint miss, not
+    // an op error — verified by render); only the colour degrades.
+    expect(ops.some((o) => o.op === "insertPath")).toBe(true);
+    expect(ops.some((o) => o.args?.path === "frameFillColor")).toBe(true);
+  });
+});
+
+// ── the mint guard on the tab-text lane's data bars ─────────────────────────
+//
+// LATENT, stated rather than implied: `getRangeLowered` routes through
+// Rust's `lower_range`, NOT `lower_range_condfmt`, so `databars` never
+// crosses the wasm boundary today and this lane mints nothing in
+// production. The guard is here because the op sequence it WOULD emit is
+// fatal on a second apply exactly as the chart lane's was (measured: the
+// same data-bar batch applied twice → 2nd applied:false), and because a
+// duplicate here costs the FRAME, the rules and the binding — not a bar.
+
+/** `filledEngine` plus one conditional-format data bar in the lowered
+ *  region (what `lower_range_condfmt` produces; see the note above). */
+function dataBarEngine(): SheetEngine {
+  const e = filledEngine();
+  return {
+    ...e,
+    getRangeLowered: (sheet, range, opts) => ({
+      ...e.getRangeLowered(sheet, range, opts),
+      databars: [
+        {
+          row: 0,
+          col: 0,
+          x: 0,
+          y: 0,
+          w: 20,
+          h: 10,
+          fillFraction: 0.8,
+          fill: "#638EC6",
+        },
+      ],
+    }),
+  };
+}
+
+const BAR_SWATCH = "Color/uPagedSheetDataBar638EC6";
+
+describe("sheet_lower_swatch_mint_dedupe: the tab-text lane reads before it mints", () => {
+  const batchOps = (mutations: Mutation[]) =>
+    (mutations[0] as { args: { ops: Array<{ op: string; args: any }> } }).args
+      .ops;
+
+  it("a virgin document gets the bar mint the frameFillColor names", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", []);
+    await lowerSelectionToFrame(host, dataBarEngine(), 0, "A1:B1", {
+      lane: "tab-text",
+    });
+
+    const ops = batchOps(mutations);
+    const mint = ops.find((o) => o.op === "createSwatch")!;
+    expect(mint.args.spec.selfId).toBe(BAR_SWATCH);
+  });
+
+  it("a RE-LOWER mints nothing — the frame, rules and binding still land", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", [
+      BAR_SWATCH,
+    ]);
+    await lowerSelectionToFrame(host, dataBarEngine(), 0, "A1:B1", {
+      lane: "tab-text",
+    });
+
+    const ops = batchOps(mutations);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    expect(ops[0].op).toBe("insertTextFrame");
+    expect(ops.some((o) => o.op === "insertPath")).toBe(true);
+    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
+    expect(
+      ops.find((o) => o.args?.path === "frameFillColor")!.args.value,
+    ).toEqual({ type: "colorRef", value: BAR_SWATCH });
+  });
+
+  it("a FAILED swatch read mints nothing rather than risk the frame", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", null);
+    await lowerSelectionToFrame(host, dataBarEngine(), 0, "A1:B1", {
+      lane: "tab-text",
+    });
+
+    const ops = batchOps(mutations);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    expect(ops[0].op).toBe("insertTextFrame");
+    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
+  });
+
+  it("a region with NO data bars costs no swatch read at all", async () => {
+    // The guard must not add a host round-trip to the ordinary path —
+    // today's `getRangeLowered` never emits a bar.
+    const reads: string[] = [];
+    const { host } = fakeHostWithSwatches(CREATED, "Story/u9", []);
+    const inner = host.document.collection.bind(host.document);
+    (host.document as unknown as {
+      collection: (name: string) => Promise<unknown>;
+    }).collection = async (name: string) => {
+      reads.push(name);
+      return inner(name as never);
+    };
+    await lowerSelectionToFrame(host, filledEngine(), 0, "A1:B1", {
+      lane: "tab-text",
+    });
+    expect(reads).not.toContain("swatches");
+  });
+});
+
 // ── live multi-frame pagination across the host chain (Wave 2D, S-05) ────────
 
 /** Drain the microtask queue until `pred` holds or `ticks` is exhausted —

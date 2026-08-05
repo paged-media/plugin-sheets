@@ -50,7 +50,6 @@ import type {
   ElementId,
   Mutation,
   PropertyPath,
-  SwatchSpec,
   Value,
 } from "@paged-media/plugin-api";
 import type { PageId } from "@paged-media/plugin-api";
@@ -60,9 +59,9 @@ import {
   distinctCellTextHexes,
   distinctDataBarHexes,
   normalizePaletteHex,
-  paletteEntry,
-  paletteEntryToSpec,
   paletteSwatchId,
+  swatchMintOps,
+  type KnownSwatchIds,
 } from "./palette";
 import type { Bounds } from "./placement";
 import type { DataBarRect, LoweredContent, LoweredStyle } from "./lowered";
@@ -234,23 +233,19 @@ export function styleProps(style: LoweredStyle): StyleProp[] {
  *  A caller that applies a [`StyleEmission`]'s `props` MUST apply these
  *  first, or the colour silently resolves to the default (see `styleProps`).
  *
- *  `existingSwatchIds` skips ids the document already carries: core refuses
- *  a duplicate `createSwatch` and the refusal fails the whole
- *  `Operation::Batch` it rides in. Same contract as
- *  `lower-to-table.ts`'s `cellFillSwatchOps`. PURE. */
+ *  `knownSwatchIds` skips ids the document already carries and mints
+ *  nothing when the read failed (`null`): core refuses a duplicate
+ *  `createSwatch` and the refusal fails the whole `Operation::Batch` it
+ *  rides in. See [`swatchMintOps`], which owns that ruling. PURE. */
 export function cellTextSwatchOps(
   content: LoweredContent,
-  existingSwatchIds?: ReadonlySet<string>,
+  knownSwatchIds?: KnownSwatchIds,
 ): Mutation[] {
-  const ops: Mutation[] = [];
-  for (const canonHex of distinctCellTextHexes(content)) {
-    if (existingSwatchIds?.has(paletteSwatchId("cellText", canonHex))) continue;
-    const spec: SwatchSpec = paletteEntryToSpec(
-      paletteEntry("cellText", canonHex),
-    );
-    ops.push({ op: "createSwatch", args: { spec } });
-  }
-  return ops;
+  return swatchMintOps(
+    "cellText",
+    distinctCellTextHexes(content),
+    knownSwatchIds,
+  );
 }
 
 /** Which cell facets a `LoweredStyle` carries that the tab-text fallback
@@ -311,16 +306,24 @@ function barSwatchId(canonHex: string): string {
   return paletteSwatchId("dataBar", canonHex);
 }
 
-/** The createSwatch ops for every distinct data-bar colour (RGB process
- *  swatches at deterministic ids; not "creating children", so they leave the
- *  `$created` sentinel untouched — emitted before the bar paths). */
-function barSwatchOps(content: LoweredContent): Mutation[] {
-  return distinctDataBarHexes(content).map((canonHex) => {
-    const spec: SwatchSpec = paletteEntryToSpec(
-      paletteEntry("dataBar", canonHex),
-    );
-    return { op: "createSwatch", args: { spec } };
-  });
+/** The createSwatch ops for every distinct data-bar colour the document
+ *  does not already carry (RGB process swatches at deterministic ids; not
+ *  "creating children", so they leave the `$created` sentinel untouched —
+ *  emitted before the bar paths).
+ *
+ *  `knownSwatchIds` is load-bearing: the bar ids are content-addressed, so
+ *  re-lowering the same region asked core to re-create swatches it already
+ *  had, and that refusal fails the whole batch — the frame, the rules and
+ *  the binding with it. See [`swatchMintOps`]. */
+function barSwatchOps(
+  content: LoweredContent,
+  knownSwatchIds?: KnownSwatchIds,
+): Mutation[] {
+  return swatchMintOps(
+    "dataBar",
+    distinctDataBarHexes(content),
+    knownSwatchIds,
+  );
 }
 
 /** The insertPath (closed rect ring) + frameFillColor ops for ONE data bar,
@@ -365,11 +368,19 @@ function dataBarOps(
 
 /** Translate lowered IR + a resolved placement + the frame binding into
  *  the phase-1 batch and the phase-2 text. Pure: no host import beyond
- *  wire TYPES. */
+ *  wire TYPES.
+ *
+ *  `knownSwatchIds` is what the DRIVER read from the document before
+ *  calling. The data-bar mints ride in this batch, so a colour the
+ *  document already has must be referenced, not re-created: core's refusal
+ *  of a duplicate `createSwatch` fails the batch and the FRAME itself
+ *  never lands. `null` (read failed) mints nothing — the bars degrade to
+ *  unpainted, the frame + rules + binding still land. */
 export function lowerToMutations(
   content: LoweredContent,
   placement: LowerPlacement,
   binding: Binding,
+  knownSwatchIds?: KnownSwatchIds,
 ): LowerResult {
   const { pageId, bounds } = placement;
   const [top, left] = bounds;
@@ -411,7 +422,7 @@ export function lowerToMutations(
   // frameFillColor refs resolve — not creating children, so they leave the
   // textFrame `$created` sentinel untouched), then one insertPath + fill ref
   // per bar. Emitted BEFORE the binding so `setPluginMetadata` stays LAST.
-  ops.push(...barSwatchOps(content));
+  ops.push(...barSwatchOps(content, knownSwatchIds));
   for (const bar of content.databars ?? []) {
     ops.push(...dataBarOps(bar, pageId, top, left));
   }

@@ -72,7 +72,6 @@ import type {
   ElementId,
   Mutation,
   PageId,
-  SwatchSpec,
   Value,
 } from "@paged-media/plugin-api";
 
@@ -80,9 +79,9 @@ import { BINDING_KEY, type Binding } from "./binding";
 import {
   distinctChartHexes,
   normalizePaletteHex,
-  paletteEntry,
-  paletteEntryToSpec,
   paletteSwatchId,
+  swatchMintOps,
+  type KnownSwatchIds,
 } from "./palette";
 
 // ── ChartGeometry mirror (the serialized sheet_chart IR, camelCase) ─────────
@@ -308,15 +307,22 @@ function colorRefValue(swatchId: string): Value {
   return { type: "colorRef", value: swatchId };
 }
 
-/** The createSwatch ops for every distinct chart colour — RGB process
- *  swatches at deterministic ids, 0..255 channels (IDML convention). Emitted
- *  FIRST in the batch; they are not "creating children" so they don't move
- *  the `$created` sentinel. */
-function swatchOps(geom: ChartGeometry): Mutation[] {
-  return distinctChartHexes(geom).map((canonHex) => {
-    const spec: SwatchSpec = paletteEntryToSpec(paletteEntry("chart", canonHex));
-    return { op: "createSwatch", args: { spec } };
-  });
+/** The createSwatch ops for every distinct chart colour the document does
+ *  not already carry — RGB process swatches at deterministic ids, 0..255
+ *  channels (IDML convention). Emitted FIRST in the batch; they are not
+ *  "creating children" so they don't move the `$created` sentinel.
+ *
+ *  `knownSwatchIds` is not an optimisation. A chart's colours are
+ *  content-addressed, so lowering the SAME chart twice — or lowering any
+ *  SECOND chart, since every chart shares the axis grey — asked core to
+ *  re-create a swatch it already had, and that refusal fails the WHOLE
+ *  batch: the second chart never landed at all (measured; see
+ *  [`swatchMintOps`], which owns the ruling). */
+function swatchOps(
+  geom: ChartGeometry,
+  knownSwatchIds?: KnownSwatchIds,
+): Mutation[] {
+  return swatchMintOps("chart", distinctChartHexes(geom), knownSwatchIds);
 }
 
 /** The fill/stroke/stroke-weight style ops for a just-created path (addressed
@@ -373,8 +379,17 @@ function styleOps(
  * host import beyond wire TYPES, no chart semantics (the geometry was already
  * decided in Rust). Deterministic — same geometry => same mutations.
  *
+ * `knownSwatchIds` is what the DRIVER read from the document
+ * (`document.collection("swatches")`) before calling: a colour already
+ * there is referenced, never re-minted, because core's refusal of a
+ * duplicate `createSwatch` would fail this entire batch and the chart
+ * would not land at all. `null` (the read failed) mints nothing — the art
+ * still lands, unpainted. Omitted mints everything (the pure/test case).
+ * See [`swatchMintOps`] for the measurements.
+ *
  * The batch emits, in order:
- *  - one createSwatch per DISTINCT chart colour (first, swatch-coherence),
+ *  - one createSwatch per DISTINCT chart colour the document lacks (first,
+ *    swatch-coherence),
  * then in geometry order:
  *  - rect      → insertPath (closed 4-corner ring) + fill/stroke style ops,
  *  - line      → insertPath (open polyline) + stroke style ops,
@@ -392,14 +407,17 @@ export function chartGeometryToMutations(
   geom: ChartGeometry,
   placement: ChartPlacement,
   binding: Binding,
+  knownSwatchIds?: KnownSwatchIds,
 ): ChartLowerResult {
   const { pageId, bounds } = placement;
   const [top, left] = bounds;
 
-  // (0) The colour swatches — minted once per distinct colour, FIRST so the
-  // per-path frameFillColor/frameStrokeColor refs resolve. Not creating
-  // children, so they leave the `$created` sentinel untouched.
-  const ops: Mutation[] = swatchOps(geom);
+  // (0) The colour swatches — minted once per distinct colour the document
+  // does not already carry, FIRST so the per-path frameFillColor /
+  // frameStrokeColor refs resolve. Not creating children, so they leave the
+  // `$created` sentinel untouched. A colour already in the document is
+  // referenced, NOT re-minted: re-minting is what failed the whole batch.
+  const ops: Mutation[] = swatchOps(geom, knownSwatchIds);
   const texts: ChartTextLabel[] = [];
 
   // Whether a page element has been created yet (the binding rides the FIRST
