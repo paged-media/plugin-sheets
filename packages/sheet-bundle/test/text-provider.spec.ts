@@ -135,11 +135,13 @@ describe("paged.sheet text provider — the declaration", () => {
     expect(p.provides.ops).toBeUndefined();
   });
 
-  it("`characterFillColor` is DECLARED but not VALUED — the colour it holds names no swatch", () => {
-    // The cell's text colour is a raw #RRGGBB; core resolves a colorRef
-    // by SWATCH ID. Serving it would hand the panel a reference that
-    // names nothing — the same call the Swatches slice made in the
-    // other direction.
+  it("`characterFillColor` is DECLARED but not VALUED — nothing mints the swatch it names", () => {
+    // Since `c321642` the value is EXPRESSIBLE (a minted swatch id, not
+    // the raw hex that used to name nothing and render as the default
+    // text colour). It stays absent because nothing applies the
+    // emission that mints it: a colour chip for a swatch no document
+    // carries is the same lie the Swatches slice marked
+    // `data-swatch-preview="unresolved"` from the other side.
     expect(VALUED_PATHS).not.toContain("characterFillColor");
     expect(ABSENT_PATHS).toContain("characterFillColor");
   });

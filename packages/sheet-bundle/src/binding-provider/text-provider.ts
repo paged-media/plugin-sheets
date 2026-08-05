@@ -78,13 +78,23 @@
 //   whole panel surface.
 //
 //   `characterFillColor` is the interesting member of that set, and it
-//   is `absent` for a DIFFERENT reason: the cell's text colour is a raw
-//   `#RRGGBB`, while core resolves a `colorRef` by SWATCH ID. Serving it
-//   would hand the panel a colour reference that names nothing — the
-//   exact call the Swatches slice already made in the other direction
-//   ("paged.sheet does NOT mint swatches for cell fill / cell text
-//   colours … serving them here would hand the host swatch ids that
-//   resolve to no colour"). Two slices, one ruling.
+//   is `absent` for a DIFFERENT reason — one that survived the ground
+//   moving under it. The cell's text colour IS known. Core resolves a
+//   `colorRef` by SWATCH ID, and since `c321642` `styleProps` no longer
+//   hands over the raw `#RRGGBB` (which named nothing and rendered as
+//   the default text colour, silently) — it emits the DETERMINISTIC
+//   MINTED id `palette.ts` owns. So the value is expressible now.
+//
+//   It still stays `absent`, because that commit also settled the other
+//   half: the cell-text mint has NO DRIVER. Nothing applies
+//   `StyleEmission`, so the id names a swatch the document does not
+//   carry, and a colour chip for a swatch that does not exist is the
+//   same lie one axis over — which is exactly what the SWATCHES slice
+//   found from the other side, and marked
+//   `data-swatch-preview="unresolved"` rather than paint a plausible
+//   grey. When a driver lands and cell text colours become real document
+//   swatches, this path moves from ABSENT_PATHS to VALUED_PATHS and
+//   nothing else here changes.
 //
 // WHAT IT WRITES: NOTHING, and it SAYS SO — `writablePaths: []`.
 //
@@ -161,8 +171,10 @@ export const ABSENT_PATHS: readonly PropertyPath[] = [
   "characterLigatures",
   "characterLanguage",
   "characterOtfFeatures",
-  // The cell's text colour IS known — but as a raw hex, and core's
-  // `colorRef` names a swatch. See the module header.
+  // The cell's text colour IS known, and since `c321642` it is even
+  // expressible — a minted swatch id, not a raw hex. But nothing applies
+  // the emission that mints it, so the id names a swatch no document
+  // carries. See the module header.
   "characterFillColor",
   // Paragraph — a cell has no paragraph at all.
   "paragraphJustification",
