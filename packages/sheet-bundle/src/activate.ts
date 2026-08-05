@@ -37,6 +37,8 @@ import { parseBinding } from "../../sheet-host-model/src";
 import manifest from "../manifest.json";
 
 import { pickAndImport, XLSX_MIME } from "./import-xlsx";
+import { registerBindingProvider } from "./binding-provider/adr023-seam";
+import { makeSwatchesBindingProvider } from "./binding-provider/swatches-provider";
 import { createWorkbookSession } from "./session";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
 import { makeGridPanel } from "./panels/grid-panel";
@@ -58,6 +60,10 @@ function frameIdOf(id: unknown): string | null {
 
 export function activate(host: BundleHost): BundleHandle {
   const session = createWorkbookSession(host);
+  // ADR 023 — the binding-provider handle is the SECOND thing allocated
+  // outside a facade-tracked registration (the session is the first), so
+  // dispose tears it down explicitly. `null` on a host with no registry.
+  let swatchesProviderHandle: { dispose(): void } | null = null;
 
   // S-08: restore the last persisted workbook from host.blob, if any. A
   // cheap no-op (one blob read) when nothing was persisted or no blob
@@ -281,6 +287,23 @@ export function activate(host: BundleHost): BundleHandle {
         session.hideGridInFrame();
       },
     });
+
+    // ADR 023 phase D — paged.sheet answers the HOST's Swatches panel
+    // while the `sheet` context is active: the WORKBOOK PALETTE (the
+    // document swatches this workbook's charts + data bars mint) instead
+    // of the document's own swatch list, plus first refusal on
+    // `editSwatch`.
+    //
+    // Registered INSIDE the editContext branch on purpose — the
+    // provider's lifetime is BORROWED from that context's
+    // onEnter/onExit, so a host that cannot host the context cannot host
+    // the provider either. The door itself probes separately and
+    // degrades to "no provider" on a pre-ADR host.
+    swatchesProviderHandle = registerBindingProvider(
+      host,
+      "sheet",
+      makeSwatchesBindingProvider(host, session).provider,
+    );
   }
 
   // K-2 / S-06 — register the .xlsx IMPORTER so opening a spreadsheet
@@ -317,6 +340,8 @@ export function activate(host: BundleHost): BundleHandle {
 
   return {
     dispose() {
+      swatchesProviderHandle?.dispose();
+      swatchesProviderHandle = null;
       session.dispose();
     },
   };

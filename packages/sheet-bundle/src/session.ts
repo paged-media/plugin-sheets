@@ -34,10 +34,14 @@ import type {
 import {
   gridSceneToSceneLayer,
   hitCell,
+  workbookPalette,
+  type ChartGeometry,
   type FunctionEntry,
   type GridCell,
   type GridScene,
   type GridSelection,
+  type LoweredContent,
+  type PaletteEntry,
 } from "../../sheet-host-model/src";
 
 import {
@@ -64,6 +68,13 @@ import {
  *  imported workbook is the one restored on reload. */
 const BLOB_KEY = "workbook";
 const BLOB_NAME_KEY = "workbook.name";
+
+/** The nominal box the palette probe asks chart geometry for. A chart's
+ *  COLOURS do not depend on its size — only the primitive coordinates do
+ *  — so the palette read passes a fixed box rather than pretending to
+ *  know a frame it is not rendering into. */
+const PALETTE_PROBE_WPT = 400;
+const PALETTE_PROBE_HPT = 300;
 
 /** A tiny synchronous event emitter (one channel: "did the session
  *  state change"). Avoids dragging a dependency for a single signal. */
@@ -170,6 +181,17 @@ export interface WorkbookSession {
   /** Enumerate the workbook's parsed charts (M2 charts track, spec §8.4).
    *  Empty when there is no engine / no charts. */
   listCharts(): ChartInfo[];
+  /** ADR 023 — the WORKBOOK PALETTE: every colour this workbook makes
+   *  paged.sheet mint as a DOCUMENT swatch (chart series + conditional-
+   *  format data bars), at the deterministic ids the lowering uses.
+   *
+   *  This is what the host Swatches panel binds to while the `sheet`
+   *  edit context is active. It is derived, never stored: the colours
+   *  are decided in Rust (`sheet-chart`'s palette, `sheet-lower`'s
+   *  data-bar rules) and `sheet-host-model/palette.ts` only projects
+   *  them onto core's swatch vocabulary. Empty when no workbook is
+   *  loaded, or when the workbook has no charts and no data bars. */
+  workbookPalette(): PaletteEntry[];
   /** Lower a parsed chart to a paged.draw vector frame (spec §8.4 — the
    *  two-phase flow in lower-chart.ts). `chartIndex` indexes [`listCharts`].
    *  Returns false when there is no engine or the lower fails. */
@@ -974,6 +996,44 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("listCharts: engine call failed", err);
         return [];
       }
+    },
+
+    workbookPalette() {
+      const engine = state.engine;
+      if (!engine) return [];
+      // CHART colours. The geometry is size-parameterised, but a
+      // chart's PALETTE is not — the size only moves the primitives —
+      // so a fixed nominal box is used rather than a real frame's,
+      // which the palette read has no business knowing about.
+      const charts: ChartGeometry[] = [];
+      try {
+        for (const info of engine.listCharts()) {
+          charts.push(
+            engine.getChartGeometry(
+              info.index,
+              PALETTE_PROBE_WPT,
+              PALETTE_PROBE_HPT,
+            ),
+          );
+        }
+      } catch (err) {
+        host.log.warn("workbookPalette: chart geometry read failed", err);
+      }
+      // DATA-BAR colours, from the currently selected region — the one
+      // the user is looking at, and the one a lower would emit swatches
+      // for. A conditional-format rule outside the selection has no
+      // lowered rect, so it has no swatch to show.
+      const regions: LoweredContent[] = [];
+      if (state.activeSheet !== null && state.selectedRange) {
+        try {
+          regions.push(
+            engine.getRangeLowered(state.activeSheet, state.selectedRange),
+          );
+        } catch (err) {
+          host.log.warn("workbookPalette: region lower failed", err);
+        }
+      }
+      return workbookPalette({ charts, regions });
     },
 
     authorChart(values, categories, kind, title) {

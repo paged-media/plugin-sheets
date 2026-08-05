@@ -116,6 +116,27 @@ export {
   type FunctionEntry,
 } from "./completions";
 
+// The WORKBOOK PALETTE — the document swatches paged.sheet mints, and
+// the ONE implementation of their deterministic id convention. Consumed
+// by the two lowering lanes AND by the ADR 023 Swatches binding provider,
+// which is exactly why it is shared: a provider serving ids the lowering
+// does not mint would hand the host swatch ids core cannot resolve.
+export {
+  distinctChartHexes,
+  distinctDataBarHexes,
+  normalizePaletteHex,
+  paletteEntry,
+  paletteEntryToSpec,
+  paletteEntryToSummary,
+  paletteRgb255,
+  paletteSwatchId,
+  paletteSwatchName,
+  workbookPalette,
+  type PaletteEntry,
+  type PaletteFacet,
+  type PaletteSources,
+} from "./palette";
+
 export {
   chartGeometryToMutations,
   type ChartGeometry,

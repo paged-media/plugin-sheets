@@ -56,6 +56,13 @@ import type {
 import type { PageId } from "@paged-media/plugin-api";
 
 import { BINDING_KEY, type Binding } from "./binding";
+import {
+  distinctDataBarHexes,
+  normalizePaletteHex,
+  paletteEntry,
+  paletteEntryToSpec,
+  paletteSwatchId,
+} from "./palette";
 import type { Bounds } from "./placement";
 import type { DataBarRect, LoweredContent, LoweredStyle } from "./lowered";
 
@@ -247,53 +254,29 @@ const CREATED_DATABAR: ElementId = { kind: "polygon", id: "$created" };
 
 /** Normalise a `#RRGGBB`/`#RGB` (any case) to the uppercase 6-digit body
  *  WITHOUT `#`, or null if malformed (a defensive guard — a bad colour degrades
- *  to "no fill", never crashes). Shared shape with chart.ts's normaliser. */
+ *  to "no fill", never crashes). Delegates to `palette.ts`, which is now the
+ *  ONE implementation the chart lane, this lane and the ADR 023 binding
+ *  provider all share. */
 function normalizeBarHex(hex: string): string | null {
-  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex.trim());
-  if (!m) return null;
-  let body = m[1];
-  if (body.length === 3) {
-    body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
-  }
-  return body.toUpperCase();
+  return normalizePaletteHex(hex);
 }
 
 /** The deterministic document-swatch id for a data-bar colour (keyed by the
- *  canonical hex so one colour reuses ONE swatch across bars + re-lowers). */
+ *  canonical hex so one colour reuses ONE swatch across bars + re-lowers).
+ *  The convention lives in `palette.ts` — it is also the id the Swatches
+ *  panel addresses, so a second copy here could silently drift from it. */
 function barSwatchId(canonHex: string): string {
-  return `Color/uPagedSheetDataBar${canonHex}`;
-}
-
-/** The distinct data-bar colours across the content, in first-appearance
- *  order (deterministic), as canonical hex bodies. */
-function distinctBarColors(content: LoweredContent): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const bar of content.databars ?? []) {
-    const h = normalizeBarHex(bar.fill);
-    if (h == null || seen.has(h)) continue;
-    seen.add(h);
-    out.push(h);
-  }
-  return out;
+  return paletteSwatchId("dataBar", canonHex);
 }
 
 /** The createSwatch ops for every distinct data-bar colour (RGB process
  *  swatches at deterministic ids; not "creating children", so they leave the
  *  `$created` sentinel untouched — emitted before the bar paths). */
 function barSwatchOps(content: LoweredContent): Mutation[] {
-  return distinctBarColors(content).map((canonHex) => {
-    const spec: SwatchSpec = {
-      selfId: barSwatchId(canonHex),
-      name: `paged.sheet data bar ${canonHex}`,
-      space: "RGB",
-      value: [
-        parseInt(canonHex.slice(0, 2), 16),
-        parseInt(canonHex.slice(2, 4), 16),
-        parseInt(canonHex.slice(4, 6), 16),
-      ],
-      model: "Process",
-    };
+  return distinctDataBarHexes(content).map((canonHex) => {
+    const spec: SwatchSpec = paletteEntryToSpec(
+      paletteEntry("dataBar", canonHex),
+    );
     return { op: "createSwatch", args: { spec } };
   });
 }

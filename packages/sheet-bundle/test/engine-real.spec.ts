@@ -33,6 +33,7 @@ import { describe, expect, it } from "vitest";
 import {
   chartGeometryToMutations,
   makeBinding,
+  workbookPalette,
   type ChartGeometry,
 } from "@paged-media/sheet-host-model";
 
@@ -223,6 +224,57 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
       expect(swatchIds.has(v.value)).toBe(true);
     }
 
+    e.free();
+  });
+
+  // ADR 023 — the WORKBOOK PALETTE derived from a REAL workbook. The host
+  // Swatches panel binds to these ids while the `sheet` edit context is
+  // active, and the host resolves a colour chip BY DOCUMENT SWATCH ID, so
+  // "the palette's ids are the lowering's ids" has to hold against the
+  // actual engine and not just against a hand-built geometry.
+  it("derives the workbook palette from a real chart workbook (ADR 023)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+    e.load_xlsx(readFileSync(CHART_XLSX));
+
+    const charts = e.list_charts() as Array<{ index: number }>;
+    expect(charts.length).toBeGreaterThan(0);
+    const geoms = charts.map(
+      (c) => e.get_chart_geometry(c.index, 400, 300) as ChartGeometry,
+    );
+
+    const palette = workbookPalette({ charts: geoms });
+    expect(palette.length).toBeGreaterThan(0);
+    // Every entry is a REAL document swatch id in paged.sheet's minted
+    // namespace — never a raw hex, which core's `Graphic::resolve` could
+    // not look up.
+    for (const entry of palette) {
+      expect(entry.selfId.startsWith("Color/uPagedSheet")).toBe(true);
+    }
+    // 09-chart.xlsx declares its series colour explicitly
+    // (`<a:srgbClr val="3366CC"/>`), so that colour must be in the
+    // palette at its deterministic id — the value the editor's
+    // swatches-retarget e2e asserts the host panel shows.
+    expect(palette.map((p) => p.selfId)).toContain(
+      "Color/uPagedSheetChart3366CC",
+    );
+
+    // …and the palette agrees with what the lowering actually mints.
+    const { batch } = chartGeometryToMutations(
+      geoms[0],
+      { pageId: "Page/u1", bounds: [0, 0, 300, 400] },
+      makeBinding("Sheet1", "A1:B5", 1),
+    );
+    const ops = (
+      batch as { args: { ops: Array<{ op: string; args: Record<string, unknown> }> } }
+    ).args.ops;
+    const mintedIds = ops
+      .filter((o) => o.op === "createSwatch")
+      .map((o) => (o.args.spec as { selfId: string }).selfId);
+    expect(mintedIds).toEqual(
+      workbookPalette({ charts: [geoms[0]] }).map((p) => p.selfId),
+    );
     e.free();
   });
 

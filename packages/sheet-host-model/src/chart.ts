@@ -77,6 +77,13 @@ import type {
 } from "@paged-media/plugin-api";
 
 import { BINDING_KEY, type Binding } from "./binding";
+import {
+  distinctChartHexes,
+  normalizePaletteHex,
+  paletteEntry,
+  paletteEntryToSpec,
+  paletteSwatchId,
+} from "./palette";
 
 // ── ChartGeometry mirror (the serialized sheet_chart IR, camelCase) ─────────
 //
@@ -278,33 +285,22 @@ const CREATED_POLYGON: ElementId = { kind: "polygon", id: "$created" };
  *  uppercase 6-digit form WITHOUT the leading `#`, or `null` if it is not a
  *  well-formed hex colour (a defensive guard — a malformed colour degrades to
  *  "no swatch", never crashes the lower). 3-digit shorthand expands per CSS
- *  (`#abc` → `AABBCC`). */
+ *  (`#abc` → `AABBCC`).
+ *
+ *  Delegates to `palette.ts`: the panel that SHOWS this palette (the ADR 023
+ *  binding provider) must normalise identically or it would serve ids this
+ *  lowering never mints. */
 function normalizeHex(hex: string): string | null {
-  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex.trim());
-  if (!m) return null;
-  let body = m[1];
-  if (body.length === 3) {
-    body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
-  }
-  return body.toUpperCase();
+  return normalizePaletteHex(hex);
 }
 
 /** The deterministic document-swatch id for a chart colour. Keyed by the
  *  canonical hex so the SAME colour across primitives (and across re-lowers)
- *  reuses ONE swatch — the §8.4 coherence property. The `u`-prefixed local
- *  part follows the `Color/u<...>` minted-id convention; the hex makes it
- *  stable + human-recognisable in the Swatches panel. */
+ *  reuses ONE swatch — the §8.4 coherence property. Lives in `palette.ts`
+ *  now: it is the id the Swatches panel addresses through the ADR 023 seam,
+ *  so there is exactly ONE implementation of the convention. */
 function swatchIdForHex(canonHex: string): string {
-  return `Color/uPagedSheetChart${canonHex}`;
-}
-
-/** RGB channel triple (0..255) from a canonical 6-digit hex body. */
-function rgb255(canonHex: string): [number, number, number] {
-  return [
-    parseInt(canonHex.slice(0, 2), 16),
-    parseInt(canonHex.slice(2, 4), 16),
-    parseInt(canonHex.slice(4, 6), 16),
-  ];
+  return paletteSwatchId("chart", canonHex);
 }
 
 /** A `frameFillColor` / `frameStrokeColor` colorRef Value over a swatch id. */
@@ -312,55 +308,13 @@ function colorRefValue(swatchId: string): Value {
   return { type: "colorRef", value: swatchId };
 }
 
-/** Collect the DISTINCT chart colours (fills + strokes) across the geometry,
- *  in first-appearance order, as canonical hex bodies. Deterministic. */
-function distinctColors(geom: ChartGeometry): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const add = (c: string | null) => {
-    if (c == null) return;
-    const h = normalizeHex(c);
-    if (h == null || seen.has(h)) return;
-    seen.add(h);
-    out.push(h);
-  };
-  for (const prim of geom.prims) {
-    switch (prim.kind) {
-      case "rect":
-        add(prim.fill);
-        add(prim.stroke);
-        break;
-      case "line":
-        add(prim.stroke);
-        break;
-      case "polygon":
-        add(prim.fill);
-        add(prim.stroke);
-        break;
-      case "wedge":
-        add(prim.fill);
-        add(prim.stroke);
-        break;
-      // text carries no fill/stroke colour in the IR.
-    }
-  }
-  return out;
-}
-
 /** The createSwatch ops for every distinct chart colour — RGB process
  *  swatches at deterministic ids, 0..255 channels (IDML convention). Emitted
  *  FIRST in the batch; they are not "creating children" so they don't move
  *  the `$created` sentinel. */
 function swatchOps(geom: ChartGeometry): Mutation[] {
-  return distinctColors(geom).map((canonHex) => {
-    const [r, g, b] = rgb255(canonHex);
-    const spec: SwatchSpec = {
-      selfId: swatchIdForHex(canonHex),
-      name: `paged.sheet chart ${canonHex}`,
-      space: "RGB",
-      value: [r, g, b],
-      model: "Process",
-    };
+  return distinctChartHexes(geom).map((canonHex) => {
+    const spec: SwatchSpec = paletteEntryToSpec(paletteEntry("chart", canonHex));
     return { op: "createSwatch", args: { spec } };
   });
 }
