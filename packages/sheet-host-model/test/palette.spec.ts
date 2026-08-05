@@ -25,10 +25,13 @@ import { describe, expect, it } from "vitest";
 import type { Mutation, SwatchSpec } from "@paged-media/plugin-api";
 
 import { chartGeometryToMutations, type ChartGeometry } from "../src/chart";
-import { lowerToMutations } from "../src/lower-to-mutations";
+import { cellFillSwatchOps } from "../src/lower-to-table";
+import { cellTextSwatchOps, lowerToMutations } from "../src/lower-to-mutations";
 import { makeBinding, type Binding } from "../src/binding";
 import type { LoweredContent } from "../src/lowered";
 import {
+  distinctCellFillHexes,
+  distinctCellTextHexes,
   distinctChartHexes,
   distinctDataBarHexes,
   normalizePaletteHex,
@@ -96,6 +99,18 @@ describe("sheet_plugin_swatch_palette: facets are distinct swatches", () => {
     );
     expect(paletteSwatchId("dataBar", "4E79A7")).toBe(
       "Color/uPagedSheetDataBar4E79A7",
+    );
+  });
+
+  it("keys CELL FILL and CELL TEXT to their own ids too", () => {
+    // A cell's background and its glyph colour are different document
+    // swatches for the same reason chart and data bar are: recolouring
+    // one must not move the other.
+    expect(paletteSwatchId("cellFill", "FFFF00")).toBe(
+      "Color/uPagedSheetCellFillFFFF00",
+    );
+    expect(paletteSwatchId("cellText", "FFFF00")).toBe(
+      "Color/uPagedSheetCellTextFFFF00",
     );
   });
 
@@ -209,5 +224,73 @@ describe("sheet_plugin_swatch_palette: the panel's ids ARE the lowering's ids", 
 
     const expected = workbookPalette({ regions: [c] }).map(paletteEntryToSpec);
     expect(minted).toEqual(expected);
+  });
+});
+
+// The same falsifiable property, extended to the CELL colour axis the
+// Swatches slice deliberately left out: a `cellFillColor` /
+// `characterFillColor` colorRef is a SWATCH ID, and a render proved an
+// unresolvable one paints nothing (fill) or the default colour (text).
+// So the ids the lowering REFERENCES must be the ids it MINTS.
+
+describe("sheet_plugin_swatch_palette: cell colours are minted, not raw hex", () => {
+  const STYLED = content({
+    styles: [
+      {
+        key: 0,
+        bold: false,
+        italic: false,
+        borderTop: false,
+        borderRight: false,
+        borderBottom: false,
+        borderLeft: false,
+      },
+      {
+        key: 1,
+        bold: false,
+        italic: false,
+        fillRgb: "#ffff00",
+        textRgb: "#F00",
+        borderTop: false,
+        borderRight: false,
+        borderBottom: false,
+        borderLeft: false,
+      },
+    ],
+  });
+
+  it("reads the distinct cell colours off the styles table (key 0 excluded)", () => {
+    expect(distinctCellFillHexes(STYLED)).toEqual(["FFFF00"]);
+    // 3-digit shorthand canonicalises, so one colour is one swatch.
+    expect(distinctCellTextHexes(STYLED)).toEqual(["FF0000"]);
+  });
+
+  it("the cell-fill mints ARE the palette's cell-fill entries", () => {
+    const minted = mintedSpecs({
+      op: "batch",
+      args: { ops: cellFillSwatchOps(STYLED) },
+    } as unknown as Mutation);
+    const expected = workbookPalette({ regions: [STYLED] })
+      .filter((e) => e.facet === "cellFill")
+      .map(paletteEntryToSpec);
+    expect(minted).toEqual(expected);
+    expect(minted).toHaveLength(1);
+  });
+
+  it("cell TEXT mints exist but stay OUT of the palette (nothing applies them)", () => {
+    // `cellTextSwatchOps` is real and correct; `StyleEmission` has no
+    // driver yet, so a palette chip would name a swatch no document has.
+    const minted = mintedSpecs({
+      op: "batch",
+      args: { ops: cellTextSwatchOps(STYLED) },
+    } as unknown as Mutation);
+    expect(minted.map((s) => s.selfId)).toEqual([
+      "Color/uPagedSheetCellTextFF0000",
+    ]);
+    expect(
+      workbookPalette({ regions: [STYLED] }).some(
+        (e) => e.facet === "cellText",
+      ),
+    ).toBe(false);
   });
 });

@@ -52,6 +52,41 @@
       - "packages/sheet-host-model/test/lower-to-table.spec.ts"
       - "packages/sheet-host-model/test/lower-to-mutations.spec.ts"
 
+# RULING (render-verified, not read-verified). A host `{type:"colorRef"}`
+# value is a SWATCH ID, resolved by core's `Graphic::resolve` against the
+# document's <Color>/<Swatch> tables — it is NOT a colour literal. Driving
+# the real engine (CanvasModel + the CPU rasterizer) over the exact ops
+# this plugin emits:
+#   cellFillColor = "#FFEE00"                → 0 non-white pixels (unpainted)
+#   cellFillColor = "Color/Black"            → a solid black cell
+#   cellFillColor = a minted Color/uPagedSheet… → a solid #FFEE00 cell
+#   characterFillColor = "#FF0000"           → glyph pixels BYTE-IDENTICAL to
+#                                              setting no colour (black), because
+#                                              the run paint picker ends in
+#                                              `unwrap_or(default)`
+# So both lowering lanes MINT a document swatch per distinct cell colour at
+# the deterministic id palette.ts owns, and reference it by id. Second half
+# of the ruling: core REFUSES a duplicate createSwatch and the refusal fails
+# the whole Operation::Batch it rides in (verified — a batch led by a
+# duplicate mint dropped its sibling fills), so a mint is skipped when the
+# document already carries the id, and a FAILED swatch read mints nothing
+# rather than gamble the decor batch.
+- id: sheet.style.cell-colour-swatch-ref
+  title: Cell fill / cell text colours are MINTED document swatches, never raw hex in a colorRef
+  status: implemented
+  provenance:
+    - "core paged-model Graphic::resolve — a colorRef resolves by swatch id"
+    - "core paged-renderer pipeline/tables.rs — an unresolved cell fill paints nothing"
+    - "core paged-renderer pipeline/color_paint.rs::build_run_paint_picker — an unresolved run fill falls back to the default paint"
+    - "lower-to-table.ts::cellFillSwatchOps + tableDecorOps (native lane)"
+    - "lower-to-mutations.ts::cellTextSwatchOps + styleProps (fallback lane)"
+    - "palette.ts — the one cellFill/cellText id convention, shared with the ADR-023 Swatches provider"
+  tests:
+    vitest:
+      - "packages/sheet-host-model/test/lower-to-table.spec.ts"
+      - "packages/sheet-host-model/test/palette.spec.ts"
+      - "packages/sheet-bundle/test/lower-flow.spec.ts"
+
 - id: sheet.style.cross-surface-parity
   title: A cell's visual style is identical on the page lowering and the grid scene (one style resolver)
   status: implemented

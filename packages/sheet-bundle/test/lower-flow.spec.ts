@@ -331,6 +331,133 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
   });
 });
 
+// ── cell fills reach the PAGE as real swatches (sheet.lower.native-table) ────
+//
+// A `{type:"colorRef"}` value is a swatch id. Rendered through the real
+// engine, a `cellFillColor` naming a raw hex paints NOTHING (0 non-white
+// pixels) while the same document with the swatch minted paints the cell.
+// So the driver must mint before it refs — and must NOT re-mint an id the
+// document already carries, because core refuses a duplicate `createSwatch`
+// and the refusal fails the WHOLE batch (verified: a batch led by a
+// duplicate mint dropped its sibling fills).
+
+/** The 2x1 fixture engine, but with one FILLED cell (style key 1). */
+function filledEngine(): SheetEngine {
+  const e = fakeEngine();
+  return {
+    ...e,
+    getRangeLowered: () => ({
+      cols: [
+        { index: 0, widthPt: 50 },
+        { index: 1, widthPt: 50 },
+      ],
+      rows: [
+        {
+          index: 0,
+          heightPt: 18,
+          cells: [
+            { col: 0, text: "Item", align: "left", styleKey: 1 },
+            { col: 1, text: "Qty", align: "right", styleKey: 0 },
+          ],
+        },
+      ],
+      rules: { h: [], v: [] },
+      merges: [],
+      styles: [
+        {
+          key: 0,
+          bold: false,
+          italic: false,
+          borderTop: false,
+          borderRight: false,
+          borderBottom: false,
+          borderLeft: false,
+        },
+        {
+          key: 1,
+          bold: false,
+          italic: false,
+          fillRgb: "#FFFF00",
+          borderTop: false,
+          borderRight: false,
+          borderBottom: false,
+          borderLeft: false,
+        },
+      ],
+    }),
+  };
+}
+
+/** `fakeHost` plus a swatch-collection answer: `rows` when given, a THROW
+ *  when `rows` is null (the read-failed case the driver must not guess at). */
+function fakeHostWithSwatches(
+  createdId: ElementId,
+  storyId: string,
+  rows: string[] | null,
+) {
+  const built = fakeHost(createdId, storyId);
+  const inner = built.host.document.collection.bind(built.host.document);
+  (built.host.document as unknown as {
+    collection: (name: string) => Promise<unknown>;
+  }).collection = async (name: string) => {
+    if (name === "swatches") {
+      if (rows === null) throw new Error("swatch read failed");
+      return rows.map((selfId) => ({ selfId }));
+    }
+    return inner(name as never);
+  };
+  return built;
+}
+
+const FILL_SWATCH = "Color/uPagedSheetCellFillFFFF00";
+
+describe("sheet_lower_native_table: the driver mints the fills it references", () => {
+  const decorOf = (mutations: Mutation[]) =>
+    (mutations[mutations.length - 1] as {
+      args: { ops: Array<{ op: string; args: Record<string, any> }> };
+    }).args.ops;
+
+  it("the decor batch LEADS with the createSwatch its cellFillColor names", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", []);
+    await lowerSelectionToFrame(host, filledEngine(), 0, "A1:B1");
+
+    const ops = decorOf(mutations);
+    expect(ops[0].op).toBe("createSwatch");
+    expect(ops[0].args.spec).toMatchObject({
+      selfId: FILL_SWATCH,
+      space: "RGB",
+      value: [255, 255, 0],
+    });
+    const fill = ops.find((o) => o.args.path === "cellFillColor")!;
+    expect(fill.args.value).toEqual({ type: "colorRef", value: FILL_SWATCH });
+  });
+
+  it("does NOT re-mint a swatch the document already carries", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", [
+      FILL_SWATCH,
+    ]);
+    await lowerSelectionToFrame(host, filledEngine(), 0, "A1:B1");
+
+    const ops = decorOf(mutations);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    // The fill still rides — it names the swatch that is already there.
+    expect(
+      ops.find((o) => o.args.path === "cellFillColor")!.args.value,
+    ).toEqual({ type: "colorRef", value: FILL_SWATCH });
+  });
+
+  it("a FAILED swatch read mints nothing rather than risk the whole batch", async () => {
+    const { host, mutations } = fakeHostWithSwatches(CREATED, "Story/u9", null);
+    await lowerSelectionToFrame(host, filledEngine(), 0, "A1:B1");
+
+    const ops = decorOf(mutations);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    // The decor still applies; the fill degrades to unpainted (the
+    // pre-fix behaviour) instead of taking the edge strokes down with it.
+    expect(ops.some((o) => o.args.path === "cellFillColor")).toBe(true);
+  });
+});
+
 // ── chart → paged.draw vector lower (M2 charts track, spec §8.4) ────────────
 
 /** A fake engine with one parsed chart + a fixed geometry IR (a column with

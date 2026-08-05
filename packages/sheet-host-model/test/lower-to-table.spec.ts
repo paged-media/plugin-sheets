@@ -31,6 +31,7 @@ import type { Mutation } from "@paged-media/plugin-api";
 import type { LoweredContent, Page } from "../src";
 import {
   CELL_EDGE_STROKE_PT,
+  cellFillSwatchOps,
   columnOrder,
   pageTableMutations,
   tableCellOps,
@@ -266,42 +267,45 @@ describe("sheet_lower_native_table: merges → setCellSpan", () => {
   });
 });
 
+/** One styled cell (bold, a #FFEE00 fill, top+bottom borders) — shared by
+ *  the decor tests and the swatch-minting tests below. */
+const STYLED: LoweredContent = {
+  ...CONTENT,
+  rows: [
+    {
+      index: 0,
+      heightPt: 18,
+      cells: [
+        { col: 0, text: "Item", align: "left", styleKey: 1 },
+        { col: 2, text: "Qty", align: "right", styleKey: 0 },
+      ],
+    },
+    { index: 1, heightPt: 20, cells: [{ col: 0, text: "Apple", align: "left" }] },
+  ],
+  styles: [
+    {
+      key: 0,
+      bold: false,
+      italic: false,
+      borderTop: false,
+      borderRight: false,
+      borderBottom: false,
+      borderLeft: false,
+    },
+    {
+      key: 1,
+      bold: true,
+      italic: false,
+      fillRgb: "#FFEE00",
+      borderTop: true,
+      borderRight: false,
+      borderBottom: true,
+      borderLeft: false,
+    },
+  ],
+};
+
 describe("sheet_lower_native_table: style fills + borders → tableCell props", () => {
-  const STYLED: LoweredContent = {
-    ...CONTENT,
-    rows: [
-      {
-        index: 0,
-        heightPt: 18,
-        cells: [
-          { col: 0, text: "Item", align: "left", styleKey: 1 },
-          { col: 2, text: "Qty", align: "right", styleKey: 0 },
-        ],
-      },
-      { index: 1, heightPt: 20, cells: [{ col: 0, text: "Apple", align: "left" }] },
-    ],
-    styles: [
-      {
-        key: 0,
-        bold: false,
-        italic: false,
-        borderTop: false,
-        borderRight: false,
-        borderBottom: false,
-        borderLeft: false,
-      },
-      {
-        key: 1,
-        bold: true,
-        italic: false,
-        fillRgb: "#FFEE00",
-        borderTop: true,
-        borderRight: false,
-        borderBottom: true,
-        borderLeft: false,
-      },
-    ],
-  };
 
   it("a styled cell gets cellFillColor + per-edge stroke weights", () => {
     const decor = tableDecorOps(STYLED, "Story/u1", "tbl9");
@@ -315,7 +319,15 @@ describe("sheet_lower_native_table: style fills + borders → tableCell props", 
       kind: "tableCell",
       id: { story_id: "Story/u1", table_id: "tbl9", row: 0, col: 0 },
     });
-    expect(fill.args.value).toEqual({ type: "colorRef", value: "#FFEE00" });
+    // The colorRef is a SWATCH ID, not a hex. Core resolves it through
+    // `Graphic::resolve`; a hex resolves to nothing and the table painter
+    // then leaves the cell UNPAINTED (pixel-verified: a raw-hex
+    // cellFillColor rendered ZERO non-white pixels). `cellFillSwatchOps`
+    // mints exactly this id.
+    expect(fill.args.value).toEqual({
+      type: "colorRef",
+      value: "Color/uPagedSheetCellFillFFEE00",
+    });
 
     const edgePaths = ops
       .filter((o) => o.op === "setElementProperty" && o.args.path !== "cellFillColor")
@@ -334,6 +346,90 @@ describe("sheet_lower_native_table: style fills + borders → tableCell props", 
 
   it("default-styled cells emit no decor", () => {
     expect(tableDecorOps(CONTENT, "Story/u1", "tbl9").ops).toEqual([]);
+  });
+});
+
+// sheet.lower.native-table — THE RENDER-VERIFIED CONTRACT. A `colorRef`
+// value is a SWATCH ID, resolved by `Graphic::resolve` against the
+// document's `<Color>`/`<Swatch>` tables. Driving the real engine
+// (`CanvasModel` + the CPU rasterizer) over the exact ops this lane emits:
+//
+//   cellFillColor = "#FFEE00"                    → 0 non-white pixels
+//   cellFillColor = "Color/Black"                → 10494 px at (0,0,0)
+//   cellFillColor = a minted "Color/uPagedSheet…" → 10494 px at (255,238,0)
+//
+// so a raw hex is not "a colour core happens not to prefer" — it paints
+// nothing. Every fill ref this lane emits must therefore be an id some
+// `createSwatch` in the SAME batch (or already in the document) mints.
+describe("sheet_lower_native_table: cell fills are MINTED swatches, not raw hex", () => {
+  it("mints one process swatch per distinct cell fill colour", () => {
+    const ops = cellFillSwatchOps(STYLED) as unknown as {
+      op: string;
+      args: { spec: { selfId: string; space: string; value: number[] } };
+    }[];
+    expect(ops.map((o) => o.op)).toEqual(["createSwatch"]);
+    expect(ops[0].args.spec).toMatchObject({
+      selfId: "Color/uPagedSheetCellFillFFEE00",
+      space: "RGB",
+      value: [255, 238, 0],
+    });
+  });
+
+  it("every cellFillColor ref names a swatch the same batch mints", () => {
+    const { batch } = tableContentBatch(STYLED, "Story/u1", "tbl9");
+    const ops = opsOf(batch) as unknown as {
+      op: string;
+      args: {
+        spec?: { selfId: string };
+        path?: string;
+        value?: { type: string; value: string };
+      };
+    }[];
+    const minted = new Set(
+      ops.filter((o) => o.op === "createSwatch").map((o) => o.args.spec!.selfId),
+    );
+    const refs = ops
+      .filter((o) => o.args.path === "cellFillColor")
+      .map((o) => o.args.value!.value);
+    expect(refs.length).toBeGreaterThan(0);
+    for (const ref of refs) expect(minted.has(ref)).toBe(true);
+    // …and the mints LEAD the batch: a ref applied before its swatch
+    // exists resolves to nothing.
+    expect(ops[0].op).toBe("createSwatch");
+  });
+
+  it("skips a mint the document already carries (a duplicate fails the WHOLE batch)", () => {
+    // Verified against the engine: `createSwatch` over an existing id is
+    // refused, and the refusal fails its `Operation::Batch` — a re-lower
+    // would otherwise drop every fill and edge stroke with it.
+    const existing = new Set(["Color/uPagedSheetCellFillFFEE00"]);
+    expect(cellFillSwatchOps(STYLED, existing)).toEqual([]);
+    const { batch } = tableContentBatch(STYLED, "Story/u1", "tbl9", existing);
+    const ops = opsOf(batch);
+    expect(ops.some((o) => o.op === "createSwatch")).toBe(false);
+    // The fills still ride — they name the swatch the document already has.
+    expect(
+      ops.some(
+        (o) =>
+          o.op === "setElementProperty" &&
+          (o.args as { path?: string }).path === "cellFillColor",
+      ),
+    ).toBe(true);
+  });
+
+  it("a malformed fill hex emits no ref and no mint (never a dangling ref)", () => {
+    const junk: LoweredContent = {
+      ...STYLED,
+      styles: [
+        STYLED.styles![0],
+        { ...STYLED.styles![1], fillRgb: "not-a-colour" },
+      ],
+    };
+    expect(cellFillSwatchOps(junk)).toEqual([]);
+    const fills = tableDecorOps(junk, "Story/u1", "tbl9").ops.filter(
+      (o) => (o.args as { path?: string }).path === "cellFillColor",
+    );
+    expect(fills).toEqual([]);
   });
 });
 

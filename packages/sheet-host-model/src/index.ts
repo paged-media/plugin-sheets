@@ -56,6 +56,7 @@ export {
 } from "./placement";
 
 export {
+  cellTextSwatchOps,
   joinText,
   lowerToMutations,
   styleEmissions,
@@ -69,6 +70,7 @@ export {
 
 export {
   CELL_EDGE_STROKE_PT,
+  cellFillSwatchOps,
   columnOrder,
   pageTableMutations,
   tableCellOps,
@@ -122,6 +124,8 @@ export {
 // which is exactly why it is shared: a provider serving ids the lowering
 // does not mint would hand the host swatch ids core cannot resolve.
 export {
+  distinctCellFillHexes,
+  distinctCellTextHexes,
   distinctChartHexes,
   distinctDataBarHexes,
   normalizePaletteHex,

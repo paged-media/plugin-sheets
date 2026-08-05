@@ -46,13 +46,13 @@
 import type { SwatchSpec, SwatchSummary } from "@paged-media/plugin-api";
 
 import type { ChartGeometry } from "./chart";
-import type { LoweredContent } from "./lowered";
+import type { LoweredContent, LoweredStyle } from "./lowered";
 
 /** Which part of the workbook a palette colour came from. The facet is
  *  part of the swatch ID, not decoration: a chart blue and a data-bar
  *  blue are different document swatches on purpose, so recolouring the
  *  chart palette does not silently move every conditional-format bar. */
-export type PaletteFacet = "chart" | "dataBar";
+export type PaletteFacet = "chart" | "dataBar" | "cellFill" | "cellText";
 
 /** One entry of the workbook palette: a colour paged.sheet mints (or
  *  would mint) as a document swatch.
@@ -102,11 +102,15 @@ export function paletteRgb255(canonHex: string): [number, number, number] {
 const FACET_PREFIX: Record<PaletteFacet, string> = {
   chart: "Color/uPagedSheetChart",
   dataBar: "Color/uPagedSheetDataBar",
+  cellFill: "Color/uPagedSheetCellFill",
+  cellText: "Color/uPagedSheetCellText",
 };
 
 const FACET_LABEL: Record<PaletteFacet, string> = {
   chart: "paged.sheet chart",
   dataBar: "paged.sheet data bar",
+  cellFill: "paged.sheet cell fill",
+  cellText: "paged.sheet cell text",
 };
 
 /** THE deterministic document-swatch id for a workbook colour. The one
@@ -188,6 +192,44 @@ export function distinctDataBarHexes(content: LoweredContent): string[] {
   return out;
 }
 
+/** The distinct colours a lowered region's STYLE TABLE carries on one
+ *  axis, in styles-table order, as canonical hex bodies. The default key
+ *  0 is skipped (it is never an override) and a malformed hex is dropped
+ *  — the same degrade-to-nothing guard the bar/chart lanes use. */
+function distinctStyleHexes(
+  content: LoweredContent,
+  pick: (s: LoweredStyle) => string | null | undefined,
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const style of content.styles ?? []) {
+    if (style.key === 0) continue;
+    const raw = pick(style);
+    if (raw == null) continue;
+    const h = normalizePaletteHex(raw);
+    if (h == null || seen.has(h)) continue;
+    seen.add(h);
+    out.push(h);
+  }
+  return out;
+}
+
+/** The distinct CELL FILL colours across a lowered region
+ *  (`LoweredStyle.fillRgb`), in styles-table order. These are the
+ *  colours `lower-to-table.ts` mints swatches for before referencing
+ *  them from a `cellFillColor`. */
+export function distinctCellFillHexes(content: LoweredContent): string[] {
+  return distinctStyleHexes(content, (s) => s.fillRgb);
+}
+
+/** The distinct CELL TEXT colours across a lowered region
+ *  (`LoweredStyle.textRgb`), in styles-table order. These are the
+ *  colours `lower-to-mutations.ts` mints swatches for before
+ *  referencing them from a `characterFillColor`. */
+export function distinctCellTextHexes(content: LoweredContent): string[] {
+  return distinctStyleHexes(content, (s) => s.textRgb);
+}
+
 /** What the palette is derived FROM. Both members are optional: a
  *  chartless workbook still has data bars, and a table without
  *  conditional formatting still has charts. */
@@ -201,20 +243,26 @@ export interface PaletteSources {
 /**
  * THE WORKBOOK PALETTE: every colour paged.sheet mints as a document
  * swatch, deduped by swatch id, in a deterministic order (charts in
- * chart order, then data bars in region order).
+ * chart order, then per region: data bars, then cell fills).
  *
- * WHAT IS DELIBERATELY NOT IN HERE, and it is the honest half of this
- * slice. A workbook's CELL fill and CELL text colours
- * (`LoweredStyle.fillRgb` / `.textRgb`) are NOT palette entries, because
- * paged.sheet does not mint swatches for them: `lower-to-table.ts` and
- * `lower-to-mutations.ts` pass those raw hex strings straight into a
- * `{type:"colorRef"}` value, which core resolves by SWATCH ID
- * (`Graphic::resolve`) and therefore cannot resolve at all. Serving them
- * through the binding provider would mean handing the host swatch ids
- * that name nothing — an unresolvable chip in a COLOUR panel, which is
- * the exact class of lie the platform refuses. They stay out until the
- * lowering mints them, which is a change to production lowering output
- * and belongs in its own slice.
+ * CELL FILL IS IN HERE NOW, and that is a correction. The Swatches slice
+ * left it out with a stated reason: `lower-to-table.ts` passed
+ * `LoweredStyle.fillRgb` straight into a `{type:"colorRef"}` value, core
+ * resolves a colorRef by SWATCH ID (`Graphic::resolve`), so `#FFFF00`
+ * named nothing and serving it here would have been an unresolvable chip
+ * in a COLOUR panel. That reading was right, and a render settled it: a
+ * `cellFillColor` over a raw hex paints ZERO pixels. The native-table
+ * lowering now MINTS a real document swatch per distinct cell fill and
+ * references it by id, so those colours are part of the palette the
+ * lowering creates — exactly the set this function reports.
+ *
+ * CELL TEXT COLOUR IS STILL OUT, for the reason cell fill no longer is.
+ * `styleProps` names a `cellText` swatch and `cellTextSwatchOps` builds
+ * its mints, but NOTHING APPLIES THEM yet: `StyleEmission` is prepared
+ * for the S-04 doc-style-group path and no driver emits it. A cellText
+ * chip would therefore name a swatch no document has — the same lie,
+ * one axis over. It joins the palette when a caller applies the
+ * emissions.
  */
 export function workbookPalette(sources: PaletteSources): PaletteEntry[] {
   const byId = new Map<string, PaletteEntry>();
@@ -227,6 +275,7 @@ export function workbookPalette(sources: PaletteSources): PaletteEntry[] {
   }
   for (const region of sources.regions ?? []) {
     for (const hex of distinctDataBarHexes(region)) push("dataBar", hex);
+    for (const hex of distinctCellFillHexes(region)) push("cellFill", hex);
   }
   return [...byId.values()];
 }

@@ -49,9 +49,21 @@
 // ZERO spreadsheet semantics (CLAUDE.md hard rule): every value here is
 // already-decided geometry/text from the Rust engine.
 
-import type { ElementId, Mutation, PropertyPath } from "@paged-media/plugin-api";
+import type {
+  ElementId,
+  Mutation,
+  PropertyPath,
+  SwatchSpec,
+} from "@paged-media/plugin-api";
 
 import type { LoweredContent, Page } from "./lowered";
+import {
+  distinctCellFillHexes,
+  normalizePaletteHex,
+  paletteEntry,
+  paletteEntryToSpec,
+  paletteSwatchId,
+} from "./palette";
 
 /** The table's column order (ascending model indices) — the mapping from
  *  a cell's model `col` to its 0-based table column position. */
@@ -215,6 +227,47 @@ export interface TableDecor {
   unmappedRules: number;
 }
 
+/**
+ * The `createSwatch` ops for every distinct CELL FILL colour in a lowered
+ * region — emitted BEFORE the `cellFillColor` refs that name them.
+ *
+ * WHY THIS EXISTS. A `{type:"colorRef"}` value is a SWATCH ID, not a
+ * colour: core resolves it through `Graphic::resolve`, which looks the id
+ * up in the document's `<Color>`/`<Swatch>` tables. This lane used to pass
+ * `LoweredStyle.fillRgb` (`"#FFFF00"`) straight through, which resolves to
+ * nothing — and the table painter's `color_id_to_paint(...)` returns
+ * `None`, so the cell was left UNPAINTED. Rendered through the real engine
+ * (`CanvasModel` + the CPU rasterizer): a raw-hex `cellFillColor` produces
+ * ZERO non-white pixels, the same document with a minted swatch produces a
+ * solid cell. So the colour is minted as a real document swatch first, at
+ * the deterministic content-addressed id `palette.ts` owns — exactly the
+ * discipline `chart.ts` and the data-bar lane already follow.
+ *
+ * `existingSwatchIds` skips ids the document already carries. This is NOT
+ * an optimisation: core REFUSES a duplicate `createSwatch`, and a refused
+ * op fails its whole `Operation::Batch` — verified live, a batch whose
+ * first op re-creates an existing swatch drops the sibling fills too. So a
+ * re-lower of the same range would otherwise lose all its decor. A caller
+ * that cannot read the document's swatches should pass nothing and accept
+ * unminted (unpainted) fills rather than risk the batch.
+ *
+ * PURE: data in, Mutation[] out.
+ */
+export function cellFillSwatchOps(
+  content: LoweredContent,
+  existingSwatchIds?: ReadonlySet<string>,
+): Mutation[] {
+  const ops: Mutation[] = [];
+  for (const canonHex of distinctCellFillHexes(content)) {
+    if (existingSwatchIds?.has(paletteSwatchId("cellFill", canonHex))) continue;
+    const spec: SwatchSpec = paletteEntryToSpec(
+      paletteEntry("cellFill", canonHex),
+    );
+    ops.push({ op: "createSwatch", args: { spec } });
+  }
+  return ops;
+}
+
 /** Build the decor ops (merges + fills + edge strokes) for a resolved
  *  table. PURE arithmetic over already-decided IR geometry:
  *
@@ -310,13 +363,21 @@ export function tableDecorOps(
           ? styleByKey.get(cell.styleKey)
           : undefined;
       if (!style) continue;
-      if (style.fillRgb != null) {
+      // The colorRef is a SWATCH ID (`Graphic::resolve`), never a hex —
+      // see `cellFillSwatchOps`, which mints the swatch this names. A
+      // malformed hex degrades to "no fill", never a dangling ref.
+      const fillHex =
+        style.fillRgb == null ? null : normalizePaletteHex(style.fillRgb);
+      if (fillHex != null) {
         fills.push({
           op: "setElementProperty",
           args: {
             elementId: cellId(storyId, tableId, r, c),
             path: "cellFillColor",
-            value: { type: "colorRef", value: style.fillRgb },
+            value: {
+              type: "colorRef",
+              value: paletteSwatchId("cellFill", fillHex),
+            },
           },
         });
       }
@@ -331,20 +392,29 @@ export function tableDecorOps(
   return { ops, unmappedRules };
 }
 
-/** The full phase-3 content batch: the cell pour (`tableCellOps`) followed
- *  by the decor ops (spans, fills, edge strokes) — ONE undoable step. Text
- *  pours BEFORE spans so cell addressing targets the pre-merge grid (span
- *  anchors are the spans' top-left cells, the only ones the IR populates). */
+/** The full phase-3 content batch: the cell-fill swatch mints, the cell
+ *  pour (`tableCellOps`), then the decor ops (spans, fills, edge strokes)
+ *  — ONE undoable step. Text pours BEFORE spans so cell addressing targets
+ *  the pre-merge grid (span anchors are the spans' top-left cells, the only
+ *  ones the IR populates). The swatch mints lead because a `cellFillColor`
+ *  names one; pass `existingSwatchIds` so an already-present swatch is not
+ *  re-created (core refuses a duplicate and the refusal fails the batch —
+ *  see `cellFillSwatchOps`). */
 export function tableContentBatch(
   content: LoweredContent,
   storyId: string,
   tableId: string,
+  existingSwatchIds?: ReadonlySet<string>,
 ): { batch: Mutation; unmappedRules: number } {
+  const swatches = cellFillSwatchOps(content, existingSwatchIds);
   const pour = tableCellOps(content, storyId, tableId);
   const pourOps = pour.op === "batch" ? pour.args.ops : [pour];
   const decor = tableDecorOps(content, storyId, tableId);
   return {
-    batch: { op: "batch", args: { ops: [...pourOps, ...decor.ops] } },
+    batch: {
+      op: "batch",
+      args: { ops: [...swatches, ...pourOps, ...decor.ops] },
+    },
     unmappedRules: decor.unmappedRules,
   };
 }
@@ -359,9 +429,13 @@ export interface PageTableOps {
   /** Phase 2 — create the table in the page's frame story. The host
    *  outcome's `createdId` is the new tableId. */
   insert: Mutation;
-  /** Build phase 3 once the tableId is resolved — pour each non-empty cell
-   *  plus the page's decor (spans, fills, edge strokes), one batch. */
-  cells(tableId: string): Mutation;
+  /** Build phase 3 once the tableId is resolved — mint this page's cell-fill
+   *  swatches, pour each non-empty cell, then apply the page's decor (spans,
+   *  fills, edge strokes), one batch. `existingSwatchIds` carries the swatch
+   *  ids the document ALREADY has (including ones an earlier page of the same
+   *  chain just minted) so no page re-creates one — core refuses a duplicate
+   *  and the refusal fails the whole batch. */
+  cells(tableId: string, existingSwatchIds?: ReadonlySet<string>): Mutation;
 }
 
 /** Translate ONE paginated `Page` into its frame's native-table mutations
@@ -377,7 +451,8 @@ export function pageTableMutations(
 ): PageTableOps {
   return {
     insert: tableInsertOp(page.content, storyId, columnWidths),
-    cells: (tableId: string) =>
-      tableContentBatch(page.content, storyId, tableId).batch,
+    cells: (tableId: string, existingSwatchIds?: ReadonlySet<string>) =>
+      tableContentBatch(page.content, storyId, tableId, existingSwatchIds)
+        .batch,
   };
 }

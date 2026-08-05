@@ -59,16 +59,17 @@
 // WHAT IT DOES NOT SERVE — the honest half, stated rather than
 // discovered:
 //
-//   · CELL fill / CELL text colours (`LoweredStyle.fillRgb` /
-//     `.textRgb`). paged.sheet does NOT mint swatches for these: both
-//     lowering lanes pass the raw hex straight into a
-//     `{type:"colorRef"}` value (`lower-to-table.ts` `cellFillColor`,
-//     `lower-to-mutations.ts` `characterFillColor`), and core resolves a
-//     colorRef by SWATCH ID (`Graphic::resolve`), so `#FFFF00` names
-//     nothing. Serving them here would hand the host swatch ids that
-//     resolve to no colour — an unresolvable chip in a COLOUR panel.
-//     They stay out until the lowering mints them, which is a change to
-//     production lowering OUTPUT and belongs in its own slice.
+//   · CELL TEXT colour (`LoweredStyle.textRgb`). CELL FILL used to be
+//     listed here too, for a reason a render later confirmed: both
+//     lowering lanes passed the raw hex into a `{type:"colorRef"}` value
+//     and core resolves a colorRef by SWATCH ID (`Graphic::resolve`), so
+//     `#FFFF00` named nothing — a `cellFillColor` over a raw hex paints
+//     ZERO pixels, a `characterFillColor` over one renders the DEFAULT
+//     colour. The lowering now mints a real swatch per distinct cell
+//     colour, so cell FILL is served (it is in `workbookPalette`). Cell
+//     TEXT still is not: `cellTextSwatchOps` builds its mints but no
+//     driver applies `StyleEmission` yet, so a chip would still name a
+//     swatch no document has. It joins when a caller applies them.
 //   · `createSwatch` — "a new colour" is not a workbook concept: a
 //     colour enters a workbook palette by being USED, not by being
 //     declared. Undeclared, so the host DISABLES the panel's "+ New"

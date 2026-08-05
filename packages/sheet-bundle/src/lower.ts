@@ -55,6 +55,7 @@ import type {
 } from "@paged-media/plugin-api";
 import {
   BINDING_KEY,
+  cellFillSwatchOps,
   defaultPlacement,
   joinText,
   lowerToMutations,
@@ -174,7 +175,10 @@ async function pourCellContent(
     const r = await host.document.mutate(op);
     if (!r.applied) host.log.warn("lower: cell text pour rejected", r);
   }
-  // FRAME lane — the decor (spans + fills + edge strokes) as ONE batch.
+  // FRAME lane — the cell-fill swatch mints + the decor (spans + fills +
+  // edge strokes) as ONE batch. The mints LEAD: a `cellFillColor` colorRef
+  // names a swatch id, and a cell whose swatch does not exist is left
+  // UNPAINTED by the renderer (verified by render, not by reading).
   const decor = tableDecorOps(content, storyId, tableId);
   if (decor.unmappedRules > 0) {
     host.log.warn(
@@ -182,9 +186,35 @@ async function pourCellContent(
         "(not drawn natively)",
     );
   }
-  if (decor.ops.length > 0) {
-    const r = await host.document.mutate({ op: "batch", args: { ops: decor.ops } });
+  // The swatch READ only happens when there is something to mint (an
+  // unstyled region — what `getRangeLowered` emits today — costs no extra
+  // host round-trip). `null` means the read FAILED, which is not "the
+  // document has none": minting blind risks a duplicate, and core's refusal
+  // of a duplicate `createSwatch` fails the WHOLE batch, taking the fills
+  // and edge strokes with it. So a failed read mints nothing — the fills
+  // degrade to unpainted (the pre-fix behaviour), never to lost decor. Same
+  // ruling the ADR-023 Swatches provider makes before an `editSwatch`.
+  const wanted = cellFillSwatchOps(content);
+  const existing = wanted.length === 0 ? null : await existingSwatchIds(host);
+  const mints = existing === null ? [] : cellFillSwatchOps(content, existing);
+  const ops = [...mints, ...decor.ops];
+  if (ops.length > 0) {
+    const r = await host.document.mutate({ op: "batch", args: { ops } });
     if (!r.applied) host.log.warn("lower: cell decor batch rejected", r);
+  }
+}
+
+/** The document's current swatch ids, or `null` when the read itself
+ *  failed (which is NOT the same as "there are none" — see the caller). */
+async function existingSwatchIds(
+  host: BundleHost,
+): Promise<ReadonlySet<string> | null> {
+  try {
+    const rows = await host.document.collection<{ selfId: string }>("swatches");
+    return new Set(rows.map((s) => s.selfId));
+  } catch (err) {
+    host.log.warn("lower: document swatch read failed", err);
+    return null;
   }
 }
 

@@ -326,8 +326,15 @@ describe("sheet_style_applystyle_pour: style emission", () => {
       { path: "characterFontFamily", value: { type: "text", value: "Cambria" } },
       { path: "characterFontSize", value: { type: "length", value: 18 } },
       {
+        // The colorRef names a SWATCH, never a hex: an unresolvable ref
+        // renders the DEFAULT colour (pixel-verified — a raw-hex
+        // characterFillColor produced glyphs byte-identical to setting no
+        // colour). `cellTextSwatchOps` mints exactly this id.
         path: "characterFillColor",
-        value: { type: "colorRef", value: "#FF0000" },
+        value: {
+          type: "colorRef",
+          value: "Color/uPagedSheetCellTextFF0000",
+        },
       },
     ]);
   });
@@ -388,7 +395,10 @@ describe("sheet_style_applystyle_pour: style emission", () => {
     expect(emission.props).toEqual([
       {
         path: "characterFillColor",
-        value: { type: "colorRef", value: "#0000FF" },
+        value: {
+          type: "colorRef",
+          value: "Color/uPagedSheetCellText0000FF",
+        },
       },
     ]);
     expect(emission.blocked).toEqual(["fillBackground"]);

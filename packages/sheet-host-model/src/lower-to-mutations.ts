@@ -57,6 +57,7 @@ import type { PageId } from "@paged-media/plugin-api";
 
 import { BINDING_KEY, type Binding } from "./binding";
 import {
+  distinctCellTextHexes,
   distinctDataBarHexes,
   normalizePaletteHex,
   paletteEntry,
@@ -158,7 +159,12 @@ export type BlockedFacet = "fillBackground" | "border";
 
 /** The emittable overrides for ONE non-default style key, plus the facets
  *  the current degradation cannot express (so a caller/panel can flag them
- *  as off-style — the publishing affordance of spec §8.3). */
+ *  as off-style — the publishing affordance of spec §8.3).
+ *
+ *  APPLYING THESE IS A TWO-PART JOB: `props` may carry a
+ *  `characterFillColor` whose colorRef names a swatch, so a caller must
+ *  apply [`cellTextSwatchOps`] for the same region FIRST. An emission
+ *  applied without its mints renders the DEFAULT text colour, silently. */
 export interface StyleEmission {
   /** Index into `content.styles` (a cell's `styleKey` selects this). */
   styleKey: number;
@@ -202,13 +208,49 @@ export function styleProps(style: LoweredStyle): StyleProp[] {
 
   // Cell TEXT colour → character fill (the glyph colour). Fill BACKGROUND is
   // a cell facet, handled separately (and blocked in this fallback lane).
-  if (style.textRgb != null)
+  //
+  // The colorRef names a SWATCH, not a colour. Passing the raw
+  // `LoweredStyle.textRgb` here used to be a SILENT no-op: core's glyph
+  // paint picker resolves the ref through `Graphic::resolve` and falls
+  // back with `unwrap_or(default)`, so an unresolvable id renders the
+  // DEFAULT colour. Rendered through the real engine, a `#FF0000`
+  // characterFillColor produced pixels byte-identical to setting no
+  // colour at all (black), while the same document with a minted swatch
+  // produced red glyphs. So this emits the deterministic swatch id
+  // `cellTextSwatchOps` mints; a malformed hex emits nothing.
+  const textHex =
+    style.textRgb == null ? null : normalizePaletteHex(style.textRgb);
+  if (textHex != null)
     props.push({
       path: "characterFillColor",
-      value: { type: "colorRef", value: style.textRgb },
+      value: { type: "colorRef", value: paletteSwatchId("cellText", textHex) },
     });
 
   return props;
+}
+
+/** The `createSwatch` ops for every distinct CELL TEXT colour in a lowered
+ *  region — the mints the `characterFillColor` refs in [`styleProps`] name.
+ *  A caller that applies a [`StyleEmission`]'s `props` MUST apply these
+ *  first, or the colour silently resolves to the default (see `styleProps`).
+ *
+ *  `existingSwatchIds` skips ids the document already carries: core refuses
+ *  a duplicate `createSwatch` and the refusal fails the whole
+ *  `Operation::Batch` it rides in. Same contract as
+ *  `lower-to-table.ts`'s `cellFillSwatchOps`. PURE. */
+export function cellTextSwatchOps(
+  content: LoweredContent,
+  existingSwatchIds?: ReadonlySet<string>,
+): Mutation[] {
+  const ops: Mutation[] = [];
+  for (const canonHex of distinctCellTextHexes(content)) {
+    if (existingSwatchIds?.has(paletteSwatchId("cellText", canonHex))) continue;
+    const spec: SwatchSpec = paletteEntryToSpec(
+      paletteEntry("cellText", canonHex),
+    );
+    ops.push({ op: "createSwatch", args: { spec } });
+  }
+  return ops;
 }
 
 /** Which cell facets a `LoweredStyle` carries that the tab-text fallback
