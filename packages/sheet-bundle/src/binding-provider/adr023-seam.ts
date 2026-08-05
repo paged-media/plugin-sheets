@@ -55,6 +55,10 @@ import type {
 
 // ------------------------------------------------------ local mirrors
 
+/** Re-exported so a provider imports its whole vocabulary from the ONE
+ *  file that owns the skew (the repin then touches nothing else). */
+export type { PropertyPath, Value };
+
 /** Mirror of the contract's `BindingTarget`. */
 export type BindingTarget =
   | { kind: "selection"; scope: "element" | "content" }
@@ -64,8 +68,12 @@ export type BindingTarget =
 /** Mirror of `BindingRead` (= `BindingResolved | BindingDecline`).
  *
  *  Unused by the swatches provider — it serves the DOCUMENT-SCOPED lanes
- *  only, because core models no swatch `PropertyPath` at all — but kept
- *  so the mirror is the whole contract and the repin is a clean delete. */
+ *  only, because core models no swatch `PropertyPath` at all. The TEXT
+ *  provider (ADR 023's third proof consumer, the VALUE axis) is what
+ *  finally exercises it, and all four states with it: `value` for a
+ *  uniform cell selection, `mixed` where the cells disagree, `absent`
+ *  for the paths a cell does not model, `decline` when there is no
+ *  workbook to read at all. */
 export type BindingRead =
   | { kind: "value"; value: Value }
   | { kind: "mixed" }
@@ -89,17 +97,28 @@ export type BindingCollection =
  *  and nothing else. */
 export interface BindingProviderScope {
   paths?: readonly PropertyPath[];
+  /** The subset of `paths` that accepts WRITES; omitted ⇒ all of them.
+   *  Added to the contract BY this repo's text provider (plugin-sdk
+   *  `binding-provider.ts` §"writablePaths", DESIGN.md §18.11): the
+   *  sheet engine has no cell-style write API, so paged.sheet reads the
+   *  whole Character/Paragraph surface and writes none of it, and the
+   *  host needs that as a DECLARATION — `writeProperty`'s absence is a
+   *  missing callback, which never reaches `activeProviders()`. */
+  writablePaths?: readonly PropertyPath[];
   collections?: readonly CollectionName[];
   ops?: readonly string[];
 }
 
-/** Mirror of `BindingProvider`, narrowed to the lanes a DOCUMENT-SCOPED
- *  resource provider needs. `readProperty` / `writeProperty` are
- *  deliberately absent: a swatch has no `PropertyPath` in core (there is
- *  no `swatchName`, no swatch colour), so declaring those lanes would be
- *  declaring something that cannot be addressed. */
+/** Mirror of `BindingProvider`, narrowed to the lanes this repo's two
+ *  providers need. `writeProperty` is deliberately absent from BOTH:
+ *  the swatches provider writes structurally through `applyMutation`,
+ *  and the text provider writes nothing at all and declares so. */
 export interface BindingProvider {
   provides: BindingProviderScope;
+  readProperty?(request: {
+    path: PropertyPath;
+    target: BindingTarget;
+  }): BindingRead | Promise<BindingRead>;
   readCollection?(request: {
     collection: CollectionName;
   }): BindingCollection | Promise<BindingCollection>;

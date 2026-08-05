@@ -68,6 +68,7 @@ function fakeEngine(): SheetEngine {
     findAll: () => [],
     replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => LOWERED,
+    getRangeStyled: () => LOWERED,
     getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => ({

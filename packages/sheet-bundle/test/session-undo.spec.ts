@@ -54,6 +54,12 @@ function statefulEngine() {
       rules: { h: [], v: [] },
       merges: [],
     }),
+    getRangeStyled: () => ({
+      cols: [],
+      rows: [],
+      rules: { h: [], v: [] },
+      merges: [],
+    }),
     getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => ({

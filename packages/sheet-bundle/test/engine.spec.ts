@@ -107,6 +107,10 @@ function fakeWasm() {
       calls.push({ method: "get_range_lowered", args: [sheet, range, opts] });
       return lowered;
     },
+    get_range_styled(sheet, range, opts) {
+      calls.push({ method: "get_range_styled", args: [sheet, range, opts] });
+      return lowered;
+    },
     paginate(sheet, range, frames, opts) {
       calls.push({ method: "paginate", args: [sheet, range, frames, opts] });
       return [
@@ -188,6 +192,11 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(engine.getRangeLowered(0, "A1:B2", { includeGridRules: true })).toBe(
       lowered,
     );
+    // ADR 023 — the STYLED door: a separate wasm method, forwarded with
+    // the same argument fidelity (the page-lowering one stays frozen).
+    expect(engine.getRangeStyled(0, "A1:B2", { includeGridRules: false })).toBe(
+      lowered,
+    );
     expect(engine.getRangeValues(0, "A1:B2")).toEqual([["x"]]);
     expect(
       engine.paginate(
@@ -228,6 +237,7 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
       "set_cell",
       "get_cell_display",
       "get_range_lowered",
+      "get_range_styled",
       "get_range_values",
       "paginate",
       "get_grid_scene",
@@ -244,16 +254,17 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     // argument fidelity through the facade.
     expect(calls[0].args[0]).toBe(bytes);
     expect(calls[4].args).toEqual([0, "A1:B2", { includeGridRules: true }]);
-    expect(calls[5].args).toEqual([0, "A1:B2"]); // get_range_values
-    expect(calls[6].args).toEqual([
+    expect(calls[5].args).toEqual([0, "A1:B2", { includeGridRules: false }]);
+    expect(calls[6].args).toEqual([0, "A1:B2"]); // get_range_values
+    expect(calls[7].args).toEqual([
       0,
       "A1:B9",
       [{ widthPt: 100, heightPt: 50 }],
       { continuedMarker: true },
     ]); // paginate
-    expect(calls[7].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
-    expect(calls[8].args).toEqual([0, 1, 2, 3, 4]);
-    expect(calls[15].args).toEqual([0, 360, 240]); // get_chart_geometry
+    expect(calls[8].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
+    expect(calls[9].args).toEqual([0, 1, 2, 3, 4]);
+    expect(calls[16].args).toEqual([0, 360, 240]); // get_chart_geometry
   });
 
   it("dispose maps to free()", () => {

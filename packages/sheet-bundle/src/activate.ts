@@ -37,8 +37,12 @@ import { parseBinding } from "../../sheet-host-model/src";
 import manifest from "../manifest.json";
 
 import { pickAndImport, XLSX_MIME } from "./import-xlsx";
-import { registerBindingProvider } from "./binding-provider/adr023-seam";
+import {
+  registerBindingProvider,
+  type BindingProviderHandle,
+} from "./binding-provider/adr023-seam";
 import { makeSwatchesBindingProvider } from "./binding-provider/swatches-provider";
+import { makeTextBindingProvider } from "./binding-provider/text-provider";
 import { createWorkbookSession } from "./session";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
 import { makeGridPanel } from "./panels/grid-panel";
@@ -63,7 +67,17 @@ export function activate(host: BundleHost): BundleHandle {
   // ADR 023 — the binding-provider handle is the SECOND thing allocated
   // outside a facade-tracked registration (the session is the first), so
   // dispose tears it down explicitly. `null` on a host with no registry.
-  let swatchesProviderHandle: { dispose(): void } | null = null;
+  let swatchesProviderHandle: BindingProviderHandle | null = null;
+  // ADR 023 phase D — the VALUE-axis provider: the host's Character and
+  // Paragraph panels, answered from the workbook's cell styles while the
+  // `sheet` context is active.
+  let textProviderHandle: BindingProviderHandle | null = null;
+  // The re-read signal. `host.document.onDidChange` fires on ENGINE
+  // mutations, and picking a different CELL is not one — it moves no
+  // engine page. Without this the host panels go quietly stale on the
+  // most common interaction there is, which is the class of lie this
+  // platform refuses. Coarse by design: "re-read", not a per-path diff.
+  let providerInvalidateSub: { dispose(): void } | null = null;
 
   // S-08: restore the last persisted workbook from host.blob, if any. A
   // cheap no-op (one blob read) when nothing was persisted or no blob
@@ -304,6 +318,35 @@ export function activate(host: BundleHost): BundleHandle {
       "sheet",
       makeSwatchesBindingProvider(host, session).provider,
     );
+
+    // ADR 023 phase D — the CHARACTER/PARAGRAPH provider (the VALUE
+    // axis). Registered on the SAME context and therefore with the same
+    // borrowed lifetime; a separate registration only because the two
+    // answer different lanes about the same selection.
+    textProviderHandle = registerBindingProvider(
+      host,
+      "sheet",
+      makeTextBindingProvider(host, {
+        textSelectionRange: () => session.textSelectionRange(),
+        lowerRange: (sheet, range) => {
+          const engine = session.state().engine;
+          if (!engine) return null;
+          // The STYLED door, not the frozen page-lowering one: the
+          // Character panel is about the workbook's real cell fonts, and
+          // `getRangeLowered` emits a key-0-only table by contract.
+          return engine.getRangeStyled(sheet, range, {
+            includeGridRules: false,
+          });
+        },
+      }).provider,
+    );
+
+    if (swatchesProviderHandle || textProviderHandle) {
+      providerInvalidateSub = session.onDidChange(() => {
+        swatchesProviderHandle?.invalidate();
+        textProviderHandle?.invalidate();
+      });
+    }
   }
 
   // K-2 / S-06 — register the .xlsx IMPORTER so opening a spreadsheet
@@ -340,8 +383,12 @@ export function activate(host: BundleHost): BundleHandle {
 
   return {
     dispose() {
+      providerInvalidateSub?.dispose();
+      providerInvalidateSub = null;
       swatchesProviderHandle?.dispose();
       swatchesProviderHandle = null;
+      textProviderHandle?.dispose();
+      textProviderHandle = null;
       session.dispose();
     },
   };

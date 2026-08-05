@@ -340,6 +340,21 @@ export interface WorkbookSession {
       }
     | { ok: false; message: string }
   >;
+  /** ADR 023 — WHAT THE HOST'S CHARACTER/PARAGRAPH PANELS ARE ABOUT
+   *  while the `sheet` context is active: the (sheet, A1 range) whose
+   *  cell text formatting those panels should show.
+   *
+   *  Two cases, and the second is the one that makes the panels useful
+   *  rather than empty:
+   *
+   *    · a CELL SELECTION exists → exactly those cells;
+   *    · none yet → THE WHOLE RANGE THE ENTERED FRAME PROJECTS. This is
+   *      not a fallback, it is the analogue of selecting a text frame
+   *      with the selection tool: the panel is about the frame's whole
+   *      content, and reports MIXED wherever that content disagrees.
+   *
+   *  Null when there is no workbook / active sheet / nothing lowered. */
+  textSelectionRange(): { sheet: number; range: string } | null;
   /** Re-emit the loaded workbook as XLSX bytes for the exporter
    *  contribution (S-06). Preservation-first (`engine.saveXlsx` — the
    *  lazy-verbatim re-emit, §10.2). Returns the bytes + a suggested file
@@ -465,6 +480,11 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // + the sheet/range it projects). "New style from cell" addresses this
   // table's cells; null until a range is lowered to a native table.
   let lastLoweredTable: LoweredTableInfo | null = null;
+  // ADR 023 — frameId → the table that frame projects. `lastLoweredTable`
+  // answers "the most recent lowering", which is the right question for
+  // S-04 and the WRONG one for a panel retargeting on the frame you just
+  // entered: with two sheet frames on the page they disagree.
+  const loweredTables = new Map<string, LoweredTableInfo>();
   // S-04 — a per-session counter so minted cell-style ids are unique within
   // one session (paired with a timestamp so they are unique across sessions).
   let nextCellStyleSeq = 1;
@@ -771,6 +791,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       state.fileName = name;
       state.gridSelection = null;
       lastLoweredTable = null; // the prior table belonged to the old workbook
+      loweredTables.clear();
       editJournal = [];
       journalCursor = 0;
       const sheets = state.engine.listSheets();
@@ -862,6 +883,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
           // can address its cells.
           onLowered: (info) => {
             lastLoweredTable = info;
+            loweredTables.set(info.frameId, info);
           },
         },
       );
@@ -1604,6 +1626,27 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       });
 
       emitter.emit();
+    },
+
+    textSelectionRange() {
+      if (!state.engine || state.activeSheet === null) return null;
+      const sel = state.gridSelection;
+      if (sel) {
+        return {
+          sheet: state.activeSheet,
+          range: selectionRangeA1(sel.anchorRow, sel.anchorCol, sel.rows, sel.cols),
+        };
+      }
+      // No cell picked yet — the panels are about the ENTERED frame's
+      // whole projected range. Keyed on the frame the in-frame grid is
+      // showing, not on "the last thing lowered": with two sheet frames
+      // on the page, the last-lowered one is the WRONG answer for the
+      // one you double-clicked.
+      const entered = lastFrameId ? loweredTables.get(lastFrameId) : null;
+      if (entered) return { sheet: entered.sheet, range: entered.range };
+      if (state.selectedRange)
+        return { sheet: state.activeSheet, range: state.selectedRange };
+      return null;
     },
 
     saveWorkbook() {

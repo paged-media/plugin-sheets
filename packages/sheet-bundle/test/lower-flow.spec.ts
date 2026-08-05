@@ -74,6 +74,12 @@ function fakeEngine(): SheetEngine {
       rules: { h: [{ at: 18, from: 0, to: 100 }], v: [] },
       merges: [],
     }),
+    getRangeStyled: () => ({
+      cols: [],
+      rows: [],
+      rules: { h: [], v: [] },
+      merges: [],
+    }),
     getRangeValues: () => [],
     paginate: () => [],
     getGridScene: () => ({

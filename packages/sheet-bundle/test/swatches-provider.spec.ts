@@ -345,11 +345,15 @@ describe("sheet_plugin_swatch_provider: the honest door", () => {
     } as unknown as BundleHost;
 
     const handle = sheetBundle.activate(host);
-    expect(registered.map((r) => r.contextType)).toEqual(["sheet"]);
-    // The handle is allocated outside a facade-tracked registration, so
-    // dispose has to tear it down explicitly.
+    // TWO providers on the SAME context since ADR 023's third proof
+    // consumer landed: the SWATCHES one (document-scoped resource) and
+    // the CHARACTER/PARAGRAPH one (scalar values over a cell range).
+    // Same borrowed lifetime, different lanes about the same selection.
+    expect(registered.map((r) => r.contextType)).toEqual(["sheet", "sheet"]);
+    // The handles are allocated outside a facade-tracked registration,
+    // so dispose has to tear them down explicitly.
     handle.dispose();
-    expect(disposed).toBe(1);
+    expect(disposed).toBe(2);
   });
 
   it("activate() registers NO provider on a host without the registry", () => {

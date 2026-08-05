@@ -960,3 +960,77 @@ fn sheet_js_list_functions_from_registry() {
         "the function registry is workbook-independent"
     );
 }
+
+// ── sheet.js.get_range_styled (ADR-023) ─────────────────────────────────────
+
+/// `get_range_styled` resolves the workbook's REAL per-cell visual styles,
+/// where `get_range_lowered` (frozen, page-lowering) emits the key-0-only
+/// table. The M1 style-map track had no route across the wasm boundary at all
+/// until ADR-023's Character/Paragraph binding provider needed one.
+#[test]
+fn sheet_js_get_range_styled_resolves_cell_styles() {
+    let s = SheetSession::load_xlsx(&fixture("14-textstyles.xlsx")).expect("load 14");
+
+    // The FROZEN door is unchanged: one default entry, key 0 everywhere. This
+    // is the assertion that keeps the page lowering's contract intact.
+    let plain = s
+        .get_range_lowered(0, "A1:C2", LowerOptions::default())
+        .expect("lower A1:C2");
+    assert_eq!(plain.styles.len(), 1, "frozen path stays NoStyles");
+    assert!(plain
+        .rows
+        .iter()
+        .all(|r| r.cells.iter().all(|c| c.style_key == 0)));
+
+    // The NEW door resolves them.
+    let styled = s
+        .get_range_styled(0, "A1:C2", LowerOptions::default())
+        .expect("style A1:C2");
+    assert!(styled.styles.len() > 1, "a real style table");
+
+    let style_at = |row: u32, col: u32| {
+        let cell = styled
+            .rows
+            .iter()
+            .find(|r| r.index == row)
+            .and_then(|r| r.cells.iter().find(|c| c.col == col))
+            .expect("cell present");
+        &styled.styles[cell.style_key as usize]
+    };
+
+    // Column A — bold, 18pt Georgia; BOTH rows the same (the uniform case).
+    for row in [0, 1] {
+        let a = style_at(row, 0);
+        assert!(a.bold, "A{} bold", row + 1);
+        assert!(!a.italic);
+        assert_eq!(a.font_size_pt, Some(18.0));
+        assert_eq!(a.font_name.as_deref(), Some("Georgia"));
+    }
+    // Column B — italic, 9pt Verdana. Different on every facet, so an A+B
+    // selection is genuinely mixed rather than mixed by accident.
+    let b = style_at(0, 1);
+    assert!(b.italic && !b.bold);
+    assert_eq!(b.font_size_pt, Some(9.0));
+    assert_eq!(b.font_name.as_deref(), Some("Verdana"));
+    // Column C — the WORKBOOK DEFAULT font. `visual_of`'s §8.3 ruling records
+    // size/name ONLY when they differ from it, so this cell declares nothing
+    // and folds onto key 0.
+    let c = style_at(0, 2);
+    assert_eq!(c.key, 0);
+    assert!(!c.bold && !c.italic);
+    assert_eq!(c.font_size_pt, None);
+    assert_eq!(c.font_name, None);
+
+    // Geometry/text are identical to the frozen path — only the style table
+    // moved (the `lower_range_styled` contract).
+    assert_eq!(styled.rows.len(), plain.rows.len());
+    assert_eq!(styled.cols.len(), plain.cols.len());
+
+    // Boundary discipline matches the sibling door.
+    assert!(s
+        .get_range_styled(0, "not-a-range", LowerOptions::default())
+        .is_err());
+    assert!(s
+        .get_range_styled(9, "A1", LowerOptions::default())
+        .is_err());
+}

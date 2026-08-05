@@ -267,6 +267,22 @@ export interface SheetEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  /** ADR 023 — the same IR with the workbook's REAL per-cell visual styles
+   *  resolved (the M1 style-map track: bold/italic, font size + face, cell
+   *  fill, text colour, borders), where [`getRangeLowered`] emits the frozen
+   *  key-0-only table the page lowering is contracted to.
+   *
+   *  A SEPARATE door on purpose: the page lowering's output is a shipped
+   *  contract, and turning real styles on underneath it changes what lands
+   *  in the document. This exposes a table `sheet-lower` already builds and
+   *  `sheet-conformance` already pins, and which had NO route across the
+   *  wasm boundary at all. Base styles only — conditional formatting is not
+   *  folded in (see `SheetSession::get_range_styled`). */
+  getRangeStyled(
+    sheet: number,
+    range: string,
+    opts?: LowerOptions,
+  ): LoweredContent;
   /** Read a range (`"A1:D9"` or `"A1"`) as a RECTANGULAR grid of formatted
    *  DISPLAY strings — the K-6 / S-14 clipboard copy interchange. `out[r][c]`
    *  is the number-formatted display of the cell at the range's row `r`, col
@@ -395,6 +411,11 @@ export interface SheetWasmEngine {
     range: string,
     opts?: LowerOptions,
   ): LoweredContent;
+  get_range_styled(
+    sheet: number,
+    range: string,
+    opts?: LowerOptions,
+  ): LoweredContent;
   get_range_values(sheet: number, range: string): string[][];
   paginate(
     sheet: number,
@@ -464,6 +485,8 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.replace_all(sheet, needle, replacement, opts),
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
+    getRangeStyled: (sheet, range, opts) =>
+      wasm.get_range_styled(sheet, range, opts),
     getRangeValues: (sheet, range) => wasm.get_range_values(sheet, range),
     paginate: (sheet, range, frames, opts) =>
       wasm.paginate(sheet, range, frames, opts),

@@ -51,6 +51,7 @@ function fakeEngine() {
     findAll: () => [],
     replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
     getRangeLowered: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
+    getRangeStyled: () => ({ cols: [], rows: [], rules: { h: [], v: [] }, merges: [] }),
     // The COPY source: a 2×2 grid of formatted display strings.
     getRangeValues: () => [
       ["Name", "Qty"],

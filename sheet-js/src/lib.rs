@@ -213,6 +213,32 @@ mod wasm {
             to_js(&lowered)
         }
 
+        /// Lower a range to the `LoweredContent` IR with the workbook's REAL
+        /// per-cell visual styles resolved (the M1 style-map track), rather
+        /// than the frozen key-0-only table `get_range_lowered` emits.
+        ///
+        /// ADR-023: the host's Character/Paragraph panels read cell text
+        /// formatting through this door while paged.sheet's edit context is
+        /// active. Base styles only — see `SheetSession::get_range_styled`.
+        pub fn get_range_styled(
+            &self,
+            sheet: u16,
+            range: &str,
+            opts: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let opts: LowerOptions = if opts.is_undefined() || opts.is_null() {
+                LowerOptions::default()
+            } else {
+                serde_wasm_bindgen::from_value(opts)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let lowered = self
+                .session
+                .get_range_styled(sheet, range, opts)
+                .map_err(map_err)?;
+            to_js(&lowered)
+        }
+
         /// Read a range (`"A1:D9"` or `"A1"`) as a rectangular grid of
         /// formatted DISPLAY strings (K-6 / S-14 — the clipboard copy
         /// interchange). Returns `string[][]` (row-major, `""` for empty

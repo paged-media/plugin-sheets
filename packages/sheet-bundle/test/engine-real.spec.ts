@@ -33,8 +33,10 @@ import { describe, expect, it } from "vitest";
 import {
   chartGeometryToMutations,
   makeBinding,
+  styleProps,
   workbookPalette,
   type ChartGeometry,
+  type LoweredContent,
 } from "@paged-media/sheet-host-model";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +44,18 @@ const BIN = join(HERE, "..", "bin");
 const WASM = join(BIN, "sheet_js_bg.wasm");
 const built = existsSync(WASM);
 const CHART_XLSX = join(HERE, "..", "..", "..", "corpus/xlsx-corpus/09-chart.xlsx");
+/** ADR 023 — the TEXT-STYLES fixture: A/B columns carry two genuinely
+ *  different per-cell fonts, C carries none. The editor's
+ *  `text-retarget.spec.ts` pins the SAME numbers, so the two ends of the
+ *  seam agree by test rather than by coincidence — the discipline the
+ *  Swatches slice used for `Color/uPagedSheetChart3366CC`. */
+const TEXT_XLSX = join(
+  HERE,
+  "..",
+  "..",
+  "..",
+  "corpus/xlsx-corpus/14-textstyles.xlsx",
+);
 
 describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
   it("boots, calculates, lowers, and round-trips xlsx", async () => {
@@ -302,6 +316,70 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
     expect(sum?.maxArgs == null).toBe(true);
     // A different family rides along (not an agg-only slice).
     expect(fns.some((f) => f.name === "VLOOKUP")).toBe(true);
+    e.free();
+  });
+
+  // ADR 023 phase D — the CHARACTER/PARAGRAPH provider's source of truth.
+  // The provider reads cell styles out of `get_range_lowered` and maps
+  // them with `styleProps` (the SAME translation the page lowering uses).
+  // If the engine did not record these overrides, the whole VALUE-axis
+  // proof would be vacuously green over an empty style table — so pin
+  // them against the real artifact.
+  it("records per-cell font overrides the text provider reads (ADR 023)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+    e.load_xlsx(readFileSync(TEXT_XLSX));
+
+    // The STYLED door (`get_range_styled`), not the frozen page-lowering
+    // one: `get_range_lowered` emits the key-0-only table by contract, and
+    // that contract is asserted alongside so the split stays honest.
+    expect(
+      (
+        e.get_range_lowered(0, "A1:C2", {
+          includeGridRules: false,
+        }) as LoweredContent
+      ).styles?.length,
+    ).toBe(1);
+    const low = e.get_range_styled(0, "A1:C2", {
+      includeGridRules: false,
+    }) as LoweredContent;
+    const styles = low.styles ?? [];
+    // A REAL style table, not the T0 key-0-only one.
+    expect(styles.length).toBeGreaterThan(1);
+
+    const styleAt = (row: number, col: number) => {
+      const cell = low.rows
+        .find((r) => r.index === row)
+        ?.cells.find((c) => c.col === col);
+      return styles[cell?.styleKey ?? 0];
+    };
+    const propsAt = (row: number, col: number) =>
+      Object.fromEntries(
+        styleProps(styleAt(row, col)).map((p) => [p.path, p.value]),
+      );
+
+    // Column A — bold, 18pt, Georgia. Both rows the SAME (the uniform
+    // case the panel must show as a value).
+    for (const row of [0, 1]) {
+      expect(propsAt(row, 0)).toMatchObject({
+        characterFontStyle: { type: "text", value: "Bold" },
+        characterFontSize: { type: "length", value: 18 },
+        characterFontFamily: { type: "text", value: "Georgia" },
+      });
+    }
+    // Column B — italic, 9pt, Verdana. DIFFERENT from A on all three, so
+    // an A+B selection is genuinely mixed and not mixed by accident.
+    expect(propsAt(0, 1)).toMatchObject({
+      characterFontStyle: { type: "text", value: "Italic" },
+      characterFontSize: { type: "length", value: 9 },
+      characterFontFamily: { type: "text", value: "Verdana" },
+    });
+    // Column C — the WORKBOOK DEFAULT font. The engine records size/name
+    // only when they DIFFER from it (`sheet-xlsx` visual_of, the §8.3
+    // "don't splatter local overrides" ruling), so this cell declares
+    // NOTHING and the provider answers `absent` over it — not "11 pt".
+    expect(propsAt(0, 2)).toEqual({});
     e.free();
   });
 });

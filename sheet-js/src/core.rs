@@ -61,7 +61,8 @@ use sheet_chart::{generate as generate_chart, ChartGeometry, PlotData};
 use sheet_core::{parse_a1, CellRef, CellValue, DateSystem, RangeRef, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
 use sheet_lower::{
-    lower_range, paginate as lower_paginate, CellRange, FrameBox, Page, ViewOptions,
+    lower_range, lower_range_styled, paginate as lower_paginate, CellRange, FrameBox, Page,
+    ViewOptions,
 };
 use sheet_parser::{parse, print, ParseCtx, SheetNames};
 use sheet_xlsx::{XlsxChart, XlsxDocument};
@@ -1096,6 +1097,73 @@ impl SheetSession {
         };
         let model = self.engine.as_ref().expect("engine present").model();
         Ok(lower_range(model, sheet, cell_range, &view))
+    }
+
+    /// Lower a range with the workbook's REAL per-cell visual styles resolved
+    /// (the M1 style-map track: bold/italic, font size + face, cell fill, text
+    /// colour, borders) instead of the frozen `NoStyles` table
+    /// [`SheetSession::get_range_lowered`] emits.
+    ///
+    /// ## Why this is a SEPARATE door and not a flag on the other one
+    ///
+    /// `get_range_lowered` feeds the PAGE lowering, whose output is a
+    /// committed contract (the native-table pour reads `LoweredStyle.fill_rgb`
+    /// for cell fills; `styleProps` reads the font facets). Turning real styles
+    /// on underneath it would change what lands in the document, which is a
+    /// lowering decision with its own slice. This door changes nothing that
+    /// ships today; it exposes a table `sheet-lower` already builds and
+    /// `sheet-conformance` already pins (`stylemap.rs`), and which had NO
+    /// route across the wasm boundary at all — neither this door nor
+    /// `get_grid_scene` (which emits `default_key0()` only, by its own test).
+    ///
+    /// ADR-023's Character/Paragraph binding provider is the consumer that
+    /// found the gap: it answers the host's text panels from the selected
+    /// cells' styles, and could not read them.
+    ///
+    /// RESIDUAL, stated rather than discovered: base styles only. Conditional
+    /// formatting folds a differential format on top
+    /// ([`sheet_lower::lower_range_condfmt`]) and is NOT applied here — cf
+    /// paints fills and colours, which the text provider does not serve, and
+    /// wiring the cf domain through this door is its own change.
+    pub fn get_range_styled(
+        &self,
+        sheet: u16,
+        range: &str,
+        opts: LowerOptions,
+    ) -> Result<sheet_lower::LoweredContent, SessionError> {
+        let cell_range = parse_range(range)?;
+        self.validate_sheet(sheet)?;
+
+        // The SAME materialization cap as `get_range_lowered`: this path
+        // allocates one LoweredCell per cell in the rectangle too.
+        let (top, left, bottom, right) = (
+            cell_range.r0.min(cell_range.r1) as u64,
+            cell_range.c0.min(cell_range.c1) as u64,
+            cell_range.r0.max(cell_range.r1) as u64,
+            cell_range.c0.max(cell_range.c1) as u64,
+        );
+        let area = (bottom - top + 1) * (right - left + 1);
+        if area > T0_LOWER_CELL_CAP {
+            return Err(SessionError(format!(
+                "range exceeds the T0 lowering cap ({T0_LOWER_CELL_CAP} cells)"
+            )));
+        }
+
+        let view = ViewOptions {
+            include_grid_rules: opts.include_grid_rules.unwrap_or(false),
+            header_rows: opts.header_rows.unwrap_or(0),
+        };
+        let model = self.engine.as_ref().expect("engine present").model();
+        // `VisualStyles` IS a `sheet_lower::VisualStyleSource` (sheet-xlsx
+        // implements the trait), so no adapter is needed and `sheet-lower`
+        // keeps its no-sheet-xlsx dependency rule.
+        Ok(lower_range_styled(
+            model,
+            sheet,
+            cell_range,
+            &view,
+            &self.doc.visual_styles,
+        ))
     }
 
     /// Read a range (`"A1:D9"` or a single cell `"A1"`) as a RECTANGULAR grid
