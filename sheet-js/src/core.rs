@@ -1461,15 +1461,23 @@ impl SheetSession {
 
     /// AUTHOR a chart over live data (editor-ui-coverage M — the model was
     /// import-only). Constructs a [`ChartModel`] and appends it to the
-    /// session's chart vector: `values` spans one series per COLUMN;
-    /// `categories` (may be empty) is the shared label range; `kind` ∈
-    /// bar|column|line|area|pie|donut|scatter; empty `title` = none;
-    /// legend on when there is more than one series. Returns the new
-    /// chart index — the same handle `get_chart_geometry` / the lowering
-    /// take, so an authored chart renders and lowers exactly like a
-    /// parsed one. HONEST SCOPE (publishing-first): authored charts live
-    /// on the PAGE — the xlsx writer never re-derives chart parts, so a
-    /// save round-trip carries only the workbook's original charts.
+    /// session's chart vector: `values` is the data block, `categories`
+    /// (may be empty) the shared label range, `kind` one of
+    /// [`CHART_KIND_TAGS`], empty `title` = none, legend on when there is
+    /// more than one series. Returns the new chart index — the same handle
+    /// `get_chart_geometry` / the lowering take, so an authored chart
+    /// renders and lowers exactly like a parsed one.
+    ///
+    /// `series_in` is the §16.4 TRANSPOSE ROWS/COLUMNS control: `"columns"`
+    /// (the default, and what an empty string means) reads one series per
+    /// COLUMN of the values block; `"rows"` reads one series per ROW. It
+    /// re-reads the SAME cells the other way round — the workbook is never
+    /// rewritten to transpose a chart (that is what the `TRANSPOSE` worksheet
+    /// function is for, and it would edit the user's data).
+    ///
+    /// HONEST SCOPE (publishing-first): authored charts live on the PAGE —
+    /// the xlsx writer never re-derives chart parts, so a save round-trip
+    /// carries only the workbook's original charts.
     pub fn add_chart(
         &mut self,
         sheet: u16,
@@ -1477,20 +1485,22 @@ impl SheetSession {
         categories: &str,
         kind: &str,
         title: &str,
+        series_in: &str,
     ) -> Result<u32, SessionError> {
-        use sheet_chart::{Axis, ChartKind, ChartModel, Series};
+        use sheet_chart::{Axis, ChartModel, Series};
         self.validate_sheet(sheet)?;
-        let chart_kind = match kind {
-            "bar" => ChartKind::Bar,
-            "column" => ChartKind::Column,
-            "line" => ChartKind::Line,
-            "area" => ChartKind::Area,
-            "pie" => ChartKind::Pie,
-            "donut" => ChartKind::Donut,
-            "scatter" => ChartKind::Scatter,
+        let chart_kind = chart_kind_from_tag(kind).ok_or_else(|| {
+            SessionError(format!(
+                "unknown chart kind {kind:?} ({})",
+                CHART_KIND_TAGS.join("|")
+            ))
+        })?;
+        let by_row = match series_in {
+            "" | "columns" => false,
+            "rows" => true,
             other => {
                 return Err(SessionError(format!(
-                    "unknown chart kind {other:?} (bar|column|line|area|pie|donut|scatter)"
+                    "unknown series orientation {other:?} (columns|rows)"
                 )))
             }
         };
@@ -1513,17 +1523,35 @@ impl SheetSession {
                 end: cell(cr.r0.max(cr.r1), cr.c0.max(cr.c1)),
             })
         };
-        let series: Vec<Series> = (left..=right)
-            .map(|col| Series {
-                name: None,
-                categories: cat_ref,
-                values: RangeRef {
-                    start: cell(top, col),
-                    end: cell(bottom, col),
-                },
-                color: None,
-            })
-            .collect();
+        // One series per COLUMN (default) or per ROW (`series_in: "rows"` —
+        // the transpose). `resolve_values` walks a range row-major, so a
+        // single-row range reads left-to-right and a single-column range
+        // top-to-bottom; both orientations need only the right slice.
+        let series: Vec<Series> = if by_row {
+            (top..=bottom)
+                .map(|row| Series {
+                    name: None,
+                    categories: cat_ref,
+                    values: RangeRef {
+                        start: cell(row, left),
+                        end: cell(row, right),
+                    },
+                    color: None,
+                })
+                .collect()
+        } else {
+            (left..=right)
+                .map(|col| Series {
+                    name: None,
+                    categories: cat_ref,
+                    values: RangeRef {
+                        start: cell(top, col),
+                        end: cell(bottom, col),
+                    },
+                    color: None,
+                })
+                .collect()
+        };
         let legend = series.len() > 1;
         self.doc.charts.push(XlsxChart {
             host_sheet: sheet as SheetId,
@@ -1977,6 +2005,23 @@ fn excerpt_of(text: &str) -> String {
     out
 }
 
+/// Every chart-kind TAG `add_chart` accepts / `list_charts` reports, in the
+/// order the panel offers them. ONE list, so the parser
+/// ([`chart_kind_from_tag`]) and the printer ([`chart_kind_tag`]) cannot
+/// disagree and the panel cannot offer a kind the engine refuses.
+pub const CHART_KIND_TAGS: &[&str] = &[
+    "column",
+    "stackedColumn",
+    "bar",
+    "stackedBar",
+    "line",
+    "area",
+    "scatter",
+    "pie",
+    "donut",
+    "radar",
+];
+
 /// The lowercase kind tag for a [`sheet_chart::model::ChartKind`] — the same
 /// space the geometry IR's `Primitive` tags / the registry use.
 fn chart_kind_tag(kind: sheet_chart::model::ChartKind) -> &'static str {
@@ -1989,7 +2034,30 @@ fn chart_kind_tag(kind: sheet_chart::model::ChartKind) -> &'static str {
         Pie => "pie",
         Donut => "donut",
         Scatter => "scatter",
+        StackedColumn => "stackedColumn",
+        StackedBar => "stackedBar",
+        Radar => "radar",
     }
+}
+
+/// A [`CHART_KIND_TAGS`] tag → its [`sheet_chart::model::ChartKind`]. The exact
+/// inverse of [`chart_kind_tag`]; an unknown tag is `None` (the caller turns it
+/// into the boundary error naming the accepted set).
+fn chart_kind_from_tag(tag: &str) -> Option<sheet_chart::model::ChartKind> {
+    use sheet_chart::model::ChartKind::*;
+    Some(match tag {
+        "bar" => Bar,
+        "column" => Column,
+        "line" => Line,
+        "area" => Area,
+        "pie" => Pie,
+        "donut" => Donut,
+        "scatter" => Scatter,
+        "stackedColumn" => StackedColumn,
+        "stackedBar" => StackedBar,
+        "radar" => Radar,
+        _ => return None,
+    })
 }
 
 /// Resolve a series' values [`RangeRef`] to a numeric vector against the LIVE

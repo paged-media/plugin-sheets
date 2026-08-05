@@ -79,6 +79,7 @@ function statefulEngine() {
     setGridSelection() {},
     listSheets: () => [{ id: 0, name: "Sheet1", rows: 9, cols: 9 }],
     listCharts: () => [],
+    chartKinds: () => ["column"],
     addChart: () => 0,
     listFreezePanes: () => [],
     listDataValidations: () => [],

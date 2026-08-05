@@ -5,13 +5,27 @@
 # charts track flips to implemented as each lands.
 #
 # STATUS: implemented (M2 charts track). The IR is FROZEN in sheet-chart; the
-# generator is real for EVERY curated kind (bar/column, line/area, pie/donut,
-# scatter), the XLSX chart parts parse + round-trip-preserve, sheet-js resolves
-# series ranges to geometry (list_charts + get_chart_geometry), the TS
-# translator lowers the IR to paged.draw native ops, and the bundle contributes
-# a lower-chart command. Taxonomy mirrors sheet.xlsx.* for the chart-part rows:
-# parsed -> preserved -> calculated -> rendered -> round-trips, with `preserved`
-# the floor for unsupported chart types (spec §8.4).
+# generator is real for EVERY curated kind (bar/column, stacked column/bar,
+# line/area, pie/donut, scatter, radar), the XLSX chart parts parse +
+# round-trip-preserve, sheet-js resolves series ranges to geometry (list_charts
+# + get_chart_geometry), the TS translator lowers the IR to paged.draw native
+# ops, and the bundle contributes a lower-chart command. Taxonomy mirrors
+# sheet.xlsx.* for the chart-part rows: parsed -> preserved -> calculated ->
+# rendered -> round-trips, with `preserved` the floor for unsupported chart
+# types (spec §8.4).
+#
+# GRAPHS ROW (Illustrator catalog §16.4, 2026-08-05). The nine Illustrator
+# graph types are now a SUBSET of the curated set: the three that were missing
+# (Stacked Column, Stacked Bar, Radar) landed as ChartKind variants expressed
+# entirely in the EXISTING frozen `Primitive` vocabulary, so the paged.draw
+# lowering (`chartGeometryToMutations`) needed no change at all. `Axis::title`
+# stopped being a modelled-but-dead field. `c:grouping` stopped being ignored
+# on import. The catalog's remaining items resolve as: the "graph data editor"
+# IS the workbook (sheet.chart.data-editor); "import/paste data" is already
+# three shipped doors (xlsx importer, range clipboard, data provider);
+# "transpose rows/columns" is sheet.chart.series-orientation; "design markers /
+# graph designs" needs a CORE door that does not exist and is filed, not faked
+# (sheet.chart.design-markers, RFI S-16).
 
 - id: sheet.chart.model
   title: Chart model (kind, series/category range bindings, axes, legend) — the frozen sheet-chart IR
@@ -59,6 +73,166 @@
   provenance: ["spec §8.4", "ECMA-376 §21.2 (c:scatterChart)", "sheet-chart/src/geometry.rs"]
   tests:
     rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_scatter"]
+
+- id: sheet.chart.geometry.stacked
+  title: "Geometry: stacked column / stacked bar — segments share one bar per category over a totals-based value scale"
+  ruling: >
+    The PRIMITIVE contract is unchanged — still one Rect per (series,
+    category); only the arithmetic stacks. A stacked chart draws ONE
+    full-width bar per category and each series' segment sits on the running
+    total, and the value scale runs to the largest category TOTAL (not the
+    largest single value) so the tallest stack exactly fills the plot. A
+    segment whose value falls below the value-axis floor contributes NO height
+    and nothing to the total — Excel stacks a negative downward; the
+    publishing reading (and the unstacked generators' own clamp) is that a
+    sub-floor bar has no height. An explicit, provenanced adoption, not an
+    accident (spec §3).
+  status: implemented
+  provenance: ["Illustrator capability catalog §16.4 (Stacked Column / Stacked Bar)", "spec §8.4", "sheet-chart/src/geometry.rs::generate_column / generate_bar"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_stacked"]
+
+- id: sheet.chart.geometry.radar
+  title: "Geometry: radar — a polar grid (rings + spokes) with one closed polyline per series"
+  ruling: >
+    plotters has no polar coordinate system a CUSTOM DrawingBackend can drive,
+    so — exactly like pie/donut — the polar layout is emitted DIRECTLY while
+    the title and legend still flow through the backend (one text-metrics
+    path). Nothing new enters the FROZEN IR: the grid rings, the spokes and
+    each series' outline are all `Primitive::Line` polylines closed by
+    repeating the first point, so the paged.draw lowering needed no new op.
+    Spokes run CLOCKWISE FROM 12 O'CLOCK — the same angular convention
+    `Primitive::Wedge` uses, so both projections read one rule. Series are
+    STROKED, never filled: a filled radar hides every series drawn under it.
+    Fewer than three category axes cannot enclose an area, so the generator
+    emits the title/legend only rather than a degenerate polygon.
+  status: implemented
+  provenance: ["Illustrator capability catalog §16.4 (Radar Graph tool)", "spec §8.4", "sheet-chart/src/geometry.rs::generate_radar"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_geometry_radar"]
+
+- id: sheet.chart.axis-titles
+  title: Axis titles reach the geometry (cat_axis.title / val_axis.title were modelled but never drawn)
+  ruling: >
+    `Axis::title` has been parsed from the chart part since M2 and drew
+    NOTHING — a modelled field with no output. It draws now on every cartesian
+    kind. PLACEMENT: the frozen `Primitive::Text` carries no rotation angle
+    and adding one would break the wire IR every consumer mirrors, so the
+    value-axis title is set HORIZONTALLY above its axis (start-anchored at the
+    content-box left) rather than rotated up the side, and the category-axis
+    title is centered under the category labels. The `Bar` family transposes
+    the two (its value axis runs along the bottom). Both are common publishing
+    placements; neither fakes a rotation the IR cannot express. Pie/donut/radar
+    have no cartesian axes to title and emit nothing.
+  status: implemented
+  provenance: ["Illustrator capability catalog §16.4 (labels, axes)", "spec §8.4", "sheet-chart/src/geometry.rs::draw_axis_titles"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_axis_titles"]
+
+- id: sheet.chart.xlsx.grouping
+  title: XLSX chart part — c:grouping selects the stacked kind; c:radarChart parses
+  ruling: >
+    `c:grouping` was IGNORED, so an Excel stacked bar/column chart imported as
+    a GROUPED one and rendered wrong without saying so, and `c:radarChart` fell
+    through to the Column default. Both are read now. `percentStacked` reads as
+    `stacked`: the segment proportions are right, the axis is not normalised to
+    100% — an honest, labelled approximation, not a claim. `c:grouping` on a
+    LINE or AREA chart stays ignored (the curated set has no stacked line/area
+    kind), so those render unstacked — labelled here, never silently. The part
+    itself stays an OPAQUE OPC part, so the preservation invariant is untouched:
+    a zero-edit round-trip is still byte-identical.
+  status: implemented
+  provenance: ["ECMA-376 §21.2.2.78 (c:grouping), §21.2.2.153 (c:radarChart)", "spec §8.4, §10.2", "sheet-xlsx/src/parts/chart.rs"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_xlsx_grouping"]
+
+- id: sheet.chart.kind-set
+  title: The advertised chart-kind set is a superset of Illustrator's nine graph types
+  ruling: >
+    ONE list (`sheet_js::core::CHART_KIND_TAGS`) is the tag vocabulary the
+    parser, the printer and the panel all read, so a kind can never be offered
+    that the engine refuses or reported under a tag `add_chart` will not take.
+    The set is column, stackedColumn, bar, stackedBar, line, area, scatter,
+    pie, donut, radar — Illustrator §16.4's nine plus donut. The test authors
+    EVERY advertised tag against a real workbook and renders it, so the "nine
+    graph types" claim is executable rather than prose.
+  status: implemented
+  provenance: ["Illustrator capability catalog §16.4", "sheet-js/src/core.rs::CHART_KIND_TAGS"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_kind_set"]
+
+- id: sheet.chart.authoring
+  title: Chart AUTHORING over live data (add_chart) — the model stopped being import-only
+  ruling: >
+    `add_chart(sheet, values, categories, kind, title, series_in)` constructs a
+    ChartModel and appends it to the session's chart vector, returning the same
+    index handle `get_chart_geometry` and the lowering take — so an authored
+    chart renders and lowers exactly like a parsed one. PUBLISHING-FIRST scope:
+    authored charts are PAGE-side only; the xlsx writer never re-derives chart
+    parts, so a save round-trip carries the workbook's ORIGINAL charts only
+    (asserted). Legend on when there is more than one series.
+  status: implemented
+  provenance: ["spec §8.4", "sheet-js/src/core.rs::add_chart"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_authoring"]
+
+- id: sheet.chart.series-orientation
+  title: "Transpose rows/columns — read the values block as one series per column OR per row"
+  ruling: >
+    `add_chart`'s `series_in` is Illustrator §16.4's transpose control:
+    `columns` (the default, and what an empty string means) reads one series
+    per COLUMN of the values block, `rows` one per ROW. It re-reads the SAME
+    cells the other way round — the workbook is NEVER rewritten to transpose a
+    chart. (Transposing the DATA is what the TRANSPOSE worksheet function is
+    for; doing it here would edit the user's data to change a picture, which
+    the preservation invariant forbids in spirit.) An unknown orientation is a
+    boundary error, not a silent default.
+  status: implemented
+  provenance: ["Illustrator capability catalog §16.4 (transpose rows/columns)", "sheet-js/src/core.rs::add_chart"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_series_orientation"]
+
+- id: sheet.chart.data-editor
+  title: "The graph data editor IS the workbook — no second grid is built"
+  ruling: >
+    Illustrator's graph data editor is a small spreadsheet bolted onto a
+    drawing app. paged.sheet IS the spreadsheet: the workbook panel, the
+    formula bar and the in-frame K-1 modal edit session (double-click entry →
+    cell select → keystroke editor → Enter/Esc, session-scoped undo) already
+    edit exactly the cells a chart's series ranges bind to, and
+    `get_chart_geometry` re-resolves those ranges against the LIVE model
+    (sheet.chart.recalc-live), so an edit updates the chart. Building a second,
+    weaker grid inside the chart UI would be a downgrade. This row exists so
+    the decision is recorded rather than left as an apparent gap.
+  status: implemented
+  provenance: ["Illustrator capability catalog §16.4 (graph data editor)", "spec §8.1/§8.4", "packages/sheet-bundle/src/panels/grid-panel.tsx"]
+  tests:
+    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_recalc_live"]
+    vitest: ["packages/sheet-bundle/test/grid-panel.spec.ts", "packages/sheet-bundle/test/formula-bar.spec.ts"]
+
+- id: sheet.chart.design-markers
+  title: "Design markers / graph designs (a user's own art as the bar or the point marker)"
+  status: planned
+  note: >
+    BLOCKED ON A CORE DOOR THAT DOES NOT EXIST — filed, not faked (RFI S-16).
+    An Illustrator graph design instantiates an arbitrary piece of user art
+    once per data point, scaled/repeated/sliding. Expressing that needs an op
+    that INSTANTIATES AN EXISTING DOCUMENT ELEMENT at a transform. The
+    protocol's create ops all mint fresh geometry from literal coordinates
+    (insertPath / insertOval / insertLine / insertTextFrame / placeImage);
+    there is no duplicate-element, place-symbol or instance op, and
+    createGroup/setGroupTransform only regroup nodes that already exist. The
+    only way to fake it from the bundle would be to READ the donor art's
+    geometry and re-emit hundreds of literal insertPath ops per chart — a
+    copy, not an instance: it would not track edits to the source art, would
+    bloat the document, and would misrepresent a symbol as art. paged.draw
+    ships symbols v0, but the ISOLATION CONTRACT (§2.1, superset) forbids
+    reaching into another plugin at all, so that is not a route either. What
+    IS expressible today and already ships: built-in vector markers (the
+    scatter diamond) drawn from the primitive vocabulary. When the core
+    instance op lands, this row becomes a mapping from ChartKind + a bound
+    element id onto per-point instances.
+  provenance: ["Illustrator capability catalog §16.4 (design markers, graph designs)", "spec §2.1 (isolation contract)", "RFI §6 S-16"]
 
 - id: sheet.chart.lower.paged-draw
   title: Lower chart geometry to paged.draw native path ops (insertPath/insertOval/insertLine)

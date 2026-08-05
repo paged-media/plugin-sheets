@@ -69,6 +69,13 @@
 //!   frame + one [`Primitive::Rect`] per (series, category) value, placed by
 //!   plotters' segmented category axis and linear value scale. Column scales on
 //!   Y (bars grow up); Bar transposes (the value axis runs along X).
+//! - **StackedColumn** / **StackedBar** — the same generators with the series
+//!   STACKED inside one full-width bar per category instead of grouped
+//!   side-by-side; the value scale runs to the largest category TOTAL.
+//! - **Radar** — a polar grid (concentric ring polylines + one spoke per
+//!   category) with one closed [`Primitive::Line`] polyline per series. Like
+//!   pie, the polar layout is emitted DIRECTLY (plotters has no polar
+//!   coordinate for a custom backend); the title/legend still flow through it.
 //! - **Line** — a [`Primitive::Line`] polyline per series over plotters'
 //!   cartesian frame; markers omitted (publishing-clean lines).
 //! - **Area** — the Line polyline PLUS a closed [`Primitive::Polygon`] dropped
@@ -223,6 +230,8 @@ const LEGEND_SWATCH: f64 = 7.0;
 const LEGEND_GAP: f64 = 3.0;
 /// Legend row pitch (pt) and the inset from the content box's right edge.
 const LEGEND_ROW_H: f64 = 11.0;
+/// Radial gap (pt) between a radar's outer ring and its category labels.
+const RADAR_LABEL_GAP: f64 = 10.0;
 
 /// Project a [`ChartModel`] + resolved [`PlotData`] into a [`ChartGeometry`]
 /// (spec §8.4). PURE + deterministic — same inputs => byte-identical IR. Every
@@ -234,10 +243,12 @@ pub fn generate(
     height_pt: f64,
 ) -> ChartGeometry {
     match model.kind {
-        // Vertical bars.
-        ChartKind::Column => generate_column(model, data, width_pt, height_pt),
+        // Vertical bars, grouped side-by-side / stacked within the category.
+        ChartKind::Column => generate_column(model, data, width_pt, height_pt, false),
+        ChartKind::StackedColumn => generate_column(model, data, width_pt, height_pt, true),
         // Horizontal bars — the transpose of Column (value axis along X).
-        ChartKind::Bar => generate_bar(model, data, width_pt, height_pt),
+        ChartKind::Bar => generate_bar(model, data, width_pt, height_pt, false),
+        ChartKind::StackedBar => generate_bar(model, data, width_pt, height_pt, true),
         // Polyline series (no fill) / polyline + baseline polygon (filled).
         ChartKind::Line => generate_line_area(model, data, width_pt, height_pt, false),
         ChartKind::Area => generate_line_area(model, data, width_pt, height_pt, true),
@@ -246,6 +257,8 @@ pub fn generate(
         ChartKind::Donut => generate_pie(model, data, width_pt, height_pt, DONUT_HOLE_RATIO),
         // Diamond markers in (x, y) value space (no category axis).
         ChartKind::Scatter => generate_scatter(model, data, width_pt, height_pt),
+        // Polar grid + one closed polyline per series.
+        ChartKind::Radar => generate_radar(model, data, width_pt, height_pt),
     }
 }
 
@@ -369,6 +382,26 @@ impl ValueScale {
         } else {
             0.0
         };
+        ValueScale::from_extent(axis, floor, data_max)
+    }
+    /// The scale for a STACKED category chart: the ceiling is the largest
+    /// category TOTAL (not the largest single value), so a full stack fits the
+    /// plot. Floor stays 0 — a stacked segment is clamped at the value-axis
+    /// floor (registry ruling `sheet.chart.geometry.stacked`). An explicit
+    /// axis min/max override still wins.
+    fn of_stacked(data: &PlotData, axis: &crate::model::Axis) -> ValueScale {
+        let totals = stacked_totals(data);
+        let data_max = totals
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max)
+            .max(0.0);
+        ValueScale::from_extent(axis, 0.0, data_max)
+    }
+    /// Apply the axis min/max overrides to a derived `floor..data_max` extent,
+    /// keeping the invariant `vmax > vmin` (a degenerate range would divide by
+    /// zero in plotters' coordinate map).
+    fn from_extent(axis: &crate::model::Axis, floor: f64, data_max: f64) -> ValueScale {
         let vmin = axis.min.unwrap_or(floor);
         let vmax_raw = axis.max.unwrap_or(data_max);
         let vmax = if vmax_raw <= vmin {
@@ -385,6 +418,24 @@ impl ValueScale {
     fn range(&self) -> std::ops::Range<f64> {
         self.vmin..self.vmax
     }
+}
+
+/// The per-category STACK TOTALS: `totals[gi] = Σ series[si][gi]`, each
+/// contribution clamped at 0. Excel stacks a negative segment downward from
+/// the baseline; the publishing reading (and the unstacked generators' own
+/// `.max(scale.vmin)` clamp) is that a segment below the value-axis floor has
+/// no height, so it adds nothing to the stack — an explicit ruling, not an
+/// accident (`sheet.chart.geometry.stacked`).
+fn stacked_totals(data: &PlotData) -> Vec<f64> {
+    let n = group_count(data);
+    (0..n)
+        .map(|gi| {
+            data.series
+                .iter()
+                .map(|s| s.get(gi).copied().unwrap_or(0.0).max(0.0))
+                .sum()
+        })
+        .collect()
 }
 
 /// The group count for a category chart: the category label count, falling
@@ -486,6 +537,53 @@ fn draw_title<DB: DrawingBackend>(
     }
 }
 
+/// Push the AXIS TITLES (`model.cat_axis.title` / `model.val_axis.title`) when
+/// present. They were modelled from the XLSX chart part since M2 but never
+/// drawn; this is the §16.4 "labels, axes" half of the catalog row.
+///
+/// PLACEMENT RULING (`sheet.chart.axis-titles`): the frozen
+/// [`Primitive::Text`] carries no rotation angle, and adding one would break
+/// the wire IR every consumer mirrors. So the value-axis title is set
+/// HORIZONTALLY above its axis (start-anchored at the content-box left) rather
+/// than rotated up the side, and the category-axis title is centered under the
+/// category labels. Both are common publishing placements; neither fakes a
+/// rotation the IR cannot express. `swap` transposes the two for the horizontal
+/// [`ChartKind::Bar`] family, where the VALUE axis runs along the bottom.
+fn draw_axis_titles<DB: DrawingBackend>(
+    area: &DrawingArea<DB, plotters::coord::Shift>,
+    model: &ChartModel,
+    plot: &PlotArea,
+    width_pt: f64,
+    height_pt: f64,
+    swap: bool,
+) {
+    let (along_bottom, above_left) = if swap {
+        (&model.val_axis.title, &model.cat_axis.title)
+    } else {
+        (&model.cat_axis.title, &model.val_axis.title)
+    };
+    if let Some(t) = above_left {
+        draw_label(
+            area,
+            2.0,
+            (plot.y - 3.0).max(TICK_SIZE_PT),
+            t,
+            TICK_SIZE_PT,
+            TextAnchor::Start,
+        );
+    }
+    if let Some(t) = along_bottom {
+        draw_label(
+            area,
+            width_pt / 2.0,
+            height_pt - 2.0,
+            t,
+            TICK_SIZE_PT,
+            TextAnchor::Middle,
+        );
+    }
+}
+
 /// Push the legend (a swatch + series-name row per series) at the plot's
 /// top-right, when `model.legend`. Each swatch is a filled `Rectangle`; the
 /// label a `Text` — both flow through the backend.
@@ -571,14 +669,24 @@ fn draw_swatch<DB: DrawingBackend>(
 /// [`Primitive::Rect`] per (series, category), grouped within each category
 /// slot. The axis frame + tick/category labels are drawn directly so the
 /// emitted primitive set stays exactly the IR contract.
+///
+/// `stacked` ([`ChartKind::StackedColumn`]) keeps the primitive-per-(series,
+/// category) contract and only changes the ARITHMETIC: one full-width bar per
+/// category, each series' segment sitting on the running total, over the
+/// stacked value scale.
 fn generate_column(
     model: &ChartModel,
     data: &PlotData,
     width_pt: f64,
     height_pt: f64,
+    stacked: bool,
 ) -> ChartGeometry {
     let plot = PlotArea::of(width_pt, height_pt);
-    let scale = ValueScale::of(data, &model.val_axis, false);
+    let scale = if stacked {
+        ValueScale::of_stacked(data, &model.val_axis)
+    } else {
+        ValueScale::of(data, &model.val_axis, false)
+    };
     let n_groups = group_count(data);
     let (sink, backend) = new_backend(width_pt, height_pt);
     {
@@ -596,12 +704,18 @@ fn generate_column(
             draw_title(&root, model, width_pt);
             draw_axis_frame(&root, &plot);
             draw_value_ticks(&root, pa, &plot, &scale);
+            draw_axis_titles(&root, model, &plot, width_pt, height_pt, false);
 
             if n_groups > 0 && plot.nonempty() {
                 let n_series = data.series.len().max(1);
                 let group_w = plot.w / n_groups as f64;
                 let bars_w = group_w * 0.8;
-                let bar_w = bars_w / n_series as f64;
+                // Stacked: ONE bar per category (the segments share it).
+                let bar_w = if stacked {
+                    bars_w
+                } else {
+                    bars_w / n_series as f64
+                };
                 let group_inset = (group_w - bars_w) / 2.0;
                 let base = pa.map_coordinate(&(0.0, scale.vmin));
 
@@ -617,15 +731,29 @@ fn generate_column(
                             TextAnchor::Middle,
                         );
                     }
+                    // The running stack height, in VALUE space, for this
+                    // category (unused when grouped).
+                    let mut acc = scale.vmin;
                     for (si, series) in data.series.iter().enumerate() {
-                        let v = series
-                            .get(gi)
-                            .copied()
-                            .unwrap_or(scale.vmin)
-                            .max(scale.vmin);
-                        let top = pa.map_coordinate(&(0.0, v)).1 as f64;
-                        let h = (base.1 as f64 - top).max(0.0);
-                        let x = group_left + group_inset + si as f64 * bar_w;
+                        let raw = series.get(gi).copied().unwrap_or(scale.vmin);
+                        let (top, h, x) = if stacked {
+                            // The segment spans acc..acc+v; a value below the
+                            // floor contributes no height (the ruling).
+                            let lo = acc;
+                            let hi = (acc + (raw - scale.vmin).max(0.0)).min(scale.vmax);
+                            acc = hi;
+                            let y_hi = pa.map_coordinate(&(0.0, hi)).1 as f64;
+                            let y_lo = pa.map_coordinate(&(0.0, lo)).1 as f64;
+                            (y_hi, (y_lo - y_hi).max(0.0), group_left + group_inset)
+                        } else {
+                            let v = raw.max(scale.vmin);
+                            let top = pa.map_coordinate(&(0.0, v)).1 as f64;
+                            (
+                                top,
+                                (base.1 as f64 - top).max(0.0),
+                                group_left + group_inset + si as f64 * bar_w,
+                            )
+                        };
                         emit_bar(&sink, x, top, bar_w, h, &series_color(model, si));
                     }
                 }
@@ -642,14 +770,21 @@ fn generate_column(
 }
 
 /// The BAR generator (horizontal bars): the transpose of [`generate_column`].
+/// `stacked` ([`ChartKind::StackedBar`]) is the same transpose of the stacked
+/// column — one full-height bar per category, segments running right.
 fn generate_bar(
     model: &ChartModel,
     data: &PlotData,
     width_pt: f64,
     height_pt: f64,
+    stacked: bool,
 ) -> ChartGeometry {
     let plot = PlotArea::of(width_pt, height_pt);
-    let scale = ValueScale::of(data, &model.val_axis, false);
+    let scale = if stacked {
+        ValueScale::of_stacked(data, &model.val_axis)
+    } else {
+        ValueScale::of(data, &model.val_axis, false)
+    };
     let n_groups = group_count(data);
     let (sink, backend) = new_backend(width_pt, height_pt);
     {
@@ -667,12 +802,18 @@ fn generate_bar(
             draw_title(&root, model, width_pt);
             draw_axis_frame(&root, &plot);
             draw_value_ticks_x(&root, pa, &plot, &scale);
+            draw_axis_titles(&root, model, &plot, width_pt, height_pt, true);
 
             if n_groups > 0 && plot.nonempty() {
                 let n_series = data.series.len().max(1);
                 let group_h = plot.h / n_groups as f64;
                 let bars_h = group_h * 0.8;
-                let bar_h = bars_h / n_series as f64;
+                // Stacked: ONE bar per category (the segments share it).
+                let bar_h = if stacked {
+                    bars_h
+                } else {
+                    bars_h / n_series as f64
+                };
                 let group_inset = (group_h - bars_h) / 2.0;
                 let base_x = pa.map_coordinate(&(scale.vmin, 0.0)).0 as f64;
 
@@ -688,16 +829,26 @@ fn generate_bar(
                             TextAnchor::End,
                         );
                     }
+                    let mut acc = scale.vmin;
                     for (si, series) in data.series.iter().enumerate() {
-                        let v = series
-                            .get(gi)
-                            .copied()
-                            .unwrap_or(scale.vmin)
-                            .max(scale.vmin);
-                        let right = pa.map_coordinate(&(v, 0.0)).0 as f64;
-                        let w = (right - base_x).max(0.0);
-                        let y = group_top + group_inset + si as f64 * bar_h;
-                        emit_bar(&sink, base_x, y, w, bar_h, &series_color(model, si));
+                        let raw = series.get(gi).copied().unwrap_or(scale.vmin);
+                        let (x, w, y) = if stacked {
+                            let lo = acc;
+                            let hi = (acc + (raw - scale.vmin).max(0.0)).min(scale.vmax);
+                            acc = hi;
+                            let x_lo = pa.map_coordinate(&(lo, 0.0)).0 as f64;
+                            let x_hi = pa.map_coordinate(&(hi, 0.0)).0 as f64;
+                            (x_lo, (x_hi - x_lo).max(0.0), group_top + group_inset)
+                        } else {
+                            let v = raw.max(scale.vmin);
+                            let right = pa.map_coordinate(&(v, 0.0)).0 as f64;
+                            (
+                                base_x,
+                                (right - base_x).max(0.0),
+                                group_top + group_inset + si as f64 * bar_h,
+                            )
+                        };
+                        emit_bar(&sink, x, y, w, bar_h, &series_color(model, si));
                     }
                 }
             }
@@ -740,6 +891,7 @@ fn generate_line_area(
             draw_title(&root, model, width_pt);
             draw_axis_frame(&root, &plot);
             draw_value_ticks(&root, pa, &plot, &scale);
+            draw_axis_titles(&root, model, &plot, width_pt, height_pt, false);
 
             if n_groups > 0 && plot.nonempty() {
                 // Category slot centers in plotters' 0..n category space.
@@ -834,6 +986,7 @@ fn generate_scatter(
             let pa = chart.plotting_area();
             draw_title(&root, model, width_pt);
             draw_axis_frame(&root, &plot);
+            draw_axis_titles(&root, model, &plot, width_pt, height_pt, false);
 
             if !xs.is_empty() && plot.nonempty() {
                 draw_value_ticks(&root, pa, &plot, &y_scale);
@@ -935,6 +1088,118 @@ fn generate_pie(
         }
 
         draw_legend_pie(&root, model, data, &plot);
+        let _ = root.present();
+    }
+    ChartGeometry {
+        width_pt,
+        height_pt,
+        prims: drain(sink),
+    }
+}
+
+/// The minimum number of category axes a radar needs to enclose an area. Fewer
+/// than three spokes is a degenerate polygon, so the generator emits the title
+/// and legend only (never panics — the `empty_data_never_panics` contract).
+const RADAR_MIN_AXES: usize = 3;
+
+/// The RADAR generator (spec §8.4; Illustrator §16.4's ninth graph type).
+/// plotters has no polar coordinate system a CUSTOM backend can drive, so —
+/// exactly like [`generate_pie`] — the polar layout is emitted DIRECTLY while
+/// the title and legend still flow through the backend (one text-metrics
+/// path). Nothing new enters the frozen IR: the grid rings, the spokes and each
+/// series' closed outline are all [`Primitive::Line`] polylines.
+///
+/// LAYOUT. One spoke per category at `i * 360/n` degrees CLOCKWISE FROM 12
+/// O'CLOCK — the same angular convention [`Primitive::Wedge`] uses, so both
+/// projections read one rule. A value maps to a radius over the same
+/// [`ValueScale`] the cartesian kinds use (floor 0), so `vmin` sits at the
+/// center and `vmax` on the outer ring. Series are STROKED, never filled: a
+/// filled radar hides every series drawn under it.
+fn generate_radar(
+    model: &ChartModel,
+    data: &PlotData,
+    width_pt: f64,
+    height_pt: f64,
+) -> ChartGeometry {
+    let plot = PlotArea::of(width_pt, height_pt);
+    let scale = ValueScale::of(data, &model.val_axis, false);
+    let n_axes = group_count(data);
+    let (sink, backend) = new_backend(width_pt, height_pt);
+    {
+        let root = backend.into_drawing_area();
+        draw_title(&root, model, width_pt);
+
+        // A square polar field centered in the content box, inset for the
+        // category labels that ring it.
+        let avail_h = (height_pt - PAD_TOP - PAD_BOTTOM).max(0.0);
+        let avail_w = (width_pt - PAD_LEFT - PAD_RIGHT).max(0.0);
+        let r = (avail_w.min(avail_h) / 2.0 - RADAR_LABEL_GAP).max(0.0);
+        let cx = width_pt / 2.0;
+        let cy = PAD_TOP + avail_h / 2.0;
+
+        if n_axes >= RADAR_MIN_AXES && r > 0.0 {
+            // Angle (clockwise from 12 o'clock) → a point at radius `rad`.
+            let at = |i: usize, rad: f64| {
+                let deg = (i as f64) * 360.0 / n_axes as f64;
+                let a = deg.to_radians();
+                (cx + rad * a.sin(), cy - rad * a.cos())
+            };
+            // A closed ring polyline at radius `rad` (the first point repeats
+            // so the polyline closes without needing a filled Polygon).
+            let ring = |rad: f64| -> Vec<(f64, f64)> {
+                let mut pts: Vec<(f64, f64)> = (0..n_axes).map(|i| at(i, rad)).collect();
+                pts.push(pts[0]);
+                pts
+            };
+
+            // The polar GRID: one ring per value tick (skipping the center).
+            for t in 1..VAL_TICKS {
+                let rad = r * (t as f64 / (VAL_TICKS - 1) as f64);
+                emit_line(&sink, ring(rad), AXIS_STROKE.to_string(), AXIS_STROKE_W);
+            }
+            // One spoke per category axis.
+            for i in 0..n_axes {
+                emit_line(
+                    &sink,
+                    vec![(cx, cy), at(i, r)],
+                    AXIS_STROKE.to_string(),
+                    AXIS_STROKE_W,
+                );
+            }
+            // Value tick labels up the 12-o'clock spoke, end-anchored left of
+            // it (the same reading order as the cartesian value axis).
+            for t in 0..VAL_TICKS {
+                let frac = t as f64 / (VAL_TICKS - 1) as f64;
+                let v = scale.vmin + frac * scale.span();
+                draw_label(
+                    &root,
+                    cx - 3.0,
+                    cy - r * frac,
+                    &format_tick(v),
+                    TICK_SIZE_PT,
+                    TextAnchor::End,
+                );
+            }
+            // Category labels just outside each spoke's end.
+            for (i, label) in data.categories.iter().take(n_axes).enumerate() {
+                let (lx, ly) = at(i, r + RADAR_LABEL_GAP);
+                draw_label(&root, lx, ly, label, TICK_SIZE_PT, TextAnchor::Middle);
+            }
+            // One closed outline per series.
+            for (si, series) in data.series.iter().enumerate() {
+                let mut pts: Vec<(f64, f64)> = (0..n_axes)
+                    .map(|i| {
+                        let v = series.get(i).copied().unwrap_or(scale.vmin);
+                        let frac = ((v - scale.vmin) / scale.span()).clamp(0.0, 1.0);
+                        at(i, r * frac)
+                    })
+                    .collect();
+                pts.push(pts[0]);
+                emit_line(&sink, pts, series_color(model, si), SERIES_STROKE_W);
+            }
+        }
+
+        draw_legend(&root, model, &plot);
         let _ = root.present();
     }
     ChartGeometry {
@@ -1437,19 +1702,26 @@ mod tests {
         assert!(labels.contains(&"Revenue"), "legend shows the series name");
     }
 
+    /// EVERY kind the generator dispatches. One list so a new kind cannot be
+    /// added without the determinism + never-panic contracts covering it.
+    const ALL_KINDS: [ChartKind; 10] = [
+        ChartKind::Column,
+        ChartKind::Bar,
+        ChartKind::Line,
+        ChartKind::Area,
+        ChartKind::Pie,
+        ChartKind::Donut,
+        ChartKind::Scatter,
+        ChartKind::StackedColumn,
+        ChartKind::StackedBar,
+        ChartKind::Radar,
+    ];
+
     #[test]
     fn every_kind_is_deterministic_and_serializes() {
         let (mut model, data) = three_bar_column();
         model.legend = true;
-        for kind in [
-            ChartKind::Column,
-            ChartKind::Bar,
-            ChartKind::Line,
-            ChartKind::Area,
-            ChartKind::Pie,
-            ChartKind::Donut,
-            ChartKind::Scatter,
-        ] {
+        for kind in ALL_KINDS {
             model.kind = kind;
             let a = generate(&model, &data, 320.0, 240.0);
             let b = generate(&model, &data, 320.0, 240.0);
@@ -1466,19 +1738,277 @@ mod tests {
         // frame-only) geometry for every kind (recalc resilience).
         let (mut model, _) = three_bar_column();
         let empty = PlotData::default();
+        for kind in ALL_KINDS {
+            model.kind = kind;
+            let g = generate(&model, &empty, 200.0, 150.0);
+            assert_eq!(g.width_pt, 200.0);
+            assert_eq!(g.height_pt, 150.0);
+        }
+    }
+
+    /// A two-series model + resolved data for the stacking tests: series A
+    /// [1, 2], series B [3, 4] over categories X/Y — totals 4 and 6.
+    fn two_series_stack() -> (ChartModel, PlotData) {
+        let model = ChartModel {
+            kind: ChartKind::StackedColumn,
+            title: None,
+            series: vec![
+                Series {
+                    name: Some("A".into()),
+                    categories: None,
+                    values: rr(0, 1, 1, 1),
+                    color: None,
+                },
+                Series {
+                    name: Some("B".into()),
+                    categories: None,
+                    values: rr(0, 2, 1, 2),
+                    color: None,
+                },
+            ],
+            cat_axis: Axis::default(),
+            val_axis: Axis::default(),
+            legend: false,
+        };
+        let data = PlotData {
+            series: vec![vec![1.0, 2.0], vec![3.0, 4.0]],
+            categories: vec!["X".into(), "Y".into()],
+        };
+        (model, data)
+    }
+
+    #[test]
+    fn geometry_stacked_column_segments_share_one_bar() {
+        let (model, data) = two_series_stack();
+        let g = generate(&model, &data, 300.0, 200.0);
+        let rects: Vec<&Primitive> = g.prims.iter().filter(|p| is_rect(p)).collect();
+        // Still one Rect per (series, category) — the primitive contract is
+        // unchanged; only the arithmetic stacks.
+        assert_eq!(rects.len(), 4);
+
+        let unpack = |p: &Primitive| match p {
+            Primitive::Rect { x, y, w, h, .. } => (*x, *y, *w, *h),
+            _ => panic!("not a rect"),
+        };
+        // Emission order is (category, series): X/A, X/B, Y/A, Y/B.
+        let (xa_x, xa_y, xa_w, xa_h) = unpack(rects[0]);
+        let (xb_x, xb_y, xb_w, xb_h) = unpack(rects[1]);
+        let (ya_x, _, _, _) = unpack(rects[2]);
+
+        // Both series in a category share ONE bar: same x, same width.
+        assert!((xa_x - xb_x).abs() < 1e-6, "stacked segments share x");
+        assert!((xa_w - xb_w).abs() < 1e-6, "stacked segments share width");
+        // …and different categories do not.
+        assert!(ya_x > xa_x, "the next category sits to the right");
+        // B sits ON TOP of A: B's bottom edge is A's top edge.
+        assert!(
+            ((xb_y + xb_h) - xa_y).abs() < 1.5,
+            "series B stacks onto series A ({} vs {})",
+            xb_y + xb_h,
+            xa_y
+        );
+
+        // The scale runs to the largest TOTAL (6), not the largest value (4):
+        // category Y's full stack reaches the plot top.
+        let plot_h = 200.0 - PAD_TOP - PAD_BOTTOM;
+        let (_, _, _, ya_h) = unpack(rects[2]);
+        let (_, _, _, yb_h) = unpack(rects[3]);
+        assert!(
+            ((ya_h + yb_h) - plot_h).abs() < 1.5,
+            "the tallest stack fills the plot height ({} vs {plot_h})",
+            ya_h + yb_h
+        );
+        // And X's stack is 4/6 of it.
+        assert!(((xa_h + xb_h) - plot_h * 4.0 / 6.0).abs() < 1.5);
+    }
+
+    #[test]
+    fn geometry_stacked_bar_transposes_the_stack() {
+        let (mut model, data) = two_series_stack();
+        model.kind = ChartKind::StackedBar;
+        let g = generate(&model, &data, 300.0, 200.0);
+        let rects: Vec<&Primitive> = g.prims.iter().filter(|p| is_rect(p)).collect();
+        assert_eq!(rects.len(), 4);
+        let unpack = |p: &Primitive| match p {
+            Primitive::Rect { x, y, w, h, .. } => (*x, *y, *w, *h),
+            _ => panic!("not a rect"),
+        };
+        let (xa_x, xa_y, xa_w, xa_h) = unpack(rects[0]);
+        let (xb_x, xb_y, _, xb_h) = unpack(rects[1]);
+        // Shared bar: same y, same height; B starts where A ends.
+        assert!((xa_y - xb_y).abs() < 1e-6, "stacked segments share y");
+        assert!((xa_h - xb_h).abs() < 1e-6, "stacked segments share height");
+        assert!(
+            ((xa_x + xa_w) - xb_x).abs() < 1.5,
+            "series B continues to the right of series A"
+        );
+        // The tallest stack (6) fills the plot width.
+        let plot_w = 300.0 - PAD_LEFT - PAD_RIGHT;
+        let (_, _, ya_w, _) = unpack(rects[2]);
+        let (_, _, yb_w, _) = unpack(rects[3]);
+        assert!(((ya_w + yb_w) - plot_w).abs() < 1.5);
+    }
+
+    #[test]
+    fn geometry_stacked_never_exceeds_the_plot() {
+        // A negative segment contributes NO height (the documented ruling) and
+        // never pushes a stack past the value ceiling.
+        let (mut model, mut data) = two_series_stack();
+        data.series = vec![vec![5.0, -3.0], vec![-2.0, 7.0]];
+        model.legend = false;
+        for kind in [ChartKind::StackedColumn, ChartKind::StackedBar] {
+            model.kind = kind;
+            let g = generate(&model, &data, 300.0, 200.0);
+            let plot_h = 200.0 - PAD_TOP - PAD_BOTTOM;
+            let plot_w = 300.0 - PAD_LEFT - PAD_RIGHT;
+            for p in g.prims.iter().filter(|p| is_rect(p)) {
+                let Primitive::Rect { h, w, .. } = p else {
+                    unreachable!()
+                };
+                assert!(*h >= 0.0 && *h <= plot_h + 1.5, "segment height {h}");
+                assert!(*w >= 0.0 && *w <= plot_w + 1.5, "segment width {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn geometry_radar_grid_spokes_and_series_outlines() {
+        let (mut model, data) = three_bar_column(); // 3 categories, 1 series
+        model.kind = ChartKind::Radar;
+        let g = generate(&model, &data, 300.0, 240.0);
+
+        // Grid rings (VAL_TICKS - 1) + one spoke per category + one closed
+        // outline per series — every one a Line (never a filled Polygon: a
+        // filled radar hides the series under it).
+        let lines: Vec<&Primitive> = g.prims.iter().filter(|p| is_line(p)).collect();
+        assert_eq!(lines.len(), (VAL_TICKS - 1) + 3 + 1);
+        assert_eq!(count(&g, is_poly), 0);
+        assert_eq!(count(&g, is_wedge), 0);
+        assert_eq!(count(&g, is_rect), 0, "no legend (legend: false)");
+
+        // Every ring closes (first point == last) and has one vertex per axis.
+        for ring in lines.iter().take(VAL_TICKS - 1) {
+            let Primitive::Line { pts, stroke, .. } = ring else {
+                unreachable!()
+            };
+            assert_eq!(pts.len(), 4, "3 axes + the closing repeat");
+            assert_eq!(pts[0], pts[3], "the ring closes");
+            assert_eq!(stroke, AXIS_STROKE);
+        }
+        // The spokes start at the shared center.
+        let center = match lines[VAL_TICKS - 1] {
+            Primitive::Line { pts, .. } => pts[0],
+            _ => unreachable!(),
+        };
+        for spoke in lines.iter().skip(VAL_TICKS - 1).take(3) {
+            let Primitive::Line { pts, .. } = spoke else {
+                unreachable!()
+            };
+            assert_eq!(pts.len(), 2);
+            assert_eq!(pts[0], center, "every spoke starts at the center");
+        }
+        // The series outline closes and carries the series colour.
+        let Primitive::Line { pts, stroke, .. } = lines[lines.len() - 1] else {
+            unreachable!()
+        };
+        assert_eq!(pts.len(), 4);
+        assert_eq!(pts[0], pts[3], "the series outline closes");
+        assert_eq!(stroke, "#112233");
+        // Values 10/20/30 over a 0..30 scale: the LAST axis sits on the outer
+        // ring, the first at a third of the radius from the center.
+        let r_of = |p: (f64, f64)| ((p.0 - center.0).hypot(p.1 - center.1)).round();
+        assert!(r_of(pts[2]) > r_of(pts[1]) && r_of(pts[1]) > r_of(pts[0]));
+        assert!(
+            (r_of(pts[0]) * 3.0 - r_of(pts[2])).abs() <= 2.0,
+            "10 maps to a third of 30's radius"
+        );
+    }
+
+    #[test]
+    fn geometry_radar_under_three_axes_degrades_without_panicking() {
+        // Two categories cannot enclose an area; the generator emits the
+        // title/legend only rather than a degenerate polygon.
+        let mut model = three_bar_column().0;
+        model.kind = ChartKind::Radar;
+        model.title = Some("T".into());
+        let data = PlotData {
+            series: vec![vec![1.0, 2.0]],
+            categories: vec!["A".into(), "B".into()],
+        };
+        let g = generate(&model, &data, 200.0, 200.0);
+        assert_eq!(count(&g, is_line), 0, "no polar grid under 3 axes");
+        assert_eq!(count(&g, |p| matches!(p, Primitive::Text { .. })), 1);
+    }
+
+    #[test]
+    fn geometry_axis_titles_are_drawn_when_present() {
+        // The Axis.title field was modelled from the XLSX chart part since M2
+        // but never reached the geometry. It does now — on both orientations.
+        let (mut model, data) = three_bar_column();
+        model.cat_axis.title = Some("Quarter".into());
+        model.val_axis.title = Some("EUR".into());
         for kind in [
             ChartKind::Column,
             ChartKind::Bar,
             ChartKind::Line,
             ChartKind::Area,
-            ChartKind::Pie,
-            ChartKind::Donut,
             ChartKind::Scatter,
         ] {
             model.kind = kind;
-            let g = generate(&model, &empty, 200.0, 150.0);
-            assert_eq!(g.width_pt, 200.0);
-            assert_eq!(g.height_pt, 150.0);
+            let g = generate(&model, &data, 300.0, 200.0);
+            let labels: Vec<&str> = g
+                .prims
+                .iter()
+                .filter_map(|p| match p {
+                    Primitive::Text { s, .. } => Some(s.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert!(labels.contains(&"Quarter"), "{kind:?} draws the cat title");
+            assert!(labels.contains(&"EUR"), "{kind:?} draws the val title");
+        }
+        // Bar transposes which title runs along the bottom: the VALUE title is
+        // the middle-anchored one there, the CATEGORY title in Column.
+        let bottom_of = |kind: ChartKind| {
+            let mut m = model.clone();
+            m.kind = kind;
+            let g = generate(&m, &data, 300.0, 200.0);
+            g.prims
+                .iter()
+                .filter_map(|p| match p {
+                    Primitive::Text {
+                        s,
+                        y,
+                        anchor: TextAnchor::Middle,
+                        ..
+                    } if *y > 190.0 => Some(s.clone()),
+                    _ => None,
+                })
+                .next()
+        };
+        assert_eq!(bottom_of(ChartKind::Column).as_deref(), Some("Quarter"));
+        assert_eq!(bottom_of(ChartKind::Bar).as_deref(), Some("EUR"));
+    }
+
+    #[test]
+    fn axis_titles_absent_by_default_leave_the_primitive_count_unchanged() {
+        // Axis::default() has no title, so no existing chart grows a primitive.
+        let (mut model, data) = three_bar_column();
+        for kind in ALL_KINDS {
+            model.kind = kind;
+            let base = generate(&model, &data, 300.0, 200.0);
+            let mut titled = model.clone();
+            titled.cat_axis.title = Some("C".into());
+            titled.val_axis.title = Some("V".into());
+            let with = generate(&titled, &data, 300.0, 200.0);
+            let grew = with.prims.len() - base.prims.len();
+            // Cartesian kinds gain exactly the two titles; the polar kinds
+            // (pie/donut/radar) have no cartesian axes to title.
+            let expected = match kind {
+                ChartKind::Pie | ChartKind::Donut | ChartKind::Radar => 0,
+                _ => 2,
+            };
+            assert_eq!(grew, expected, "{kind:?}");
         }
     }
 }

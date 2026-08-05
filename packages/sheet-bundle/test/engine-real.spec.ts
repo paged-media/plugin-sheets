@@ -292,6 +292,84 @@ describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
     e.free();
   });
 
+  // GRAPHS (Illustrator catalog §16.4). The engine advertises its OWN kind
+  // set — the panel reads it rather than hard-coding one — and every
+  // advertised kind, including the three added for the catalog row (stacked
+  // column/bar, radar), lowers through the UNCHANGED `chartGeometryToMutations`.
+  // That is the load-bearing claim: the new kinds are expressed entirely in
+  // the FROZEN Primitive vocabulary, so the paged.draw translator needed no
+  // change and no new core op. A kind that smuggled in a new primitive would
+  // fail here, on the real wasm.
+  it("authors and lowers every advertised chart kind (§16.4 graphs)", async () => {
+    const glue = await import(/* @vite-ignore */ join(BIN, "sheet_js.js"));
+    glue.initSync({ module: readFileSync(WASM) });
+    const e = new glue.SheetEngine();
+    e.load_xlsx(readFileSync(CHART_XLSX));
+
+    const kinds = e.chart_kinds() as string[];
+    // Illustrator's nine graph types are a SUBSET of what the engine offers.
+    for (const want of [
+      "column",
+      "stackedColumn",
+      "bar",
+      "stackedBar",
+      "line",
+      "area",
+      "scatter",
+      "pie",
+      "radar",
+    ]) {
+      expect(kinds).toContain(want);
+    }
+
+    // The primitive kinds the frozen IR defines — and the ONLY ones the
+    // translator knows how to lower.
+    const FROZEN = new Set(["rect", "line", "polygon", "wedge", "text"]);
+    for (const kind of kinds) {
+      const idx = e.add_chart(0, "B2:C4", "A2:A4", kind, "", "columns") as number;
+      const geom = e.get_chart_geometry(idx, 320, 240) as ChartGeometry;
+      expect(geom.prims.length, `${kind} draws primitives`).toBeGreaterThan(0);
+      for (const p of geom.prims) {
+        expect(FROZEN.has(p.kind), `${kind} emits only frozen primitives`).toBe(
+          true,
+        );
+      }
+      const { batch } = chartGeometryToMutations(
+        geom,
+        { pageId: "Page/u1", bounds: [0, 0, 240, 320] },
+        makeBinding("Sheet1", `chart:${idx}`, 0),
+      );
+      const ops = (
+        batch as { args: { ops: Array<{ op: string }> } }
+      ).args.ops;
+      expect(ops.length, `${kind} lowers to host ops`).toBeGreaterThan(0);
+      // Every op is one the existing translator already emitted — no new
+      // core door was needed for any new kind.
+      const allowed = new Set([
+        "createSwatch",
+        "insertPath",
+        "insertTextFrame",
+        "setElementProperty",
+        "setPluginMetadata",
+      ]);
+      for (const o of ops) expect(allowed.has(o.op), `${kind}: ${o.op}`).toBe(true);
+    }
+
+    // TRANSPOSE ROWS/COLUMNS: the same B2:C4 block is 2 column-series or 3
+    // row-series. Re-read, never rewritten.
+    const byCol = e.add_chart(0, "B2:C4", "A2:A4", "column", "", "columns") as number;
+    const byRow = e.add_chart(0, "B2:C4", "A2:A4", "column", "", "rows") as number;
+    const list = e.list_charts() as Array<{ index: number; seriesCount: number }>;
+    expect(list[byCol].seriesCount).toBe(2);
+    expect(list[byRow].seriesCount).toBe(3);
+    // A bad orientation is a boundary error, not a silent default.
+    expect(() => e.add_chart(0, "B2:C4", "", "column", "", "diagonal")).toThrow(
+      /orientation/,
+    );
+
+    e.free();
+  });
+
   // S-04 formula bar: the function name table flows through the REAL wasm
   // door — the engine's registry codegen (sheet-core/build.rs FUNC_META) is
   // the autocomplete's source (constitution §7), proven against the artifact.

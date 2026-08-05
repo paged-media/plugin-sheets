@@ -332,9 +332,16 @@ export interface SheetEngine {
   /** Enumerate the workbook's charts (M2 charts track, spec §8.4). Parsed
    *  from the XLSX chart parts on load; empty for a chartless workbook. */
   listCharts(): ChartInfo[];
-  /** AUTHOR a chart over live data (one series per values column; kind ∈
-   *  bar|column|line|area|pie|donut|scatter). Returns the new chart index
-   *  (same handle the geometry/lowering lanes take). Publishing-first:
+  /** The chart-kind tags `addChart` accepts, in panel order. READ from the
+   *  engine, never hard-coded in TS: all chart semantics (including which
+   *  kinds exist) live in Rust, so the UI cannot offer a kind the engine
+   *  refuses. */
+  chartKinds(): string[];
+  /** AUTHOR a chart over live data. `kind` ∈ [`chartKinds`]; `seriesIn` is
+   *  the transpose control — `"columns"` (the default) reads one series per
+   *  values COLUMN, `"rows"` one per ROW, re-reading the SAME cells the other
+   *  way round (never a rewrite of the user's data). Returns the new chart
+   *  index (same handle the geometry/lowering lanes take). Publishing-first:
    *  authored charts are page-side only — never written back to xlsx. */
   addChart(
     sheet: number,
@@ -342,6 +349,7 @@ export interface SheetEngine {
     categories: string,
     kind: string,
     title: string,
+    seriesIn?: string,
   ): number;
   /** Enumerate the worksheets with a FROZEN PANE (spec §8.1). Read-only
    *  derived state parsed from the workbook's `<sheetViews><pane>` on load
@@ -440,12 +448,14 @@ export interface SheetWasmEngine {
   ): void;
   list_sheets(): SheetInfo[];
   list_charts(): ChartInfo[];
+  chart_kinds(): string[];
   add_chart(
     sheet: number,
     values: string,
     categories: string,
     kind: string,
     title: string,
+    series_in: string,
   ): number;
   list_freeze_panes(): FreezeInfo[];
   list_data_validations(): DataValidationInfo[];
@@ -496,8 +506,11 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
       wasm.set_grid_selection(sheet, anchorRow, anchorCol, rows, cols),
     listSheets: () => wasm.list_sheets(),
     listCharts: () => wasm.list_charts(),
-    addChart: (sheet, values, categories, kind, title) =>
-      wasm.add_chart(sheet, values, categories, kind, title),
+    chartKinds: () => wasm.chart_kinds(),
+    // An omitted `seriesIn` is the engine's own default ("" => columns), so
+    // the older 5-argument call keeps its exact meaning.
+    addChart: (sheet, values, categories, kind, title, seriesIn) =>
+      wasm.add_chart(sheet, values, categories, kind, title, seriesIn ?? ""),
     listFreezePanes: () => wasm.list_freeze_panes(),
     listDataValidations: () => wasm.list_data_validations(),
     listComments: () => wasm.list_comments(),

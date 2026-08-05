@@ -31,10 +31,11 @@
  */
 
 //! The chart MODEL (spec §8.4). The publishing-curated chart type set
-//! (bar/column, line/area, pie/donut, scatter) plus its series and axis
-//! bindings — the data the M2 charts track populates from xlsx chart parts
-//! (`/charts/chartN.xml`). This is the FROZEN IR the geometry generator
-//! ([`crate::geometry`]) projects; the M2 chart-build track builds against it.
+//! (bar/column, stacked column/bar, line/area, pie/donut, scatter, radar) plus
+//! its series and axis bindings — the data the M2 charts track populates from
+//! xlsx chart parts (`/charts/chartN.xml`). This is the FROZEN IR the geometry
+//! generator ([`crate::geometry`]) projects; the M2 chart-build track builds
+//! against it.
 //!
 //! These types hold [`RangeRef`] series bindings (they are model-internal,
 //! resolved against the workbook on recalc), so they deliberately do NOT derive
@@ -47,6 +48,13 @@ use sheet_core::RangeRef;
 
 /// The publishing-curated chart kinds (spec §8.4 / D-4). `Bar` is horizontal
 /// bars; `Column` is vertical bars; `Donut` is a `Pie` with a center hole.
+///
+/// `StackedColumn`/`StackedBar`/`Radar` close the three types the Illustrator
+/// graph catalog (§16.4) names that the curated set lacked; with them the set
+/// is a superset of Illustrator's nine (Column, Stacked Column, Bar, Stacked
+/// Bar, Line, Area, Scatter, Pie, Radar) plus `Donut`. Adding a KIND does not
+/// touch the frozen [`crate::geometry::Primitive`] wire IR — every new kind is
+/// expressed in the existing primitive vocabulary, so no consumer changes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ChartKind {
     Bar,
@@ -56,6 +64,15 @@ pub enum ChartKind {
     Pie,
     Donut,
     Scatter,
+    /// Vertical bars stacked within each category (one bar per category, one
+    /// segment per series).
+    StackedColumn,
+    /// Horizontal bars stacked within each category — the transpose of
+    /// [`ChartKind::StackedColumn`].
+    StackedBar,
+    /// A radial-axis chart: one spoke per category, one closed polyline per
+    /// series over a polar grid.
+    Radar,
 }
 
 /// One chart: its kind, optional title, the series, the two axes, and whether a

@@ -40,8 +40,17 @@
 //! ## What we read (the T2 honest subset)
 //!
 //! - The chart KIND from the plot-area child element (`c:barChart` with
-//!   `c:barDir val="bar"|"col"`; `c:areaChart`; `c:lineChart`; `c:pieChart` /
-//!   `c:doughnutChart`; `c:scatterChart`).
+//!   `c:barDir val="bar"|"col"` and `c:grouping val="stacked"|"percentStacked"`;
+//!   `c:areaChart`; `c:lineChart`; `c:pieChart` / `c:doughnutChart`;
+//!   `c:scatterChart`; `c:radarChart`).
+//!   RULING (`sheet.chart.xlsx.grouping`): a bar/column chart's `c:grouping`
+//!   selects the STACKED kind — before this it was ignored, so an Excel
+//!   stacked chart imported as a GROUPED one and rendered wrong without
+//!   saying so. `percentStacked` reads as `stacked` (the segment proportions
+//!   are right; the axis is not normalised to 100% — an honest, labelled
+//!   approximation, not a claim). `c:grouping` on a LINE or AREA chart is
+//!   still ignored: those kinds have no stacked variant in the curated set,
+//!   so they render unstacked — labelled here, never silently.
 //! - Each `c:ser` series: its title `c:tx` (a `c:strRef>c:v` cached string or
 //!   a literal), the category labels `c:cat` (a `c:f` range ref), the values
 //!   `c:val` (a `c:f` range ref), and a fixed `<a:srgbClr val="RRGGBB"/>` fill
@@ -133,6 +142,10 @@ pub fn parse(
 
     let mut kind: Option<ChartKind> = None;
     let mut bar_is_horizontal = false;
+    // `c:grouping` is shared by bar/line/area, so only honour it inside a
+    // `c:barChart` (the only family with a curated stacked kind).
+    let mut in_bar_chart = false;
+    let mut bar_stacked = false;
     let mut legend = false;
     let mut series: Vec<SeriesAccum> = Vec::new();
     let mut title: Option<CompactString> = None;
@@ -157,16 +170,27 @@ pub fn parse(
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
                 b"barChart" => {
                     // bar vs column is decided by the nested c:barDir; default col.
+                    // Grouped vs stacked by the nested c:grouping.
                     kind = Some(ChartKind::Column);
+                    in_bar_chart = true;
                 }
                 b"barDir" => {
                     bar_is_horizontal = matches!(attr(&e, b"val")?.as_deref(), Some("bar"));
+                }
+                b"grouping" => {
+                    if in_bar_chart {
+                        bar_stacked = matches!(
+                            attr(&e, b"val")?.as_deref(),
+                            Some("stacked") | Some("percentStacked")
+                        );
+                    }
                 }
                 b"lineChart" => kind = Some(ChartKind::Line),
                 b"areaChart" => kind = Some(ChartKind::Area),
                 b"pieChart" => kind = Some(ChartKind::Pie),
                 b"doughnutChart" => kind = Some(ChartKind::Donut),
                 b"scatterChart" => kind = Some(ChartKind::Scatter),
+                b"radarChart" => kind = Some(ChartKind::Radar),
                 b"legend" => legend = true,
                 b"title" => in_title = true,
                 b"ser" => cur = Some(SeriesAccum::default()),
@@ -255,6 +279,7 @@ pub fn parse(
                     role = RefRole::None;
                 }
                 b"cat" | b"val" | b"xVal" | b"yVal" => role = RefRole::None,
+                b"barChart" => in_bar_chart = false,
                 b"title" => in_title = false,
                 b"ser" => {
                     if let Some(c) = cur.take() {
@@ -269,9 +294,14 @@ pub fn parse(
         buf.clear();
     }
 
-    // Resolve the bar orientation now that barDir is known.
-    if matches!(kind, Some(ChartKind::Column)) && bar_is_horizontal {
-        kind = Some(ChartKind::Bar);
+    // Resolve the bar orientation + grouping now that barDir/grouping are known.
+    if matches!(kind, Some(ChartKind::Column)) {
+        kind = Some(match (bar_is_horizontal, bar_stacked) {
+            (false, false) => ChartKind::Column,
+            (false, true) => ChartKind::StackedColumn,
+            (true, false) => ChartKind::Bar,
+            (true, true) => ChartKind::StackedBar,
+        });
     }
 
     let kind = kind.unwrap_or(ChartKind::Column);
@@ -511,6 +541,100 @@ mod tests {
     fn bar_dir_bar_selects_horizontal_kind() {
         let chart = parse(&bar_chart_xml("bar"), 0, &names()).unwrap();
         assert_eq!(chart.model.kind, ChartKind::Bar);
+    }
+
+    /// `<c:barChart>` with an explicit `barDir` + `grouping` (the ECMA child
+    /// order), one series — the stacked-import fixture.
+    fn grouped_bar_xml(bar_dir: &str, grouping: &str) -> Vec<u8> {
+        format!(
+            r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:barChart>
+  <c:barDir val="{bar_dir}"/>
+  <c:grouping val="{grouping}"/>
+  <c:ser><c:val><c:numRef><c:f>Sheet1!$B$1:$B$3</c:f></c:numRef></c:val></c:ser>
+</c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn bar_grouping_selects_the_stacked_kind() {
+        // Before `c:grouping` was read, an Excel STACKED chart imported as a
+        // grouped one and rendered wrong without saying so.
+        let kind = |dir, grp| {
+            parse(&grouped_bar_xml(dir, grp), 0, &names())
+                .unwrap()
+                .model
+                .kind
+        };
+        assert_eq!(kind("col", "clustered"), ChartKind::Column);
+        assert_eq!(kind("col", "stacked"), ChartKind::StackedColumn);
+        assert_eq!(kind("col", "percentStacked"), ChartKind::StackedColumn);
+        assert_eq!(kind("bar", "clustered"), ChartKind::Bar);
+        assert_eq!(kind("bar", "stacked"), ChartKind::StackedBar);
+        assert_eq!(kind("bar", "percentStacked"), ChartKind::StackedBar);
+        // An absent grouping keeps the unstacked default.
+        assert_eq!(
+            parse(&bar_chart_xml("col"), 0, &names())
+                .unwrap()
+                .model
+                .kind,
+            ChartKind::Column
+        );
+    }
+
+    #[test]
+    fn line_and_area_grouping_is_ignored_not_misread() {
+        // `c:grouping` is shared by bar/line/area. The curated set has no
+        // stacked line/area, so a stacked line chart must stay a LINE — never
+        // leak the bar family's stacked kind (the labelled ruling).
+        let mk = |body: &str| -> Vec<u8> {
+            format!(
+                r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea>{body}</c:plotArea></c:chart></c:chartSpace>"#
+            )
+            .into_bytes()
+        };
+        let ser = r#"<c:grouping val="stacked"/><c:ser><c:val><c:numRef><c:f>Sheet1!$B$1:$B$3</c:f></c:numRef></c:val></c:ser>"#;
+        assert_eq!(
+            parse(
+                &mk(&format!("<c:lineChart>{ser}</c:lineChart>")),
+                0,
+                &names()
+            )
+            .unwrap()
+            .model
+            .kind,
+            ChartKind::Line
+        );
+        assert_eq!(
+            parse(
+                &mk(&format!("<c:areaChart>{ser}</c:areaChart>")),
+                0,
+                &names()
+            )
+            .unwrap()
+            .model
+            .kind,
+            ChartKind::Area
+        );
+    }
+
+    #[test]
+    fn radar_chart_kind() {
+        let xml =
+            br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:radarChart>
+  <c:radarStyle val="marker"/>
+  <c:ser>
+    <c:cat><c:strRef><c:f>Sheet1!$A$1:$A$5</c:f></c:strRef></c:cat>
+    <c:val><c:numRef><c:f>Sheet1!$B$1:$B$5</c:f></c:numRef></c:val>
+  </c:ser>
+</c:radarChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let chart = parse(xml, 0, &names()).unwrap();
+        assert_eq!(chart.model.kind, ChartKind::Radar);
+        assert_eq!(chart.model.series.len(), 1);
+        assert_eq!(chart.model.series[0].values.rows(), 5);
     }
 
     #[test]

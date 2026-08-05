@@ -196,14 +196,20 @@ export interface WorkbookSession {
    *  two-phase flow in lower-chart.ts). `chartIndex` indexes [`listCharts`].
    *  Returns false when there is no engine or the lower fails. */
   lowerChart(chartIndex: number): Promise<boolean>;
+  /** The chart-kind tags the ENGINE accepts, in panel order (empty when no
+   *  workbook is loaded). The panel renders this list rather than a hard-coded
+   *  one, so the kind vocabulary has exactly one home: Rust. */
+  chartKinds(): string[];
   /** AUTHOR a chart over the ACTIVE sheet's live data (editor-ui-coverage
-   *  M — the model was import-only). Page-side only: never written back
+   *  M — the model was import-only). `seriesIn` is the transpose control
+   *  (`"columns"` default / `"rows"`). Page-side only: never written back
    *  to the xlsx (the writer re-derives no chart parts). */
   authorChart(
     values: string,
     categories: string,
     kind: string,
     title: string,
+    seriesIn?: string,
   ): { ok: true; index: number } | { ok: false; message: string };
   /** Window the active sheet into a [`GridScene`] for the grid panel (spec
    *  §8.1). Delegates the windowing to `engine.getGridScene` (Rust) and
@@ -1058,7 +1064,17 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       return workbookPalette({ charts, regions });
     },
 
-    authorChart(values, categories, kind, title) {
+    chartKinds() {
+      if (!state.engine) return [];
+      try {
+        return state.engine.chartKinds() ?? [];
+      } catch (err) {
+        host.log.warn("chartKinds: engine call failed", err);
+        return [];
+      }
+    },
+
+    authorChart(values, categories, kind, title, seriesIn) {
       if (!state.engine || state.activeSheet === null) {
         return { ok: false as const, message: "no workbook loaded" };
       }
@@ -1069,6 +1085,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
           categories,
           kind,
           title,
+          seriesIn ?? "columns",
         );
         emitter.emit();
         return { ok: true as const, index };

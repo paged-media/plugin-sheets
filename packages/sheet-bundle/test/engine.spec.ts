@@ -134,8 +134,15 @@ function fakeWasm() {
       calls.push({ method: "list_sheets", args: [] });
       return [{ id: 0, name: "Sheet1", rows: 10, cols: 4 }];
     },
-    add_chart() {
-      calls.push({ method: "add_chart", args: [] });
+    chart_kinds() {
+      calls.push({ method: "chart_kinds", args: [] });
+      return ["column", "stackedColumn", "radar"];
+    },
+    add_chart(sheet, values, categories, kind, title, seriesIn) {
+      calls.push({
+        method: "add_chart",
+        args: [sheet, values, categories, kind, title, seriesIn],
+      });
       return 0;
     },
     list_charts() {
@@ -265,6 +272,27 @@ describe("sheet_plugin_engine_boot: facade mapping", () => {
     expect(calls[8].args).toEqual([0, 0, 0, 480, 320, { includeGridlines: true }]);
     expect(calls[9].args).toEqual([0, 1, 2, 3, 4]);
     expect(calls[16].args).toEqual([0, 360, 240]); // get_chart_geometry
+  });
+
+  // §16.4 graphs: the kind vocabulary is READ from the engine, and the
+  // transpose control rides all the way to the wasm door. An OMITTED
+  // `seriesIn` must reach the engine as `""` (its own "columns" default), so
+  // the pre-transpose 5-argument call keeps its exact meaning.
+  it("forwards the chart kind set and the transpose orientation", () => {
+    const { wasm, calls } = fakeWasm();
+    const engine = wrapEngine(wasm);
+
+    expect(engine.chartKinds()).toEqual(["column", "stackedColumn", "radar"]);
+    engine.addChart(0, "B2:C4", "A2:A4", "radar", "T", "rows");
+    engine.addChart(0, "B2:C4", "", "column", "");
+
+    expect(calls.map((c) => c.method)).toEqual([
+      "chart_kinds",
+      "add_chart",
+      "add_chart",
+    ]);
+    expect(calls[1].args).toEqual([0, "B2:C4", "A2:A4", "radar", "T", "rows"]);
+    expect(calls[2].args).toEqual([0, "B2:C4", "", "column", "", ""]);
   });
 
   it("dispose maps to free()", () => {

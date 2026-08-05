@@ -191,6 +191,8 @@ export function makeWorkbookPanel(
     const [chartValues, setChartValues] = useState("");
     const [chartCats, setChartCats] = useState("");
     const [chartTitle, setChartTitle] = useState("");
+    // The §16.4 transpose control: which axis of the values block is a series.
+    const [chartSeriesIn, setChartSeriesIn] = useState("columns");
     const [chartMsg, setChartMsg] = useState<string | null>(null);
     const onAuthorChart = useCallback(() => {
       if (!chartValues.trim()) {
@@ -202,13 +204,14 @@ export function makeWorkbookPanel(
         chartCats.trim(),
         chartKind,
         chartTitle.trim(),
+        chartSeriesIn,
       );
       setChartMsg(
         res.ok
           ? `Chart #${res.index} authored — lower it below (page-side only; not saved into the xlsx).`
           : res.message,
       );
-    }, [chartValues, chartCats, chartKind, chartTitle]);
+    }, [chartValues, chartCats, chartKind, chartTitle, chartSeriesIn]);
 
     // Function browser (editor-ui-coverage M): filter + copy-to-clipboard.
     const [fnFilter, setFnFilter] = useState("");
@@ -242,6 +245,9 @@ export function makeWorkbookPanel(
     }, [styleName]);
 
     const sheets = st.engine ? st.engine.listSheets() : [];
+    // The chart-kind vocabulary comes from the ENGINE (Rust owns which kinds
+    // exist), never a literal list here.
+    const chartKinds = session.chartKinds();
 
     return (
       <div
@@ -631,11 +637,13 @@ export function makeWorkbookPanel(
               );
             })()}
 
-            {/* CHART AUTHORING — the 7-kind chart engine was import-only.
-             *  One series per values column; categories optional. Authored
+            {/* CHART AUTHORING — the chart engine was import-only. Authored
              *  charts render + lower through the SAME generator as parsed
              *  ones, and stay PAGE-side (never written back to the xlsx —
-             *  the publishing-first ruling, asserted in conformance). */}
+             *  the publishing-first ruling, asserted in conformance).
+             *  The kind list is READ FROM THE ENGINE (session.chartKinds),
+             *  never hard-coded here: which kinds exist is a Rust decision,
+             *  so the panel cannot offer one the engine refuses. */}
             <div style={kicker}>Author chart</div>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <select
@@ -644,11 +652,23 @@ export function makeWorkbookPanel(
                 onChange={(e) => setChartKind(e.target.value)}
                 style={input}
               >
-                {["column", "bar", "line", "area", "pie", "donut", "scatter"].map((k) => (
+                {chartKinds.map((k) => (
                   <option key={k} value={k}>
                     {k}
                   </option>
                 ))}
+              </select>
+              {/* Transpose rows/columns: which axis of the values block is a
+               *  series. Re-reads the same cells — never rewrites data. */}
+              <select
+                data-sheet-chart-series-in
+                value={chartSeriesIn}
+                onChange={(e) => setChartSeriesIn(e.target.value)}
+                title="Which axis of the values block is a series (transpose)"
+                style={input}
+              >
+                <option value="columns">series in columns</option>
+                <option value="rows">series in rows</option>
               </select>
               <input
                 data-sheet-chart-values

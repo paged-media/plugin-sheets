@@ -309,6 +309,197 @@ fn sheet_chart_geometry_scatter() {
     assert_eq!(count(&g, |p| matches!(p, Primitive::Rect { .. })), 0);
 }
 
+/// Stacked geometry (`sheet.chart.geometry.stacked`): the two Illustrator
+/// §16.4 stacked types. The PRIMITIVE contract is unchanged — one Rect per
+/// (series, category) — only the arithmetic stacks: the series segments share
+/// ONE bar per category and the value scale runs to the largest category
+/// TOTAL, so the tallest stack exactly fills the plot.
+#[test]
+fn sheet_chart_geometry_stacked() {
+    let (mut model, _) = three_value_model(ChartKind::StackedColumn);
+    model.series.push(Series {
+        name: Some("S2".into()),
+        categories: None,
+        values: rr(1, 2, 3, 2),
+        color: Some("#F28E2B".into()),
+    });
+    // Totals 15 / 30 / 45 — the third category is the tallest stack.
+    let data = PlotData {
+        series: vec![vec![10.0, 20.0, 30.0], vec![5.0, 10.0, 15.0]],
+        categories: vec!["Q1".into(), "Q2".into(), "Q3".into()],
+    };
+
+    let gc = generate(&model, &data, 300.0, 200.0);
+    let rects: Vec<(f64, f64, f64, f64)> = gc
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Rect { x, y, w, h, .. } => Some((*x, *y, *w, *h)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rects.len(), 6, "one Rect per (series, category), as ever");
+    // Category Q1's two segments share one bar and sit on each other.
+    assert!((rects[0].0 - rects[1].0).abs() < 1e-6, "shared x");
+    assert!((rects[0].2 - rects[1].2).abs() < 1e-6, "shared width");
+    assert!(
+        ((rects[1].1 + rects[1].3) - rects[0].1).abs() < 1.5,
+        "stacks"
+    );
+    // The tallest stack (45) fills the plot height; Q1's (15) is a third of it.
+    let plot_h = 200.0 - 20.0 - 24.0; // PAD_TOP / PAD_BOTTOM
+    let q3 = rects[4].3 + rects[5].3;
+    let q1 = rects[0].3 + rects[1].3;
+    assert!((q3 - plot_h).abs() < 1.5, "tallest stack fills the plot");
+    assert!((q1 - plot_h / 3.0).abs() < 1.5, "15/45 of the plot");
+
+    // StackedBar is the transpose: shared y/height, segments running right.
+    model.kind = ChartKind::StackedBar;
+    let gb = generate(&model, &data, 300.0, 200.0);
+    let bars: Vec<(f64, f64, f64, f64)> = gb
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Rect { x, y, w, h, .. } => Some((*x, *y, *w, *h)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bars.len(), 6);
+    assert!((bars[0].1 - bars[1].1).abs() < 1e-6, "shared y");
+    assert!((bars[0].3 - bars[1].3).abs() < 1e-6, "shared height");
+    assert!(
+        ((bars[0].0 + bars[0].2) - bars[1].0).abs() < 1.5,
+        "runs right"
+    );
+}
+
+/// Radar geometry (`sheet.chart.geometry.radar`): the ninth Illustrator graph
+/// type. A polar grid (one ring per value tick + one spoke per category) plus
+/// one CLOSED polyline per series — every one a `Line` in the FROZEN primitive
+/// vocabulary, so the paged.draw lowering needed no new op to draw it.
+#[test]
+fn sheet_chart_geometry_radar() {
+    let (model, data) = three_value_model(ChartKind::Radar);
+    let g = generate(&model, &data, 300.0, 240.0);
+
+    // Nothing outside the existing vocabulary, and no filled shapes (a filled
+    // radar hides every series drawn under it).
+    assert_eq!(count(&g, |p| matches!(p, Primitive::Polygon { .. })), 0);
+    assert_eq!(count(&g, |p| matches!(p, Primitive::Wedge { .. })), 0);
+    assert_eq!(count(&g, |p| matches!(p, Primitive::Rect { .. })), 0);
+
+    let lines: Vec<&Vec<(f64, f64)>> = g
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Line { pts, .. } => Some(pts),
+            _ => None,
+        })
+        .collect();
+    // 4 grid rings (VAL_TICKS - 1) + 3 spokes + 1 series outline.
+    assert_eq!(lines.len(), 4 + 3 + 1);
+    // Rings and the series outline close (first point repeated).
+    assert_eq!(lines[0].len(), 4);
+    assert_eq!(lines[0][0], lines[0][3], "the grid ring closes");
+    let series = lines[lines.len() - 1];
+    assert_eq!(series[0], series[3], "the series outline closes");
+    // The spokes share the center, and the series' 10/20/30 map to growing
+    // radii from it (0..30 over the outer radius).
+    let center = lines[4][0];
+    let radius = |p: (f64, f64)| (p.0 - center.0).hypot(p.1 - center.1);
+    assert!(radius(series[0]) < radius(series[1]));
+    assert!(radius(series[1]) < radius(series[2]));
+    assert!(
+        (radius(series[0]) * 3.0 - radius(series[2])).abs() < 2.0,
+        "10 sits at a third of 30's radius"
+    );
+}
+
+/// Axis titles (`sheet.chart.axis-titles`): `Axis::title` has been parsed from
+/// the chart part since M2 but never REACHED the geometry — a modelled field
+/// that drew nothing. It draws now, on every cartesian kind, and the `Bar`
+/// family transposes which title runs along the bottom.
+#[test]
+fn sheet_chart_axis_titles() {
+    for kind in [
+        ChartKind::Column,
+        ChartKind::Bar,
+        ChartKind::StackedColumn,
+        ChartKind::StackedBar,
+        ChartKind::Line,
+        ChartKind::Area,
+        ChartKind::Scatter,
+    ] {
+        let (mut model, data) = three_value_model(kind);
+        // No titles => no title primitives (existing charts are untouched).
+        let bare = generate(&model, &data, 300.0, 200.0);
+        model.cat_axis.title = Some("Quarter".into());
+        model.val_axis.title = Some("EUR".into());
+        let titled = generate(&model, &data, 300.0, 200.0);
+        assert_eq!(
+            titled.prims.len() - bare.prims.len(),
+            2,
+            "{kind:?}: exactly the two axis titles"
+        );
+        let labels: Vec<&str> = titled
+            .prims
+            .iter()
+            .filter_map(|p| match p {
+                Primitive::Text { s, .. } => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&"Quarter"), "{kind:?}");
+        assert!(labels.contains(&"EUR"), "{kind:?}");
+    }
+}
+
+// ── sheet.chart.xlsx.grouping ───────────────────────────────────────────────
+
+/// The XLSX chart part's `c:grouping` + `c:radarChart`
+/// (`sheet.chart.xlsx.grouping`). Before this, `c:grouping` was ignored, so an
+/// Excel STACKED bar/column chart imported as a GROUPED one and rendered wrong
+/// without saying so; `c:radarChart` fell through to the Column default.
+#[test]
+fn sheet_chart_xlsx_grouping() {
+    use sheet_xlsx::parts::chart::{parse, SheetResolver};
+    struct NoNames;
+    impl SheetResolver for NoNames {
+        fn resolve(&self, _: &str) -> Option<u16> {
+            Some(0)
+        }
+    }
+    let bar = |dir: &str, grouping: &str| {
+        let xml = format!(
+            r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:barChart>
+<c:barDir val="{dir}"/><c:grouping val="{grouping}"/>
+<c:ser><c:val><c:numRef><c:f>Sheet1!$B$1:$B$3</c:f></c:numRef></c:val></c:ser>
+</c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+        );
+        parse(xml.as_bytes(), 0, &NoNames)
+            .expect("parse")
+            .model
+            .kind
+    };
+    assert_eq!(bar("col", "clustered"), ChartKind::Column);
+    assert_eq!(bar("col", "stacked"), ChartKind::StackedColumn);
+    assert_eq!(bar("col", "percentStacked"), ChartKind::StackedColumn);
+    assert_eq!(bar("bar", "stacked"), ChartKind::StackedBar);
+
+    let radar = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:radarChart>
+<c:ser><c:val><c:numRef><c:f>Sheet1!$B$1:$B$5</c:f></c:numRef></c:val></c:ser>
+</c:radarChart></c:plotArea></c:chart></c:chartSpace>"#;
+    assert_eq!(
+        parse(radar.as_bytes(), 0, &NoNames)
+            .expect("parse radar")
+            .model
+            .kind,
+        ChartKind::Radar
+    );
+}
+
 // ── sheet.chart.lower.paged-draw ────────────────────────────────────────────
 
 /// The geometry IR serializes to the camelCase wire shape the TS paged.draw
@@ -443,7 +634,7 @@ fn sheet_chart_authoring_add_chart_generates_and_never_saves_back() {
 
     // Two value columns → two series, legend on; B-column categories.
     let idx = session
-        .add_chart(0, "B2:C4", "A2:A4", "line", "Authored")
+        .add_chart(0, "B2:C4", "A2:A4", "line", "Authored", "columns")
         .expect("author a chart");
     assert_eq!(idx as usize, before, "appended at the end");
     let charts = session.list_charts();
@@ -460,8 +651,10 @@ fn sheet_chart_authoring_add_chart_generates_and_never_saves_back() {
     assert!(!g.prims.is_empty(), "authored chart draws primitives");
 
     // Bad inputs stay boundary errors.
-    assert!(session.add_chart(0, "B2:C4", "", "hexagon", "").is_err());
-    assert!(session.add_chart(9, "B2:C4", "", "line", "").is_err());
+    assert!(session
+        .add_chart(0, "B2:C4", "", "hexagon", "", "")
+        .is_err());
+    assert!(session.add_chart(9, "B2:C4", "", "line", "", "").is_err());
 
     // Save: the authored chart does NOT invent an xlsx chart part — the
     // round-trip carries the original workbook charts only.
@@ -472,4 +665,92 @@ fn sheet_chart_authoring_add_chart_generates_and_never_saves_back() {
         before,
         "authored charts are page-side only (no chart-part write-back)"
     );
+}
+
+/// EVERY kind tag the engine advertises is authorable and round-trips through
+/// `list_charts` to a real geometry (`sheet.chart.kind-set`). This is the
+/// Illustrator §16.4 "nine graph types" claim made executable: the tag set is
+/// a superset of Column, Stacked Column, Bar, Stacked Bar, Line, Area,
+/// Scatter, Pie and Radar — plus Donut. A kind the panel can offer but the
+/// engine refuses (or reports under another tag) fails here.
+#[test]
+fn sheet_chart_kind_set_every_advertised_kind_authors_and_renders() {
+    use sheet_js::core::CHART_KIND_TAGS;
+    for want in [
+        "column",
+        "stackedColumn",
+        "bar",
+        "stackedBar",
+        "line",
+        "area",
+        "scatter",
+        "pie",
+        "radar",
+    ] {
+        assert!(
+            CHART_KIND_TAGS.contains(&want),
+            "the Illustrator §16.4 type {want:?} is missing from the kind set"
+        );
+    }
+    let mut session = SheetSession::load_xlsx(&load("09-chart.xlsx")).expect("load 09-chart");
+    for tag in CHART_KIND_TAGS {
+        let idx = session
+            .add_chart(0, "B2:C4", "A2:A4", tag, "", "columns")
+            .unwrap_or_else(|e| panic!("author {tag}: {e:?}"));
+        assert_eq!(
+            session.list_charts()[idx as usize].kind,
+            *tag,
+            "{tag} round-trips through list_charts"
+        );
+        let g = session
+            .get_chart_geometry(idx, 320.0, 240.0)
+            .unwrap_or_else(|e| panic!("geometry {tag}: {e:?}"));
+        assert!(!g.prims.is_empty(), "{tag} draws primitives");
+    }
+}
+
+/// TRANSPOSE ROWS/COLUMNS (`sheet.chart.series-orientation`, Illustrator
+/// §16.4). The same value block reads as one series per COLUMN or per ROW; the
+/// workbook is never rewritten to transpose a chart. Both orientations feed the
+/// SAME generator, so the bar count follows the series/category shape.
+#[test]
+fn sheet_chart_series_orientation_transposes_rows_and_columns() {
+    let mut session = SheetSession::load_xlsx(&load("09-chart.xlsx")).expect("load 09-chart");
+
+    // B2:C4 is 3 rows × 2 columns.
+    let by_col = session
+        .add_chart(0, "B2:C4", "A2:A4", "column", "", "columns")
+        .expect("columns");
+    let by_row = session
+        .add_chart(0, "B2:C4", "A2:A4", "column", "", "rows")
+        .expect("rows");
+    let charts = session.list_charts();
+    assert_eq!(charts[by_col as usize].series_count, 2, "2 columns");
+    assert_eq!(charts[by_row as usize].series_count, 3, "3 rows");
+
+    // An empty orientation means the default (columns) — the compatible read.
+    let default = session
+        .add_chart(0, "B2:C4", "A2:A4", "column", "", "")
+        .expect("default");
+    assert_eq!(session.list_charts()[default as usize].series_count, 2);
+
+    // Both project real geometry through the one generator: 3 categories × 2
+    // series = 6 bars one way, and the transpose puts 3 series over the same
+    // shared category labels.
+    // (`bars` skips the LEGEND_SWATCH-sized Rects — a multi-series chart
+    // turns its legend on, and those swatches are Rects too.)
+    let bars = |g: &ChartGeometry| count(g, |p| matches!(p, Primitive::Rect { w, .. } if *w > 8.0));
+    let gc = session
+        .get_chart_geometry(by_col, 300.0, 200.0)
+        .expect("gc");
+    assert_eq!(bars(&gc), 6, "3 categories × 2 column-series");
+    let gr = session
+        .get_chart_geometry(by_row, 300.0, 200.0)
+        .expect("gr");
+    assert_eq!(bars(&gr), 9, "3 categories × 3 row-series");
+
+    // An unknown orientation is a boundary error, not a silent default.
+    assert!(session
+        .add_chart(0, "B2:C4", "", "column", "", "diagonal")
+        .is_err());
 }

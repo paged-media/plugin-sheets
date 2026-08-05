@@ -336,12 +336,23 @@ mod wasm {
             to_js(&self.session.list_charts()).unwrap_or(JsValue::NULL)
         }
 
-        /// AUTHOR a chart over live data (one series per values column;
-        /// empty `categories` = none; kind ∈ bar|column|line|area|pie|
-        /// donut|scatter; empty title = none). Returns the new chart
-        /// index — the same handle the geometry/lowering lanes take.
-        /// Publishing-first: authored charts are PAGE-side only (the
-        /// xlsx writer never re-derives chart parts).
+        /// The chart-kind tags `add_chart` accepts, in panel order —
+        /// `["column","stackedColumn","bar","stackedBar","line","area",
+        /// "scatter","pie","donut","radar"]`. The panel READS the set
+        /// rather than hard-coding it, so a kind can never be offered
+        /// that the engine refuses (all chart semantics stay in Rust).
+        pub fn chart_kinds(&self) -> JsValue {
+            to_js(&crate::core::CHART_KIND_TAGS.to_vec()).unwrap_or(JsValue::NULL)
+        }
+
+        /// AUTHOR a chart over live data (empty `categories` = none; kind
+        /// ∈ `chart_kinds()`; empty title = none). `series_in` is the
+        /// transpose control: `"columns"` (or empty) reads one series per
+        /// values COLUMN, `"rows"` one per ROW — the same cells read the
+        /// other way round, never a rewrite of the user's data. Returns
+        /// the new chart index — the same handle the geometry/lowering
+        /// lanes take. Publishing-first: authored charts are PAGE-side
+        /// only (the xlsx writer never re-derives chart parts).
         pub fn add_chart(
             &mut self,
             sheet: u16,
@@ -349,9 +360,10 @@ mod wasm {
             categories: &str,
             kind: &str,
             title: &str,
+            series_in: &str,
         ) -> Result<u32, JsValue> {
             self.session
-                .add_chart(sheet, values, categories, kind, title)
+                .add_chart(sheet, values, categories, kind, title, series_in)
                 .map_err(map_err)
         }
 
