@@ -16,14 +16,13 @@ importers:
         version: 5.9.3
 
   packages/sheet-bundle:
-    dependencies:
+    devDependencies:
       '@paged-media/plugin-api':
         specifier: 0.2.29-canary.0
         version: 0.2.29-canary.0
       '@paged-media/plugin-sdk':
         specifier: 0.2.29-canary.0
         version: 0.2.29-canary.0(react@18.3.1)
-    devDependencies:
       '@paged-media/sheet-host-model':
         specifier: workspace:*
         version: link:../sheet-host-model
