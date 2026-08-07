@@ -62,8 +62,25 @@ function frameIdOf(id: unknown): string | null {
   return null;
 }
 
+/**
+ * ADR 024 — the commands that need a workbook say so.
+ *
+ * Gated on THIS PLUGIN'S OWN STATE rather than on the host's active
+ * edit context, deliberately. "A workbook is open" is the condition
+ * that actually decides whether the verb can do anything; the context
+ * is a proxy for it and a worse one, since the panel lane works on a
+ * selected sheet frame without entering the frame at all. It also
+ * needs no duck-typing of a host shape this bundle cannot import.
+ *
+ * The predicate closes over `session`, which is created below — safe
+ * because `when` is only ever evaluated at invoke/render time, never
+ * at registration.
+ */
 export function activate(host: BundleHost): BundleHandle {
   const session = createWorkbookSession(host);
+  /** See the note above `activate`: a workbook must be open for the
+   *  clipboard verbs to have anything to act on. */
+  const workbookIsOpen = () => session.state().engine !== null;
   // ADR 023 — the binding-provider handle is the SECOND thing allocated
   // outside a facade-tracked registration (the session is the first), so
   // dispose tears it down explicitly. `null` on a host with no registry.
@@ -201,8 +218,9 @@ export function activate(host: BundleHost): BundleHandle {
   // honestly when no range is selected / no clipboard backend is wired.
   host.contribute.command({
     id: "media.paged.sheet.command.copySelection",
-    title: "Copy selection",
+    title: "Copy sheet selection",
     category: "Sheet",
+    when: workbookIsOpen,
     handler: async () => {
       const r = await session.copySelection();
       if (!r.ok) host.log.warn(`copySelection: ${r.message}`);
@@ -211,10 +229,19 @@ export function activate(host: BundleHost): BundleHandle {
   // K-6 / S-14 — PASTE the system clipboard into the grid at the selection
   // anchor (tabular preferred, TSV fallback), each cell re-typed through the
   // journaled editCell lane as one grouped undo step.
+  // ADR 024 — RETITLED and GATED, and the title was the worse half.
+  //
+  // This was called "Paste", and because the editor has no host
+  // Copy/Paste command it was the ONLY match a user typing "paste" into
+  // the palette could find. Outside a workbook it logged a warning and
+  // nothing visible happened — a control named Paste that silently does
+  // nothing, which is the most expensive kind of dead offer because the
+  // user does not even learn that it failed.
   host.contribute.command({
     id: "media.paged.sheet.command.pasteSelection",
-    title: "Paste",
+    title: "Paste into sheet",
     category: "Sheet",
+    when: workbookIsOpen,
     handler: async () => {
       const r = await session.pasteAtSelection();
       if (!r.ok) host.log.warn(`pasteAtSelection: ${r.message}`);
@@ -261,6 +288,24 @@ export function activate(host: BundleHost): BundleHandle {
     host.contribute.editContext({
       type: "sheet",
       entry: "doubleClick",
+      // ADR 024 — NO CANVAS TOOL EDITS A SPREADSHEET, and saying so is
+      // now possible: a declared-empty list restricts to nothing, where
+      // it used to collapse into "unrestricted" and leave the whole rail
+      // lit. Inside a sheet you edit by keyboard and by panel — the
+      // grid takes pointer and key events through this context's own
+      // hooks below, not through a tool.
+      //
+      // Not a trap: the rail treats a pick outside the set as an EXIT
+      // (it commits the context, then activates), so reaching for the
+      // pointer walks you out of the sheet rather than doing nothing.
+      toolIds: [],
+      // The workbook panel is this context's own surface. Deliberately
+      // NOT the host panels its binding providers serve (Swatches,
+      // Character/Paragraph) — naming those here would put host panel
+      // ids in plugin code, which is the coupling ADR 023 removed from
+      // the value lane, and the host already infers "serves" from
+      // `provides`.
+      panelIds: [PANEL_ID],
       onEnter: (ctx) => {
         const id = frameIdOf(ctx.id);
         if (id) void session.showGridInFrame(id);

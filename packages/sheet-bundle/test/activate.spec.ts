@@ -247,6 +247,50 @@ describe("sheet_plugin_bundle_activate", () => {
     );
   });
 
+  it("ADR 024 — the sheet context declares its surface, and empty MEANS empty", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    const ctx = fake.editContexts[0]!;
+
+    // NO canvas tool edits a spreadsheet — declared, not omitted. The
+    // distinction is load-bearing: absent means "unrestricted" and left
+    // the whole rail lit inside a workbook, which is the surface lying
+    // about what it can do.
+    expect(ctx.toolIds, "toolIds is DECLARED").toBeDefined();
+    expect(ctx.toolIds).toEqual([]);
+    // …and the workbook panel is the context's own surface.
+    expect(ctx.panelIds).toContain("media.paged.sheet.panel.workbook");
+  });
+
+  it("ADR 024 — the clipboard verbs are gated on a workbook, and named honestly", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    const paste = fake.commands.find(
+      (c) => c.id === "media.paged.sheet.command.pasteSelection",
+    )!;
+    const copy = fake.commands.find(
+      (c) => c.id === "media.paged.sheet.command.copySelection",
+    )!;
+
+    // TITLE. This was plain "Paste", and since the editor has no host
+    // Copy/Paste it was the ONLY hit for a user typing "paste" — a
+    // command that then silently did nothing outside a workbook.
+    expect(paste.title, "no longer masquerades as the global Paste").not.toBe(
+      "Paste",
+    );
+    expect(paste.title).toContain("sheet");
+
+    // GATE. No workbook is open in a freshly activated bundle, so both
+    // must report themselves inapplicable rather than be offered.
+    for (const c of [paste, copy]) {
+      expect(c.when, `${c.id} declares a predicate`).toBeDefined();
+      expect(
+        (c.when as (s: unknown) => boolean)(null),
+        `${c.id} is not offered without a workbook`,
+      ).toBe(false);
+    }
+  });
+
   it("dispose tears the session down (no throw — honesty smoke test)", () => {
     const fake = fakeHost();
     const handle = sheetBundle.activate(fake.host);
