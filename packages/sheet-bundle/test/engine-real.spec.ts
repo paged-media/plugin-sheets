@@ -21,10 +21,14 @@
 // (initSync over bytes — the S-10 bundle-realm pattern) and drives one
 // full entry -> recalc -> lower -> save -> reload loop.
 //
-// Artifact-gated: when packages/sheet-bundle/bin/sheet_js_bg.wasm has not
-// been built (scripts/build-wasm.sh), the suite SKIPS — the pure-TS vitest
-// lane stays green without a Rust toolchain. CI's rust lane builds the
-// artifact, so the real boot is exercised there.
+// DUAL-GATED (audit P3): when packages/sheet-bundle/bin/sheet_js_bg.wasm
+// has not been built (scripts/build-wasm.sh), the suite SKIPS locally —
+// the pure-TS vitest lane stays green without a Rust toolchain. In CI the
+// vitest workflow BUILDS the artifact and sets REQUIRE_REAL_ENGINE=1,
+// under which a missing artifact FAILS the suite instead of skipping it —
+// the skip gate can never silently drop the real boot out of CI again.
+// (The rust lane builds the artifact too, but never runs vitest; before
+// this gate the real boot ran on NOBODY's CI.)
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +60,20 @@ const TEXT_XLSX = join(
   "..",
   "corpus/xlsx-corpus/14-textstyles.xlsx",
 );
+
+// The CI half of the dual gate: REQUIRE_REAL_ENGINE=1 turns "artifact
+// missing" from a skip into a hard failure with a build pointer.
+if (process.env.REQUIRE_REAL_ENGINE === "1" && !built) {
+  describe("real engine boot (wasm artifact) — REQUIRED", () => {
+    it("FAILS: REQUIRE_REAL_ENGINE=1 but the wasm artifact is missing", () => {
+      throw new Error(
+        `REQUIRE_REAL_ENGINE=1 but ${WASM} is missing — ` +
+          "build it with `bash scripts/build-wasm.sh` (CI must build the " +
+          "artifact before running vitest; skipping is not allowed here)",
+      );
+    });
+  });
+}
 
 describe.skipIf(!built)("real engine boot (wasm artifact)", () => {
   it("boots, calculates, lowers, and round-trips xlsx", async () => {

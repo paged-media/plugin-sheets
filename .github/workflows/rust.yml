@@ -39,8 +39,12 @@ jobs:
           toolchain: 1.93.0
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
-      - name: nextest (junit; red results still publish)
-        run: cargo nextest run --workspace --profile ci || true
+      # No `|| true` here (audit P2 / June V18): a red suite must redden the
+      # job. The junit artifact still publishes on failure — the upload step
+      # below runs under `if: ${{ !cancelled() }}`, so state still ingests
+      # red results.
+      - name: nextest (junit; red results still publish via !cancelled upload)
+        run: cargo nextest run --workspace --profile ci
       - name: coverage gate (the §12.2 verification invariant)
         run: cargo run -p sheet-conformance --bin coverage-gate
       # Evidence hand-off, INVERTED (2026-07-25). This step used to call

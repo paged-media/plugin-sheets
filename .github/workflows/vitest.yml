@@ -29,11 +29,47 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # ------------------------------------------------------------------
+      # REAL-ENGINE artifact (audit P3). This lane used to run vitest with
+      # no wasm artifact, so sheet-bundle's engine-real.spec.ts skipIf gate
+      # skipped the real boot on EVERY CI — the rust lane builds the
+      # artifact but never runs vitest. Build it here (the exact recipe of
+      # rust.yml's `wasm` job: pinned toolchain, Cargo.lock-pinned
+      # wasm-bindgen-cli, pinned binaryen) so the real boot actually runs;
+      # REQUIRE_REAL_ENGINE=1 below makes a missing artifact FAIL, not skip.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugin-sheets
+      - name: install pinned wasm-bindgen-cli (Cargo.lock version)
+        run: |
+          V=$(grep -A1 '^name = "wasm-bindgen"$' plugin-sheets/Cargo.lock | grep version | head -1 | cut -d'"' -f2)
+          cargo install wasm-bindgen-cli --version "$V" --locked
+      - name: install pinned binaryen (reftypes-safe; old apt binaryen breaks externref table grow)
+        run: |
+          curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-x86_64-linux.tar.gz | tar xz
+          echo "$PWD/binaryen-version_119/bin" >> "$GITHUB_PATH"
+      - name: build the engine wasm artifact (8 MiB budget gate)
+        run: bash plugin-sheets/scripts/build-wasm.sh
+      # Fail-not-skip belt at the JOB level too: the vitest step below keeps
+      # its deliberate `|| true` (red results still publish to state), so a
+      # missing artifact must redden the job HERE, before vitest can skip.
+      - name: real-engine artifact guard (fail, never skip)
+        run: test -f plugin-sheets/packages/sheet-bundle/bin/sheet_js_bg.wasm
+      # ------------------------------------------------------------------
       - name: install (sdk sibling satisfies the link chain)
         run: pnpm install --frozen-lockfile --dir plugin-sheets
       - name: contract-import lint (fail fast)
         run: node plugin-sheets/scripts/check-contract-imports.mjs
       - name: vitest (junit per package; red results still publish)
+        env:
+          # The spec-level half of the dual gate (engine-real.spec.ts):
+          # under this env a missing artifact FAILS the suite instead of
+          # letting the skipIf gate silently pass a vacuous run.
+          REQUIRE_REAL_ENGINE: "1"
         run: |
           pnpm -r --no-bail --dir plugin-sheets exec \
             vitest run --reporter=junit --outputFile=junit.xml || true
