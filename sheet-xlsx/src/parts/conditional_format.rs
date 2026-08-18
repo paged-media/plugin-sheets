@@ -426,7 +426,13 @@ pub fn parse_block(xml: &[u8]) -> Result<Option<CfBlock>, XlsxError> {
             },
             Event::Text(t) => {
                 if in_formula {
-                    formula_text.push_str(&t.unescape().map_err(XlsxError::Xml)?);
+                    formula_text.push_str(&t.xml10_content()?);
+                }
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) => {
+                if in_formula {
+                    formula_text.push_str(&crate::opc::general_ref(&r)?);
                 }
             }
             Event::End(e) => match e.local_name().as_ref() {

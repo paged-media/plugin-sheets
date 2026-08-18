@@ -238,9 +238,17 @@ pub fn parse(
             },
             Event::Text(t) => {
                 if in_f {
-                    f_text.push_str(&t.unescape().map_err(XlsxError::Xml)?);
+                    f_text.push_str(&t.xml10_content()?);
                 } else if in_text_run {
-                    run_text.push_str(&t.unescape().map_err(XlsxError::Xml)?);
+                    run_text.push_str(&t.xml10_content()?);
+                }
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) => {
+                if in_f {
+                    f_text.push_str(&crate::opc::general_ref(&r)?);
+                } else if in_text_run {
+                    run_text.push_str(&crate::opc::general_ref(&r)?);
                 }
             }
             Event::End(e) => match e.local_name().as_ref() {

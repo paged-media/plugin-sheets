@@ -213,8 +213,12 @@ pub fn parse(xml: &[u8]) -> Result<ExternalBook, XlsxError> {
                 cur_v.clear();
             }
             Event::Text(t) if in_v => {
-                let s = t.unescape().map_err(XlsxError::Xml)?;
+                let s = t.xml10_content()?;
                 cur_v.push_str(&s);
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) if in_v => {
+                cur_v.push_str(&crate::opc::general_ref(&r)?);
             }
             Event::End(e) if e.local_name().as_ref() == b"v" => {
                 in_v = false;

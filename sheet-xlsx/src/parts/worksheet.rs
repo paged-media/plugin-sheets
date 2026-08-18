@@ -225,7 +225,24 @@ pub fn parse(xml: &[u8], shared: &[CompactString]) -> Result<ParsedWorksheet, Xl
             Event::Text(t) => {
                 if capturing.is_none() {
                     if let Some(tt) = text_target {
-                        let s = t.unescape().map_err(XlsxError::Xml)?;
+                        let s = t.xml10_content()?;
+                        if let Some(c) = cur_cell.as_mut() {
+                            match tt {
+                                TextTarget::Value => c.v.push_str(&s),
+                                TextTarget::Formula => c.f.push_str(&s),
+                                TextTarget::InlineText => c.inline_t.push_str(&s),
+                            }
+                        }
+                    }
+                }
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            // While `capturing` the raw bytes of an unknown subtree the
+            // event is skipped like Text is (capture is positional).
+            Event::GeneralRef(r) => {
+                if capturing.is_none() {
+                    if let Some(tt) = text_target {
+                        let s = crate::opc::general_ref(&r)?;
                         if let Some(c) = cur_cell.as_mut() {
                             match tt {
                                 TextTarget::Value => c.v.push_str(&s),
@@ -487,6 +504,31 @@ mod tests {
             CellValue::Text(CompactString::new("inline here"))
         );
         assert_eq!(by(1, 2).style_index, 3);
+    }
+
+    /// `&` is the concat operator, so real-world `<f>` text routinely
+    /// carries `&amp;` — under quick-xml 0.38+ that arrives as a separate
+    /// `Event::GeneralRef`, and dropping it would silently corrupt the
+    /// formula. Pins the reference-resolution path for formula, value, and
+    /// inline text (named + decimal + hex character references).
+    #[test]
+    fn entity_refs_in_formula_value_and_inline_text() {
+        let xml = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="str"><f>"a"&amp;"b"</f><v>a&#98;</v></c>
+      <c r="B1" t="inlineStr"><is><t>x &lt;&#x26; y</t></is></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+        let ws = parse(xml, &shared()).unwrap();
+        let by = |r: u32, c: u32| ws.cells.iter().find(|x| x.row == r && x.col == c).unwrap();
+        assert_eq!(by(0, 0).formula.as_deref(), Some(r#""a"&"b""#));
+        assert_eq!(by(0, 0).value, CellValue::Text(CompactString::new("ab")));
+        assert_eq!(
+            by(0, 1).value,
+            CellValue::Text(CompactString::new("x <& y"))
+        );
     }
 
     #[test]

@@ -201,7 +201,13 @@ pub fn parse_block(xml: &[u8]) -> Result<Option<SheetDataValidations>, XlsxError
             },
             Event::Text(t) => {
                 if text_target.is_some() {
-                    text.push_str(&t.unescape().map_err(XlsxError::Xml)?);
+                    text.push_str(&t.xml10_content()?);
+                }
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) => {
+                if text_target.is_some() {
+                    text.push_str(&crate::opc::general_ref(&r)?);
                 }
             }
             Event::End(e) => match e.local_name().as_ref() {

@@ -156,6 +156,29 @@ impl ContentTypes {
     }
 }
 
+/// Resolve a general/character reference event (`&amp;`, `&#10;`, `&#x0A;`,
+/// …) to its replacement text.
+///
+/// quick-xml 0.38+ no longer resolves references inside `Event::Text`; the
+/// reader emits a separate `Event::GeneralRef` for each `&…;` in element
+/// content, so every text-accumulating parse loop routes those events here.
+/// SpreadsheetML defines no DTD entities, so only character references and
+/// the five predefined XML entities can appear; anything else is an escape
+/// error (the same class 0.36's `unescape()` raised for it).
+pub(crate) fn general_ref(r: &quick_xml::events::BytesRef<'_>) -> Result<String, XlsxError> {
+    if let Some(ch) = r.resolve_char_ref().map_err(XlsxError::Xml)? {
+        return Ok(ch.to_string());
+    }
+    let name = r.decode()?;
+    match quick_xml::escape::resolve_predefined_entity(&name) {
+        Some(s) => Ok(s.to_string()),
+        // The 0..0 span is a placeholder: BytesRef carries no source offset.
+        None => Err(XlsxError::Escape(
+            quick_xml::escape::EscapeError::UnrecognizedEntity(0..0, name.into_owned()),
+        )),
+    }
+}
+
 /// Read an attribute's UTF-8 value by local name, ignoring namespace prefix.
 pub(crate) fn attr(
     e: &quick_xml::events::BytesStart<'_>,
@@ -166,7 +189,12 @@ pub(crate) fn attr(
         let k = a.key;
         let local = k.local_name();
         if local.as_ref() == key {
-            let v = a.unescape_value().map_err(XlsxError::Xml)?;
+            // 0.37+: `unescape_value()` is deprecated; `normalized_value`
+            // additionally applies XML attribute-value normalization
+            // (tab/CR/LF → space), which the XML spec requires anyway.
+            let v = a
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map_err(XlsxError::Xml)?;
             return Ok(Some(v.into_owned()));
         }
     }

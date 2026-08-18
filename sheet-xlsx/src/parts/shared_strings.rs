@@ -86,8 +86,12 @@ pub fn parse(xml: &[u8]) -> Result<Vec<CompactString>, XlsxError> {
                 _ => {}
             },
             Event::Text(t) if in_t => {
-                let s = t.unescape().map_err(XlsxError::Xml)?;
+                let s = t.xml10_content()?;
                 cur.push_str(&s);
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) if in_t => {
+                cur.push_str(&crate::opc::general_ref(&r)?);
             }
             Event::CData(c) if in_t => {
                 cur.push_str(&String::from_utf8_lossy(&c.into_inner()));

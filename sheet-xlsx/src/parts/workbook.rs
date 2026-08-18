@@ -149,8 +149,12 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
                 }
             }
             Event::Text(t) if cur_name.is_some() => {
-                let s = t.unescape().map_err(XlsxError::Xml)?;
+                let s = t.xml10_content()?;
                 cur_text.push_str(&s);
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) if cur_name.is_some() => {
+                cur_text.push_str(&crate::opc::general_ref(&r)?);
             }
             Event::End(e) if e.local_name().as_ref() == b"definedName" => {
                 if let Some((name, scope)) = cur_name.take() {

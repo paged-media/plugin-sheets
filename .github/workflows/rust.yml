@@ -2,6 +2,9 @@ name: rust
 on:
   push:
     branches: [main]
+  # Pre-merge gate (audit finding: this lane was push-main-only, so a PR
+  # could land red and only redden main afterwards).
+  pull_request:
   workflow_dispatch:
 
 permissions:

@@ -132,10 +132,20 @@ pub fn parse(xml: &[u8]) -> Result<SheetComments, XlsxError> {
             },
             Event::Text(t) => {
                 if in_author {
-                    author_text.push_str(&t.unescape().map_err(XlsxError::Xml)?);
+                    author_text.push_str(&t.xml10_content()?);
                 } else if in_t {
                     if let Some(c) = cur.as_mut() {
-                        c.text.push_str(&t.unescape().map_err(XlsxError::Xml)?);
+                        c.text.push_str(&t.xml10_content()?);
+                    }
+                }
+            }
+            // 0.38+: `&…;` in element content arrives as its own event.
+            Event::GeneralRef(r) => {
+                if in_author {
+                    author_text.push_str(&crate::opc::general_ref(&r)?);
+                } else if in_t {
+                    if let Some(c) = cur.as_mut() {
+                        c.text.push_str(&crate::opc::general_ref(&r)?);
                     }
                 }
             }

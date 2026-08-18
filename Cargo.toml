@@ -58,7 +58,12 @@ plotters-backend = { version = "0.3", default-features = false }
 serde_json = "1"
 ryu = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-quick-xml = "0.36"
+# default-features = false is quick-xml's own default feature set (empty) made
+# explicit — sheet-xlsx uses only Reader/Writer/events (no serde `serialize`,
+# no `encoding`); shape matches plugin-data's pin. 0.41 clears the two
+# RUSTSEC advisories against 0.36.x (quadratic duplicate-attribute check +
+# unbounded NsReader namespace allocation).
+quick-xml = { version = "0.41", default-features = false }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 serde-wasm-bindgen = "0.6"

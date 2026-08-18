@@ -51,6 +51,17 @@ pub enum XlsxError {
     #[error("xlsx xml error: {0}")]
     Xml(#[from] quick_xml::Error),
 
+    /// Text or attribute content could not be decoded (quick-xml 0.37+
+    /// reports decoding separately from the general XML error).
+    #[error("xlsx xml encoding error: {0}")]
+    Encoding(#[from] quick_xml::encoding::EncodingError),
+
+    /// An entity or character reference could not be resolved (quick-xml
+    /// 0.37+ reports escape/entity failures separately from the general
+    /// XML error).
+    #[error("xlsx xml escape error: {0}")]
+    Escape(#[from] quick_xml::escape::EscapeError),
+
     /// The package is well-formed but not a usable SpreadsheetML workbook
     /// (missing required parts/relationships, malformed refs, …).
     #[error("xlsx structure error: {0}")]
