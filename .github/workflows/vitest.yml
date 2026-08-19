@@ -52,7 +52,7 @@ jobs:
         run: |
           curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-x86_64-linux.tar.gz | tar xz
           echo "$PWD/binaryen-version_119/bin" >> "$GITHUB_PATH"
-      - name: build the engine wasm artifact (8 MiB budget gate)
+      - name: build the engine wasm artifact (100 MB app wasm budget gate)
         run: bash plugin-sheets/scripts/build-wasm.sh
       # Fail-not-skip belt at the JOB level too: the vitest step below keeps
       # its deliberate `|| true` (red results still publish to state), so a

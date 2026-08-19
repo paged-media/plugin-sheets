@@ -54,7 +54,7 @@ Sibling checkouts; install order matters (`link:` chain):
 ```bash
 # Rust engine
 cargo build --workspace && cargo test --workspace
-bash scripts/build-wasm.sh        # → packages/sheet-bundle/bin/ (8 MiB budget)
+bash scripts/build-wasm.sh        # → packages/sheet-bundle/bin/ (100 MB app wasm budget)
 
 # TS bundle
 pnpm install && pnpm test && pnpm typecheck

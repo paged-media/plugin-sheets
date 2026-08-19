@@ -86,5 +86,5 @@ jobs:
         run: |
           curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-x86_64-linux.tar.gz | tar xz
           echo "$PWD/binaryen-version_119/bin" >> "$GITHUB_PATH"
-      - name: build + budget gate (8 MiB)
+      - name: build + budget gate (100 MB app-wide)
         run: bash scripts/build-wasm.sh

@@ -18,7 +18,7 @@
 
 // sheet.plugin.manifest.valid — the manifest contract the bundle ships:
 // the namespace line (id + contributed ids prefixed by it), the T0
-// capability posture, and the declared wasm artifact within the 8 MiB
+// capability posture, and the declared wasm artifact within the 100 MB app-wide
 // budget. The plugin-cli `validate:manifest` is the authoritative gate
 // (CI runs it); this asserts the same invariants in-process so the row
 // carries a real test lane.
@@ -89,7 +89,7 @@ describe("sheet_plugin_manifest_valid", () => {
     });
   });
 
-  it("declares the sheet-engine wasm artifact within the 8 MiB budget", () => {
+  it("declares the sheet-engine wasm artifact within the 100 MB app-wide budget", () => {
     const wasm = manifest.capabilities.wasm;
     expect(wasm).toHaveLength(1);
     expect(wasm[0].name).toBe("sheet-engine");

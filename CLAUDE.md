@@ -182,7 +182,7 @@ cargo tree -p sheet-fn --edges normal | grep -E 'sheet-(calc|parser|xlsx|lower|j
 cargo tree -p sheet-js --target wasm32-unknown-unknown | grep -E 'sheet-conformance|proptest' && echo LEAK
 cargo deny check
 
-# wasm artifact (8 MiB budget; lands in packages/sheet-bundle/bin/)
+# wasm artifact (100 MB app wasm budget; lands in packages/sheet-bundle/bin/)
 bash scripts/build-wasm.sh
 
 # TS (the bundle) — install order: editor → plugin-sdk → plugin-sheets

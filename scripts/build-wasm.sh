@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the paged.sheet engine wasm (sheet-js) and land the wasm-bindgen
 # `--target web` output in packages/sheet-bundle/bin/ — the path the
-# manifest declares under capabilities.wasm[] (governance + the 8 MiB
+# manifest declares under capabilities.wasm[] (governance + the 100 MB app-wide
 # plugin-cli size gate). The bundle loads it via the wbindgen glue (the
 # core/canvas-wasm pattern), NOT via loadBundleWasm — BREAKAGE S-10.
 #
@@ -12,7 +12,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT=packages/sheet-bundle/bin
-BUDGET=$((8 * 1024 * 1024))
+# The budget is now 100 MB for the WHOLE APP including every plugin
+# (maintainer decision, 2026-08-19), enforced as a SUM by the editor's
+# scripts/wasm-budget.mjs. This per-artifact stop keeps a runaway build
+# from sailing through unnoticed here; the number that governs is the app
+# total. Mirrors plugin-sdk WASM_BUDGETS — change them together.
+BUDGET=$((100 * 1000 * 1000))
 
 cargo build --release --target wasm32-unknown-unknown -p sheet-js
 
@@ -37,6 +42,6 @@ fi
 SIZE=$(wc -c < "$OUT/sheet_js_bg.wasm" | tr -d ' ')
 echo "sheet_js_bg.wasm: $SIZE bytes (budget $BUDGET)"
 if [ "$SIZE" -gt "$BUDGET" ]; then
-  echo "error: wasm artifact exceeds the 8 MiB plugin budget" >&2
+  echo "error: wasm artifact exceeds the 100 MB app wasm budget" >&2
   exit 1
 fi

@@ -122,7 +122,7 @@ Measured by building representative throwaway `cdylib`s for
 | with `rust_decimal` (`std` + `maths`)| ~49 KiB  |
 | **delta**                            | **~48 KiB** (~40 KiB after `wasm-opt -Oz`) |
 
-Well within the 8 MiB plugin budget. `sheet-js` does not currently forward
+Well within the 100 MB app wasm budget. `sheet-js` does not currently forward
 the feature, so the **default shipped wasm is byte-unchanged** — `rust_decimal`
 is absent from the default dependency tree (verified:
 `cargo tree -p sheet-fn` shows no decimal).
