@@ -22,9 +22,9 @@
 //! OUR shape. This lane exists because that is not the world.
 //!
 //! It walks `corpus/xlsx/` whole, so a new set dropped into a new
-//! subdirectory is covered the day it lands. Two sources sit there today
-//! and they get **deliberately different assertions**, because they are
-//! different KINDS of evidence:
+//! subdirectory is covered the day it lands. Three sources sit there
+//! today and they get **deliberately different assertions**, because
+//! they are different KINDS of evidence:
 //!
 //! * **`xlsx/poi/`** — Apache POI's corpus, accumulated over twenty
 //!   years of BUG REPORTS. Many Excel versions, OpenOffice, Gnumeric,
@@ -46,6 +46,17 @@
 //!   The set is also chart-heavy (147 chart parts, 31 tables, slicers,
 //!   ActiveX, chartsheets), which is the first time `sheet-chart` faces
 //!   a chart Excel wrote rather than one we generated.
+//!
+//! * **`xlsx/poi-converted/`** — POI's legacy `.xls` re-saved as OOXML
+//!   by desktop Excel 16 (`corpus/harness/convert-office.sh`, a
+//!   maintainer tool; CI consumes the committed output). 398 of 428
+//!   converted. These invert the POI bargain: the INPUT was a
+//!   bug-report corpus, but the OUTPUT is Excel's own writer, so the
+//!   bar is the authored bar — **every one must open**. What they add
+//!   is twenty years of content that was odd enough to file a bug
+//!   about, expressed in the OOXML of the producer we exist to read.
+//!   Without the conversion all 417 of those files were refused by
+//!   name, which exercises one branch and then stops being evidence.
 //!
 //! The `.xls` refusal is the most-tested path here: 417 legacy BIFF
 //! files, against machinery that used to face four.
@@ -256,6 +267,47 @@ fn every_authored_workbook_opens() {
         "{} of {} Excel-authored workbook(s) failed to open — these are \
          well-formed files from Excel itself, so each one is a real \
          parser defect:\n  {}",
+        failed.len(),
+        files.len(),
+        failed.join("\n  ")
+    );
+}
+
+#[test]
+#[ignore = "real xlsx lane: opt-in (PAGED_XLSX_CORPUS=1 + the private corpus mount)"]
+fn every_converted_workbook_opens() {
+    let Some(files) = source_files("poi-converted") else {
+        return;
+    };
+
+    // Same bar as `authored`, for the same reason: whatever the input
+    // was, Excel 16 wrote these. A refusal here is our parser failing on
+    // Excel's own output, which is a defect — not the "upstream ships
+    // deliberately-broken fixtures" story that makes the POI rate a
+    // report rather than a gate.
+    //
+    // 397/397 open as of 2026-08-20, so this starts green and stays a
+    // gate rather than a ratchet.
+    let mut failed = Vec::new();
+    for path in &files {
+        let bytes = std::fs::read(path).expect("read converted fixture");
+        if let Err(e) = XlsxDocument::open(&bytes) {
+            failed.push(format!(
+                "{}: {e}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ));
+        }
+    }
+
+    println!(
+        "poi-converted: {} file(s), {} opened",
+        files.len(),
+        files.len() - failed.len()
+    );
+    assert!(
+        failed.is_empty(),
+        "{} of {} Excel-converted workbook(s) failed to open — Excel 16 \
+         wrote every one of these, so each is a real parser defect:\n  {}",
         failed.len(),
         files.len(),
         failed.join("\n  ")
