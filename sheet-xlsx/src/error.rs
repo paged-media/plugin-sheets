@@ -66,6 +66,22 @@ pub enum XlsxError {
     /// (missing required parts/relationships, malformed refs, …).
     #[error("xlsx structure error: {0}")]
     Structure(String),
+
+    /// A legacy binary workbook (CFB/OLE — the pre-2007 `.xls` format),
+    /// which this engine does not read.
+    ///
+    /// Sniffed by container magic BEFORE the zip reader, because some of
+    /// these files contain something zip-shaped further in: the zip
+    /// crate scans BACKWARDS for the end-of-central-directory record,
+    /// finds it, and opens a package that is not the document. POI's
+    /// `drawings.xls` — a genuine Excel-authored CFB file — did exactly
+    /// that and parsed "successfully" as OOXML.
+    ///
+    /// A .xls that appears to work is worse than one that fails: the
+    /// caller gets a workbook that is not the one they opened. Identical
+    /// to `paged-ooxml`'s `LegacyBinaryDoc`, found the same way.
+    #[error("legacy binary Excel workbook (.xls, CFB/OLE) — only OOXML .xlsx/.xlsm is supported; re-save as .xlsx")]
+    LegacyBinaryXls,
 }
 
 impl From<quick_xml::events::attributes::AttrError> for XlsxError {

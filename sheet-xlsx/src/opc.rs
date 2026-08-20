@@ -218,6 +218,20 @@ impl OpcContainer {
     /// Read a zip archive into ordered parts. Every part starts `Opaque`;
     /// the parse layer promotes the understood ones to `Modeled` afterwards.
     pub fn read(bytes: &[u8]) -> Result<OpcContainer, XlsxError> {
+        // Container sniff BEFORE the zip reader. A legacy .xls is
+        // CFB/OLE, and the zip crate locates a package by scanning
+        // backwards for the EOCD — so a CFB file carrying anything
+        // zip-shaped can be opened as if it were OOXML. POI's
+        // `drawings.xls` (magic D0CF11E0, "Name of Creating
+        // Application: Microsoft Excel") did precisely that.
+        //
+        // The same sniff exists in paged-ooxml for `.doc`; this crate
+        // simply had never been shown a real .xls, having only ever been
+        // fed generate.py output.
+        const CFB_MAGIC: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        if bytes.starts_with(CFB_MAGIC) {
+            return Err(XlsxError::LegacyBinaryXls);
+        }
         let cursor = std::io::Cursor::new(bytes);
         let mut zip = zip::ZipArchive::new(cursor)?;
         let mut parts = Vec::with_capacity(zip.len());
