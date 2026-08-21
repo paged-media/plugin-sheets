@@ -62,9 +62,14 @@
 //! files, against machinery that used to face four.
 //!
 //! Licence: POI is Apache-2.0 (the first redistributable fixtures this
-//! project carries). `xlsx/authored/` is third-party template downloads
-//! with UNRESOLVED rights — catalogued `redistributable: null`, which
-//! means unknown, not yes. See each `PROVENANCE.md`.
+//! project carries), and that is a grant in the box. `xlsx/authored/` is
+//! third-party template downloads that ship no licence at all: rights
+//! were never established, and on 2026-08-21 the maintainer resolved the
+//! standing unknown as yes, so the catalogue carries them
+//! `redistributable: true` on the strength of that decision rather than
+//! of a grant. The two are not the same fact — `catalog/corpus.json`
+//! keeps them apart in the `licence` string, and so should you. See each
+//! `PROVENANCE.md`.
 //!
 //! OPT-IN — the assets live in the private corpus checkout:
 //!
