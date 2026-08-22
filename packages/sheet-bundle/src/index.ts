@@ -78,6 +78,7 @@ export {
 // The native-table page lower (S-03 RESOLVED; tab-text lane retained as
 // the explicit fallback), exported for the flow spec.
 export {
+  DEFAULT_CELL_POINT_SIZE,
   lowerSelectionToFrame,
   type LoweredTableInfo,
   type LowerLane,

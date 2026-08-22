@@ -71,12 +71,39 @@ import {
 import type { FrameBox, SheetEngine } from "./engine";
 import { readKnownSwatchIds } from "./swatch-mints";
 
+/**
+ * The point size an un-styled lowered cell RENDERS at.
+ *
+ * Not a preference — a coupling. `styleProps` emits
+ * `characterFontSize` only when the workbook's style carries a size, so a
+ * cell without one is poured as a bare run and the engine sizes it from
+ * the document default (`PipelineOptions::default_point_size`, 12 pt;
+ * `[No paragraph style]` in a generated fixture agrees). Measuring at any
+ * other number sizes the column for text nobody renders.
+ *
+ * It was 11 — Excel's Calibri default, the size the writer WISHED for and
+ * never wrote. Every column came out 12/11 = 9% too narrow, which the
+ * flat `CELL_INSET_PT` hid for every string under ~44 pt. Measured
+ * through the real host door on the showcase's workbook: "Region"
+ * measured 35.84 pt at 11 and renders 39.11 pt at 12 — 0.73 pt of the
+ * inset left, so it fits; "Revenue" measured 44.91 and renders 49.02 in a
+ * 48.91 pt column, overflowing by 0.11 pt, so the second column's own
+ * header wrapped.
+ */
+export const DEFAULT_CELL_POINT_SIZE = 12;
+
 /** Per-column width (pt) from the document's font metrics (S-13). For
  *  each column, measure the widest formatted cell text via the host
  *  shaper and add a small inset; fall back to the IR's char-based width
  *  when the shaper is unwired or yields nothing. Keeps the page table and
  *  any future grid view resolving to the SAME widths (the §8.3
- *  cross-surface-consistency requirement). */
+ *  cross-surface-consistency requirement).
+ *
+ *  The measurement must ask for the face and size the POUR will actually
+ *  use, or the width is a measurement of a different document. Both
+ *  fallbacks below are that rule: `""` for the family (the engine's own
+ *  default-face resolution, which is what a bare run gets) and
+ *  {@link DEFAULT_CELL_POINT_SIZE} for the size. */
 async function measureColumnWidths(
   host: BundleHost,
   content: LoweredContent,
@@ -102,7 +129,7 @@ async function measureColumnWidths(
         style?.fontName ?? "",
         style?.bold || style?.italic ? "Bold" : null,
         widest,
-        style?.fontSizePt ?? 11,
+        style?.fontSizePt ?? DEFAULT_CELL_POINT_SIZE,
       );
       const measured = metrics.advance + CELL_INSET_PT;
       return measured > 0 ? measured : col.widthPt;

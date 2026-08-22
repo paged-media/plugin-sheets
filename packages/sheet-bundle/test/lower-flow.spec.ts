@@ -38,6 +38,7 @@ import type {
 import type { Page } from "@paged-media/sheet-host-model";
 
 import {
+  DEFAULT_CELL_POINT_SIZE,
   lowerChartToFrame,
   lowerPaginatedToChain,
   lowerSelectionToFrame,
@@ -954,5 +955,107 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
     );
     expect(result).toBeNull();
     expect(paginateCalls).toHaveLength(0); // never paginates an empty chain
+  });
+});
+
+// ── S-13 · the width is measured for the text that will RENDER ────────
+//
+// `measureColumnWidths` asks the host shaper how wide a column's widest
+// string is and sizes the column to it. That is only true if it asks
+// about the SAME text the pour produces: the pour writes
+// `characterFontSize` only when the workbook's style carries one, so an
+// un-styled cell renders at the engine's default (12 pt) and asking at
+// any other size measures a document nobody rendered.
+//
+// The fallback was 11 (Excel's Calibri default). Every un-styled column
+// came out 9% narrow; the flat 4 pt inset hid it until a header was wide
+// enough to eat the slack, and then the column's OWN HEADER wrapped —
+// "Revenue" in the showcase's workbook, measured 44.91 pt at 11 pt,
+// rendered 49.02 pt at 12 pt, in a 48.91 pt column.
+//
+// No mock could catch it before this: all three `measureString` fakes in
+// this repo ignore their arguments and return a constant. This one
+// RECORDS them.
+describe("sheet_plugin_lower_measure: the measured size is the rendered size", () => {
+  /** A lowered IR with one un-styled column and one carrying an explicit
+   *  8 pt style — the two cases the fallback has to tell apart. */
+  function styledEngine(): SheetEngine {
+    const base = fakeEngine();
+    return {
+      ...base,
+      getRangeLowered: () => ({
+        cols: [
+          { index: 0, widthPt: 50 },
+          { index: 1, widthPt: 50 },
+        ],
+        rows: [
+          {
+            index: 0,
+            heightPt: 18,
+            cells: [
+              { col: 0, text: "Region", align: "left" as const },
+              { col: 1, text: "Revenue", align: "left" as const, styleKey: 7 },
+            ],
+          },
+        ],
+        rules: { h: [], v: [] },
+        merges: [],
+        styles: [
+          {
+            key: 7,
+            bold: false,
+            italic: false,
+            fontSizePt: 8,
+            fontName: "Courier",
+            borderTop: false,
+            borderRight: false,
+            borderBottom: false,
+            borderLeft: false,
+          },
+        ],
+      }),
+    } as SheetEngine;
+  }
+
+  /** `fakeHost` with a measureString that records what it was asked. */
+  function recordingHost(createdId: ElementId, storyId: string) {
+    const asked: Array<{ family: string; text: string; sizePt: number }> = [];
+    const { host, mutations } = fakeHost(createdId, storyId);
+    (host as unknown as { text: unknown }).text = {
+      async measureString(
+        family: string,
+        _style: string | null,
+        text: string,
+        sizePt: number,
+      ) {
+        asked.push({ family, text, sizePt });
+        return { advance: 30, ascender: 9, descender: -2 };
+      },
+    };
+    return { host, asked, mutations };
+  }
+
+  it("measures an un-styled column at the size the engine pours it at", async () => {
+    const { host, asked } = recordingHost(CREATED, "Story/u9");
+    await lowerSelectionToFrame(host, styledEngine(), 0, "A1:B1");
+
+    const region = asked.find((a) => a.text === "Region");
+    expect(region, "the un-styled column was measured").toBeDefined();
+    // 12 pt is `PipelineOptions::default_point_size` — what a bare run
+    // renders at. Asking at 11 (Excel's default) is what wrapped
+    // "Revenue" in the showcase.
+    expect(region?.sizePt).toBe(DEFAULT_CELL_POINT_SIZE);
+    expect(DEFAULT_CELL_POINT_SIZE).toBe(12);
+    // …and at the face a bare run resolves to, not a guessed name.
+    expect(region?.family).toBe("");
+  });
+
+  it("measures a styled column at ITS size, which the pour then writes", async () => {
+    const { host, asked } = recordingHost(CREATED, "Story/u9");
+    await lowerSelectionToFrame(host, styledEngine(), 0, "A1:B1");
+
+    const revenue = asked.find((a) => a.text === "Revenue");
+    expect(revenue?.sizePt).toBe(8);
+    expect(revenue?.family).toBe("Courier");
   });
 });
