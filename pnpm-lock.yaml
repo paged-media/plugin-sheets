@@ -18,11 +18,11 @@ importers:
   packages/sheet-bundle:
     devDependencies:
       '@paged-media/plugin-api':
-        specifier: 0.2.30-canary.0
-        version: 0.2.30-canary.0
+        specifier: 0.2.33-canary.0
+        version: 0.2.33-canary.0
       '@paged-media/plugin-sdk':
-        specifier: 0.2.30-canary.0
-        version: 0.2.30-canary.0(react@18.3.1)
+        specifier: 0.2.33-canary.0
+        version: 0.2.33-canary.0(react@18.3.1)
       '@paged-media/sheet-host-model':
         specifier: workspace:*
         version: link:../sheet-host-model
@@ -373,11 +373,11 @@ packages:
   '@paged-media/plugin-api@0.2.25-canary.0':
     resolution: {integrity: sha512-yPB4aQ+/WWhipsSUdcCZt7Uzox4KG8r2c9WN0GXAUAhC2/+Oa8+li/adp9Ubx8pSdEtNBh13N0IiIPTBhc2eDQ==}
 
-  '@paged-media/plugin-api@0.2.30-canary.0':
-    resolution: {integrity: sha512-s4s7xCafgorjV9587cvBs2o0VX9imxg9yQOpHi7PIjCto5Pi23ZtKMKDikl3vCnBhMqVcHnFeyrifQS+sTEVLg==}
+  '@paged-media/plugin-api@0.2.33-canary.0':
+    resolution: {integrity: sha512-bpO+MYUn8PPppGGS8L+rGV88FUYNYlpAM5NMkWSiHnwpsE/zegWgVqJhVRmumL+VIL38Hnh+hnhISBCORx/eBA==}
 
-  '@paged-media/plugin-sdk@0.2.30-canary.0':
-    resolution: {integrity: sha512-H3UrXw+AP4JGnDaLIQFyJRyy+ptGdFhdnoGe6zk8CPTwla7ZaLnxQeSvMuhQ1zJFwXvcr5qlHJIgsqpbOZM4bQ==}
+  '@paged-media/plugin-sdk@0.2.33-canary.0':
+    resolution: {integrity: sha512-9pJ7mMzBGAOgouTPg9MgKWGilFKgR2ZWzmpaZmax7URhVjtiGv7KMXvothYG2u7l3ofD1L98biBAjU43TDNxqw==}
     peerDependencies:
       react: ^18.3.0
     peerDependenciesMeta:
@@ -1097,13 +1097,13 @@ snapshots:
     dependencies:
       '@types/react': 18.3.31
 
-  '@paged-media/plugin-api@0.2.30-canary.0':
+  '@paged-media/plugin-api@0.2.33-canary.0':
     dependencies:
       '@types/react': 18.3.31
 
-  '@paged-media/plugin-sdk@0.2.30-canary.0(react@18.3.1)':
+  '@paged-media/plugin-sdk@0.2.33-canary.0(react@18.3.1)':
     dependencies:
-      '@paged-media/plugin-api': 0.2.30-canary.0
+      '@paged-media/plugin-api': 0.2.33-canary.0
     optionalDependencies:
       react: 18.3.1
 
