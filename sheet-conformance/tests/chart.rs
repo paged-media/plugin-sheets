@@ -500,6 +500,43 @@ fn sheet_chart_xlsx_grouping() {
     );
 }
 
+/// The showcase kind battery (`sheet.chart.xlsx-part`): `annual-charts.xlsx`
+/// (`corpus/xlsx-corpus/generate-annual.py`, byte-stable) carries TEN charts —
+/// one per curated [`ChartKind`], all anchored through ONE drawing on its
+/// `Charts` sheet — and the importer enumerates all ten and reads each kind
+/// from its documented encoding (`c:barDir` + `c:grouping` for the four
+/// bar/column variants, `c:doughnutChart` ≠ `c:pieChart`, `c:xVal`/`c:yVal`
+/// for scatter). The editor showcase places a verbatim copy of this workbook
+/// (`apps/canvas/tests/showcase/assets/annual-charts.xlsx`).
+#[test]
+fn sheet_chart_xlsx_part_kind_battery() {
+    let doc = XlsxDocument::open(&load("annual-charts.xlsx")).expect("open annual-charts");
+    let kinds: Vec<ChartKind> = doc.charts.iter().map(|c| c.model.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            ChartKind::Column,
+            ChartKind::Bar,
+            ChartKind::StackedColumn,
+            ChartKind::StackedBar,
+            ChartKind::Line,
+            ChartKind::Area,
+            ChartKind::Pie,
+            ChartKind::Donut,
+            ChartKind::Scatter,
+            ChartKind::Radar,
+        ],
+        "ten charts, one per curated kind, in drawing-rel order"
+    );
+    // Every chart carries at least one series bound to the Data sheet, and the
+    // scatter's X/Y pair folded into the (series[0]=X, series[1]=Y) layout.
+    for c in &doc.charts {
+        assert!(!c.model.series.is_empty(), "{:?} has series", c.model.kind);
+    }
+    let scatter = &doc.charts[8];
+    assert_eq!(scatter.model.series.len(), 2, "scatter folds xVal + yVal");
+}
+
 // ── sheet.chart.lower.paged-draw ────────────────────────────────────────────
 
 /// The geometry IR serializes to the camelCase wire shape the TS paged.draw

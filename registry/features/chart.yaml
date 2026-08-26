@@ -40,7 +40,9 @@
   status: implemented
   provenance: ["ECMA-376 §21.2 (DrawingML charts)", "spec §8.4, §10.2", "sheet-xlsx/src/parts/chart.rs"]
   tests:
-    rust: ["sheet-conformance/tests/chart.rs::sheet_chart_xlsx_part"]
+    rust:
+      - "sheet-conformance/tests/chart.rs::sheet_chart_xlsx_part"
+      - "sheet-conformance/tests/chart.rs::sheet_chart_xlsx_part_kind_battery"
 
 - id: sheet.chart.geometry.bar-column
   title: "Geometry: bar/column — axis frame + per-bar Rects with linear value scaling + tick/category labels"
