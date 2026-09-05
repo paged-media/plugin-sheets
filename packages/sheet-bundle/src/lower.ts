@@ -272,7 +272,7 @@ export interface LowerLaneOptions {
  * (mutate-never-throws: outcomes are checked, not caught).
  */
 /** Snapshot the document's story ids (the `stories` collection). */
-async function storyIdsSnapshot(host: BundleHost): Promise<Set<string>> {
+export async function storyIdsSnapshot(host: BundleHost): Promise<Set<string>> {
   const items = await host.document.collection<{ selfId: string }>("stories");
   return new Set(items.map((s) => s.selfId));
 }

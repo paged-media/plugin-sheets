@@ -39,6 +39,7 @@ import {
 } from "../../sheet-host-model/src";
 
 import type { SheetEngine } from "./engine";
+import { storyIdsSnapshot } from "./lower";
 import { readKnownSwatchIds } from "./swatch-mints";
 
 /** The default chart-frame content box, pt (a sensible publishing size; the
@@ -126,26 +127,38 @@ export async function lowerChartToFrame(
   }
 
   // Phase 1 — every vector path + the label frames + binding, one undoable batch.
+  // Snapshot the stories FIRST: the label frames' stories are resolved by
+  // diffing this collection across the batch (see below).
+  const storiesBefore = await storyIdsSnapshot(host);
   const outcome = await host.document.mutate(batch);
   if (!outcome.applied) {
     host.log.warn("lowerChart: phase-1 batch rejected", outcome);
     return false;
   }
 
-  // Phase 2 — pour each label's text into its frame. The batch created the
-  // label frames in `texts` order; we resolve each frame's story via the
-  // hitTest read door at the label's anchor point, then insertText. A label
-  // whose story can't be resolved is skipped (the honest S-03-style gap).
-  for (const label of texts) {
+  // Phase 2 — pour each label's text into its frame. The batch created one
+  // text frame per label, in `texts` order, and each frame was born with a
+  // story of its own, so the stories that are NEW after the batch are the
+  // labels' stories, in mint order (the engine numbers them ascending).
+  //
+  // This used to hit-test the label's anchor point. The text hit path
+  // cannot see an EMPTY frame (`storyId: null`, verified live — the table
+  // lowering learned it first), so the hit fell through to whatever text
+  // frame lay UNDER the anchor — on a page with prose, the page's own
+  // heading — and the label's text was poured into THAT story at offset 0
+  // ("Q2Q2The chart wall"), while the label frame stayed empty. A resolution
+  // that can answer with someone else's story is not a resolution; the diff
+  // can only answer with a story this batch minted.
+  const fresh = await newStoryIdsInMintOrder(host, storiesBefore);
+  if (fresh.length !== texts.length) {
+    host.log.warn(
+      `lowerChart: the batch minted ${fresh.length} stor${fresh.length === 1 ? "y" : "ies"} for ${texts.length} label(s); labels left empty`,
+    );
+  }
+  for (const [i, label] of texts.entries()) {
     if (label.text.length === 0) continue;
-    const hit = await host.document.hitTest(pageId, label.at);
-    const storyId = hit?.storyId ?? null;
-    if (!storyId) {
-      host.log.debug(
-        "lowerChart: could not resolve a label's story; label left empty",
-      );
-      continue;
-    }
+    const storyId = fresh.length === texts.length ? fresh[i] : null;
+    if (!storyId) continue;
     const pour = await host.document.mutate({
       op: "insertText",
       args: { storyId, offset: 0, text: label.text },
@@ -157,4 +170,22 @@ export async function lowerChartToFrame(
 
   if (outcome.createdId) await host.selection.set([outcome.createdId]);
   return true;
+}
+
+/** The story ids that exist now and did not before, in MINT order. Minted
+ *  ids are `Story/u<n>` with ascending decimal `n` (the engine's
+ *  `story_id_floor` numbering); anything else sorts after them. */
+async function newStoryIdsInMintOrder(
+  host: BundleHost,
+  before: ReadonlySet<string>,
+): Promise<string[]> {
+  const after = await host.document.collection<{ selfId: string }>("stories");
+  const num = (id: string): number => {
+    const m = /^Story\/u(\d+)$/.exec(id);
+    return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+  };
+  return after
+    .map((s) => s.selfId)
+    .filter((id) => !before.has(id))
+    .sort((a, b) => num(a) - num(b) || a.localeCompare(b));
 }
