@@ -31,7 +31,7 @@ draw/web convention): `sheet-host-model` (pure LoweredContent→Mutation
 translation) + `sheet-bundle` (manifest + `activate(host)` + workbook
 panel + grid panel + engine boot).
 
-What landed (verified — see `state/registry/features/plugin-sheets.yaml`):
+What landed (verified — see `~/paged/cockpit/docs/features/sheet/`):
 the calc engine, function library, spill, structured tables, the chart
 engine, and **XLSX round-trip** (preservation-safe both directions). The
 page surface **lowers to a native `<Table>`** (S-03 / `sheet.lower.page`)
@@ -47,18 +47,30 @@ e2e `sheet-modal-session.spec.ts`. Workbook **persistence** rides
 **data-provider CONSUMER** (S-15, `sheetFromDataset`) sources a sheet from
 a governed dataset.
 
-## Project State & Feature Matrix (paged-media/state)
+## Project State & Feature Matrix (cockpit)
 
-The canonical feature inventory + live status for ALL Paged repos live in
-`paged-media/state` (dashboard: https://state.paged.media). There is NO
-feature matrix in this repo; do not create one. NEW CAPABILITY → registry
-row; EVERY NEW TEST → feature linkage (until the `#[feature_test]` macro
-ships from state, the naming convention
-`fn <feature_id_with_underscores>_…()` + the row's `tests:` pointer);
-STATUS CHANGE → registry, not prose. The status-ledger row
-`state/registry/features/plugin-sheets.yaml` lives in the STATE repo
-(separate PR there). The local `registry/` here is the BUILD-CONSUMED
-half (see "Two-registry split" below).
+The feature inventory, test linkage and live status for ALL Paged repos are derived by
+[Cockpit](https://github.com/drietsch/cockpit) from `~/paged/cockpit/` (`cockpit.toml` with
+`root = ".."`; features in `cockpit/docs/features/<chapter>/<id>.md`). There is NO feature
+matrix in this repo; do not create one.
+
+Rules for every code change in this repo:
+
+1. NEW CAPABILITY → feature file. If your change adds or completes a feature, add or update
+   `cockpit/docs/features/<chapter>/<id>.md` (separate commit in `paged/cockpit`, referenced
+   from this one). Feature ids are immutable; rename with `superseded_by`.
+2. EVERY NEW TEST → feature link. Playwright: `{ tag: ['@feat:<id>'] }`. Rust: a test name
+   ending in `__feat__<id_with_underscores>` or containing `[<id>]`. Otherwise an entry in
+   `cockpit/test-map.yaml`.
+3. STATUS CHANGE → `claims:` in the feature file, never prose. "X is now shipped/partial" is a
+   claim edit; whether it *works* is computed from evidence and cannot be written.
+4. BEFORE claiming a feature done: `cockpit feature <id> --json` (or its page in
+   `cockpit serve`) — done means the linked tests are green and were produced after the
+   latest implementation commit.
+5. `cockpit validate --strict` is the gate (references resolve, required evidence present and
+   fresh). `cockpit pull` fetches the newest CI artifacts; `cockpit status` is the summary.
+6. FOUND A BUG while working? If a test exposes it, let it fail and push — the failure shows
+   up as attention on its feature. Never commit `.cockpit/`.
 
 ## Hard rules (this repo's constitution — spec §1/§2/§3)
 
@@ -161,13 +173,14 @@ half (see "Two-registry split" below).
 
 ## Two-registry split
 
-- `paged-media/state` `registry/features/plugin-sheets.yaml` — the
-  STATUS ledger (stage `plugin.sheet`; planned/partial/shipped).
+- `~/paged/cockpit/docs/features/sheet/<id>.md` (Cockpit, chapter `sheet`) — the
+  STATUS ledger (component `plugin.sheet`; `claims:` planned/partial/shipped,
+  health from evidence).
 - `plugin-sheets/registry/` (here) — build-consumed metadata:
   `functions/*.yaml` (one row per function: arity, volatility,
   range-awareness, provenance, test pointers — drives codegen) and
   `features/*.yaml` (calc/format/xlsx/lower rulings + test pointers).
-  The ids mirror the state `sheet.*` ids so the registries join by id.
+  The ids mirror the Cockpit `sheet.*` ids so the registries join by id.
 
 ## Commands
 
