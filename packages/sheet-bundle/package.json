@@ -1,7 +1,8 @@
 {
   "name": "@paged-media/sheet",
   "private": false,
-  "version": "0.1.0-canary.7",
+  "version": "0.1.0-canary.8",
+  "license": "AGPL-3.0-only OR LicenseRef-PMEL",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
