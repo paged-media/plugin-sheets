@@ -384,6 +384,22 @@ impl std::fmt::Display for SessionError {
 impl std::error::Error for SessionError {}
 
 impl SheetSession {
+    /// The engine. Present everywhere except transiently inside
+    /// [`SheetSession::save_xlsx`], which always puts it back, also when the
+    /// save fails. So this `expect` states an invariant, not a hope.
+    fn engine(&self) -> &Engine {
+        self.engine
+            .as_ref()
+            .expect("engine present outside save_xlsx")
+    }
+
+    /// Mutable twin of [`SheetSession::engine`].
+    fn engine_mut(&mut self) -> &mut Engine {
+        self.engine
+            .as_mut()
+            .expect("engine present outside save_xlsx")
+    }
+
     /// An empty workbook with one sheet "Sheet1" — lets the panel start without
     /// a file. The container is a fresh in-memory minimal XLSX so `save_xlsx`
     /// stays total. We `mem::take` the model out (a `Default` placeholder is
@@ -511,11 +527,15 @@ impl SheetSession {
         }
 
         // 4. Serialise.
-        let bytes = self.doc.save().map_err(|e| SessionError(e.to_string()))?;
+        let saved = self.doc.save();
 
-        // 5. Rebuild the engine from the model so the session stays usable.
+        // 5. Rebuild the engine from the model so the session stays usable —
+        //    BEFORE propagating a save error. Returning early here used to
+        //    leave `engine` at `None`, so the next call on the session hit
+        //    `engine present` and aborted the wasm instance.
         let model = std::mem::take(&mut self.doc.model);
         self.engine = Some(Engine::new(model, self.config));
+        let bytes = saved.map_err(|e| SessionError(e.to_string()))?;
 
         // 6. The edits are now persisted in the bytes — clear the pending set so
         //    `metadata().dirty` reads false until the next edit.
@@ -540,20 +560,17 @@ impl SheetSession {
         // AUTO-CREATE phantom sheets for an out-of-range id; their data then
         // silently drops on save. The session is the boundary that rejects an
         // OOB id (`sheet-calc` stays frozen).
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         if (sheet as usize) >= sheet_count {
             return Err(SessionError(format!(
                 "sheet id {sheet} out of range ({sheet_count} sheets)"
             )));
         }
 
-        let engine = self.engine.as_mut().expect("engine present");
+        let engine = self
+            .engine
+            .as_mut()
+            .expect("engine present outside save_xlsx");
         let result = engine
             .enter(sheet, row, col, input)
             .map_err(|e| SessionError(e.to_string()))?;
@@ -591,7 +608,7 @@ impl SheetSession {
     /// The current formatted display of one cell (spec §9). `""` for an empty
     /// cell or an out-of-range address.
     pub fn get_cell_display(&self, sheet: u16, row: u32, col: u32) -> String {
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         let mut cache = FormatCache::default();
         let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
         cell_display(model, sheet, row, col, &mut cache, &ctx)
@@ -605,7 +622,7 @@ impl SheetSession {
     /// string is NOT a valid inverse — re-entering a formula's display
     /// would bake the computed value over the formula.
     pub fn get_cell_input(&self, sheet: u16, row: u32, col: u32) -> String {
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         cell_input_text(model, sheet, row, col)
     }
 
@@ -684,7 +701,7 @@ impl SheetSession {
         // ── boundary scan: refuse formulas / spill-owned cells (never
         //    silently corrupt references — see the doc comment).
         {
-            let engine = self.engine.as_ref().expect("engine present");
+            let engine = self.engine();
             let model = engine.model();
             let spills = engine.spills();
             if let Some(ws) = model.sheet(sheet) {
@@ -719,7 +736,7 @@ impl SheetSession {
         // ── snapshot every movable row: the key VALUE (typed compare) + the
         //    re-enterable inputs (the move payload).
         let rows_snap: Vec<(CellValue, Vec<String>)> = {
-            let model = self.engine.as_ref().expect("engine present").model();
+            let model = self.engine().model();
             (first_data..=bottom)
                 .map(|row| {
                     let key = model
@@ -752,7 +769,7 @@ impl SheetSession {
                 if next == prev {
                     continue;
                 }
-                let engine = self.engine.as_mut().expect("engine present");
+                let engine = self.engine_mut();
                 // Inputs are engine-printed (`get_cell_input` round-trips by
                 // construction), so a parse error here is a bug — surface it
                 // as a boundary error rather than half-apply silently.
@@ -812,18 +829,12 @@ impl SheetSession {
                 vec![id]
             }
             None => {
-                let n = self
-                    .engine
-                    .as_ref()
-                    .expect("engine present")
-                    .model()
-                    .sheets
-                    .len();
+                let n = self.engine().model().sheets.len();
                 (0..n as u16).collect()
             }
         };
 
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         let mut cache = FormatCache::default();
         let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
         let mut out = Vec::new();
@@ -889,13 +900,7 @@ impl SheetSession {
                 vec![id]
             }
             None => {
-                let n = self
-                    .engine
-                    .as_ref()
-                    .expect("engine present")
-                    .model()
-                    .sheets
-                    .len();
+                let n = self.engine().model().sheets.len();
                 (0..n as u16).collect()
             }
         };
@@ -912,7 +917,7 @@ impl SheetSession {
         }
         let mut candidates: Vec<Candidate> = Vec::new();
         {
-            let engine = self.engine.as_ref().expect("engine present");
+            let engine = self.engine();
             let model = engine.model();
             let spills = engine.spills();
             for &sid in &sheet_ids {
@@ -975,7 +980,7 @@ impl SheetSession {
                 });
                 continue;
             }
-            let engine = self.engine.as_mut().expect("engine present");
+            let engine = self.engine_mut();
             match engine.enter(cand.sheet, cand.row, cand.col, &cand.next) {
                 Ok(res) => {
                     self.edited.insert((cand.sheet, cand.row, cand.col));
@@ -1017,13 +1022,7 @@ impl SheetSession {
     /// Reject an out-of-range sheet id (the FREEZE-AMENDMENT finding-2
     /// boundary discipline, shared by the bulk edit ops).
     fn validate_sheet(&self, sheet: u16) -> Result<(), SessionError> {
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         if (sheet as usize) >= sheet_count {
             return Err(SessionError(format!(
                 "sheet id {sheet} out of range ({sheet_count} sheets)"
@@ -1040,7 +1039,7 @@ impl SheetSession {
         changed: &BTreeSet<(u16, u32, u32)>,
         circular: &BTreeSet<(u16, u32, u32)>,
     ) -> (Vec<CellChange>, Vec<CircularRef>) {
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         let mut cache = FormatCache::default();
         let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
         let changed = changed
@@ -1074,13 +1073,7 @@ impl SheetSession {
         // an unknown sheet is itself harmless (it yields an empty-but-shaped
         // region), but the boundary rejects an OOB id for the same contract as
         // `set_cell`.
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         if (sheet as usize) >= sheet_count {
             return Err(SessionError(format!(
                 "sheet id {sheet} out of range ({sheet_count} sheets)"
@@ -1107,7 +1100,7 @@ impl SheetSession {
             include_grid_rules: opts.include_grid_rules.unwrap_or(true),
             header_rows: opts.header_rows.unwrap_or(0),
         };
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         Ok(lower_range(model, sheet, cell_range, &view))
     }
 
@@ -1165,7 +1158,7 @@ impl SheetSession {
             include_grid_rules: opts.include_grid_rules.unwrap_or(false),
             header_rows: opts.header_rows.unwrap_or(0),
         };
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         // `VisualStyles` IS a `sheet_lower::VisualStyleSource` (sheet-xlsx
         // implements the trait), so no adapter is needed and `sheet-lower`
         // keeps its no-sheet-xlsx dependency rule.
@@ -1218,7 +1211,7 @@ impl SheetSession {
             )));
         }
 
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         let mut cache = FormatCache::default();
         let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
         let mut rows: Vec<Vec<String>> = Vec::with_capacity((bottom - top + 1) as usize);
@@ -1256,13 +1249,7 @@ impl SheetSession {
 
         // Validate the sheet id (FREEZE AMENDMENT, audit finding 2 — matches
         // `set_cell`/`get_range_lowered`).
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         if (sheet as usize) >= sheet_count {
             return Err(SessionError(format!(
                 "sheet id {sheet} out of range ({sheet_count} sheets)"
@@ -1299,7 +1286,7 @@ impl SheetSession {
             keep_rows_together: opts.keep_rows_together.unwrap_or_default(),
         };
 
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         Ok(lower_paginate(
             model,
             sheet,
@@ -1329,13 +1316,7 @@ impl SheetSession {
         // Validate the sheet id (FREEZE AMENDMENT, audit finding 2). An unknown
         // sheet would otherwise yield an empty-but-shaped scene; the boundary
         // rejects an OOB id for the same contract as `set_cell`.
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         if (sheet as usize) >= sheet_count {
             return Err(SessionError(format!(
                 "sheet id {sheet} out of range ({sheet_count} sheets)"
@@ -1367,7 +1348,7 @@ impl SheetSession {
         // cf XML round-trips byte-identical; this read is additive + read-only.
         let cf = self.doc.lowered_conditional_formats(sheet);
 
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         let mut scene = sheet_grid::grid_scene_with_cf(
             model,
             sheet,
@@ -1410,13 +1391,7 @@ impl SheetSession {
         rows: u32,
         cols: u32,
     ) -> Result<(), SessionError> {
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         if (sheet as usize) >= sheet_count {
             return Err(SessionError(format!(
                 "sheet id {sheet} out of range ({sheet_count} sheets)"
@@ -1439,7 +1414,7 @@ impl SheetSession {
     /// are the 1-based extent of the populated range (0 when the sheet is
     /// empty).
     pub fn list_sheets(&self) -> Vec<SheetInfo> {
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         model
             .sheets
             .iter()
@@ -1603,13 +1578,7 @@ impl SheetSession {
         // The model lives in the engine after load (the doc model is a
         // placeholder); use the engine's sheet count, then read the doc's
         // freeze map (keyed by SheetId regardless of where the model sits).
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         let mut out = Vec::new();
         for sid in 0..sheet_count as SheetId {
             let fp = self.doc.freeze_panes_of(sid);
@@ -1631,13 +1600,7 @@ impl SheetSession {
     /// grid shows an indicator (folded into `get_grid_scene`); this carries the
     /// text for the panel/hover. Empty for a workbook with no comments.
     pub fn list_comments(&self) -> Vec<CommentInfo> {
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         let mut out = Vec::new();
         for sid in 0..sheet_count as SheetId {
             let Some(cs) = self.doc.comments_of(sid) else {
@@ -1665,13 +1628,7 @@ impl SheetSession {
     /// `<dataValidations>` XML round-trips byte-identical regardless (the parse
     /// is read-only). Empty for a workbook with no validations.
     pub fn list_data_validations(&self) -> Vec<DataValidationInfo> {
-        let sheet_count = self
-            .engine
-            .as_ref()
-            .expect("engine present")
-            .model()
-            .sheets
-            .len();
+        let sheet_count = self.engine().model().sheets.len();
         let mut out = Vec::new();
         for sid in 0..sheet_count as SheetId {
             let Some(dv) = self.doc.data_validations_of(sid) else {
@@ -1735,7 +1692,7 @@ impl SheetSession {
                 self.doc.charts.len()
             ))
         })?;
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
 
         // Resolve each series' values range to a numeric vector, and the shared
         // category labels from the FIRST series that carries a category range.
@@ -1758,7 +1715,7 @@ impl SheetSession {
 
     /// Workbook metadata for the panel.
     pub fn metadata(&self) -> Metadata {
-        let model = self.engine.as_ref().expect("engine present").model();
+        let model = self.engine().model();
         let date_system = match model.calc.date_system {
             DateSystem::Date1900 => "1900",
             DateSystem::Date1904 => "1904",
