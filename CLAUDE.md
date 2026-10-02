@@ -16,8 +16,8 @@ lane); the sheets-mode grid (T1+) renders vector on an SDK surface
 (S-02). XLSX round-trip safety ("Paged never destroys a workbook") is a
 launch property.
 
-Spec (the authority): `thoughts/docs/paged/plugin-sheets/base-idea.md`.
-SDK gap tracker: the cross-repo RFI `thoughts/docs/paged/plugin-platform/rfi-core-sdk-gaps.md` (S-NN ids in §6; per-plugin BREAKAGE_LOG retired 2026-06-12).
+Spec (the authority): `docs/concept.md` (architecture, status and decisions are in `docs/` too).
+SDK gap tracker: the cross-repo RFI (the internal gap register) (S-NN ids in §6; per-plugin BREAKAGE_LOG retired 2026-06-12).
 
 **STATUS: M0–M3 shipped** (11 Rust crates, ~1188 nextest; the registry
 rows below are the live ledger). Rust crates (Cargo workspace, top level

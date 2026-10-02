@@ -5,7 +5,7 @@ The M3 spike deliverable for **decision D-6** ("Numeric core: Excel-compat
 mode open"). This is the written adopt/defer recommendation, grounded in a
 working implementation, a divergence corpus, and measured size/perf costs.
 
-- **Spec:** `thoughts/docs/paged/plugin-sheets/base-idea.md` §3, §5.1, §13 M3.
+- **Spec:** `docs/concept.md` §3, §5.1, §13 M3.
 - **Code:** `sheet-fn/src/num.rs` (the `Numeric` trait + the v1 `F64` impl),
   `sheet-fn/src/num_decimal.rs` (the spike's `Decimal` impl, behind the
   `exact-decimal` cargo feature).

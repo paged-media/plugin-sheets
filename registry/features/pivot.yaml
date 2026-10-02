@@ -2,7 +2,7 @@
 # — pivot tables are on the PERMANENT publishing-first exclusion list: the
 # pivotCache*/pivotTable* parts (and slicers) round-trip preserved but are NEVER
 # interpreted, recalculated, re-pivoted, or made editable. This is a PRODUCT
-# DECISION, not a deferral (base-idea §1.1.1).
+# DECISION, not a deferral (docs/concept.md §1.1.1).
 #
 # RATIONALE (the honest non-goal record): paged.sheet is a PUBLISHING instrument
 # — it typesets live workbooks into print-grade pages — NOT an analysis tool. A

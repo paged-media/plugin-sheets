@@ -9,11 +9,22 @@ truth and the page as its typeset projection. **A publishing instrument,
 not an Excel replacement.**
 
 Concept (the authority):
-`thoughts/docs/paged/plugin-sheets/base-idea.md` (v0.3). SDK gap punch
+[`docs/concept.md`](./docs/concept.md) (v0.3). SDK gap punch
 list: [`BREAKAGE_LOG.md`](./BREAKAGE_LOG.md) (S-NN). Dual-licensed
 MPL-2.0 OR PMEL (see [`LICENSE.md`](./LICENSE.md)). First-party in
 authorship, third-party in discipline: the only dependency surface is
 the published plugin SDK.
+
+## Documentation
+
+Everything about how the plugin is designed and built is in [`docs/`](./docs/README.md):
+
+- [`docs/concept.md`](./docs/concept.md): the specification, with notes on what was built.
+- [`docs/architecture.md`](./docs/architecture.md): crates, packages, the calculation and lowering paths, host doors.
+- [`docs/status.md`](./docs/status.md): what ships today and what does not.
+- [`docs/adr/`](./docs/adr/README.md): the architecture decisions, one per file.
+
+`docs/status.md` is the current record of what ships; the sections below are older in places.
 
 ## Architecture rule
 
@@ -106,7 +117,7 @@ group (S-04), and full external-reference *evaluation* (needs a frozen-AST
 amendment). The interim panel grid stands in for in-frame sheets mode;
 page lowering is native-table (S-03 resolved; the tab-text degradation
 is the retained fallback lane). SDK gaps are tracked in the cross-repo
-RFI (`thoughts/docs/paged/plugin-platform/rfi-core-sdk-gaps.md` §6).
+RFI (the internal gap register).
 
 ## License
 
