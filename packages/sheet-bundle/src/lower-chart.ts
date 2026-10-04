@@ -31,7 +31,12 @@
 // frame's story — resolved through the hitTest read door (the only door that
 // yields a created frame's storyId), exactly as the sheet lower does.
 
-import type { BundleHost, PageId } from "@paged-media/plugin-api";
+import type {
+  BundleHost,
+  ElementId,
+  PageId,
+  SceneTreeNode,
+} from "@paged-media/plugin-api";
 import {
   chartGeometryToMutations,
   makeBinding,
@@ -44,8 +49,7 @@ import { readKnownSwatchIds } from "./swatch-mints";
 
 /** The default chart-frame content box, pt (a sensible publishing size; the
  *  user repositions/resizes after — the geometry is regenerated to fit). */
-const CHART_W_PT = 360;
-const CHART_H_PT = 240;
+const [CHART_W_PT, CHART_H_PT] = [360, 240];
 /** Fixed inset from the page origin for a freshly lowered chart frame. */
 const CHART_INSET_PT = 24;
 
@@ -64,12 +68,81 @@ async function activePageId(host: BundleHost): Promise<PageId | null> {
  * on a successful phase-1 apply, false on any failure (mutate-never-throws:
  * outcomes are checked, not caught).
  */
+/** A placed chart (Wave 4): where it went and the page items it made, so a
+ *  refresh can replace them. */
+export interface PlacedChart {
+  chartIndex: number;
+  pageId: PageId;
+  bounds: [number, number, number, number];
+  /** Every element the lowering created (paths + label frames). Empty when
+   *  the host has no scene-tree read — such a chart cannot be refreshed. */
+  elementIds: ElementId[];
+  contentVersion: number;
+  /** The geometry it was drawn from (JSON) — a refresh re-lowers only when
+   *  the chart's geometry actually changed. */
+  geometryKey: string;
+}
+
+/** The chart-frame size a placed chart is drawn at. */
+export const CHART_SIZE_PT: [number, number] = [CHART_W_PT, CHART_H_PT];
+
+/** Options for [`lowerChartToFrame`]. */
+export interface ChartLowerOptions {
+  /** Where the chart lands (top-left honoured; the size is the chart's).
+   *  Default: 24 pt inset on the active page. */
+  placement?: { pageId: PageId; bounds: [number, number, number, number] };
+  contentVersion?: number;
+  /** Called with the placed chart's record on success. */
+  onLowered?: (placed: PlacedChart) => void;
+}
+
+/** Every addressable element id in a scene tree, keyed by kind:id. */
+function treeIds(nodes: readonly SceneTreeNode[], out = new Map<string, ElementId>()) {
+  for (const n of nodes) {
+    if (n.id && typeof n.id.id === "string") out.set(`${n.id.kind}:${n.id.id}`, n.id);
+    if (n.children) treeIds(n.children, out);
+  }
+  return out;
+}
+
+/** The scene tree's element ids, or null when the host cannot answer. */
+async function readTreeIds(host: BundleHost): Promise<Map<string, ElementId> | null> {
+  if (typeof host.document.tree !== "function") return null;
+  try {
+    return treeIds(await host.document.tree());
+  } catch {
+    return null;
+  }
+}
+
+/** Remove a placed chart's elements (one undoable batch of deleteFrame —
+ *  the door resolves paths and text frames alike). False when there is
+ *  nothing recorded to remove or the host refused. */
+export async function removePlacedChart(
+  host: BundleHost,
+  placed: PlacedChart,
+): Promise<boolean> {
+  if (placed.elementIds.length === 0) return false;
+  const r = await host.document.mutate({
+    op: "batch",
+    args: {
+      ops: placed.elementIds.map((id) => ({
+        op: "deleteFrame" as const,
+        args: { frameId: id.id as string },
+      })),
+    },
+  });
+  if (!r.applied) host.log.warn("chart refresh: removing the old chart was rejected", r);
+  return r.applied;
+}
+
 export async function lowerChartToFrame(
   host: BundleHost,
   engine: SheetEngine,
   chartIndex: number,
+  opts?: ChartLowerOptions,
 ): Promise<boolean> {
-  const pageId = await activePageId(host);
+  const pageId = opts?.placement?.pageId ?? (await activePageId(host));
   if (!pageId) {
     host.log.warn("lowerChart: no page to place the chart frame into");
     return false;
@@ -92,8 +165,8 @@ export async function lowerChartToFrame(
         String(info.hostSheet))
       : String(chartIndex);
 
-  const top = CHART_INSET_PT;
-  const left = CHART_INSET_PT;
+  const top = opts?.placement?.bounds[0] ?? CHART_INSET_PT;
+  const left = opts?.placement?.bounds[1] ?? CHART_INSET_PT;
   const placement: ChartPlacement = {
     pageId,
     bounds: [top, left, top + geom.heightPt, left + geom.widthPt],
@@ -101,7 +174,8 @@ export async function lowerChartToFrame(
   // The binding marks the frame group as a chart of this sheet (the title /
   // chart index ride as the range slot — a chart binds to its parsed index,
   // re-resolved on recalc). contentVersion 0: T0 has no revision counter.
-  const binding = makeBinding(sheetName, `chart:${chartIndex}`, 0);
+  const contentVersion = opts?.contentVersion ?? 0;
+  const binding = makeBinding(sheetName, `chart:${chartIndex}`, contentVersion);
 
   // The colour swatches this chart references ride INSIDE the phase-1
   // batch, at deterministic content-addressed ids. Read what the document
@@ -130,10 +204,28 @@ export async function lowerChartToFrame(
   // Snapshot the stories FIRST: the label frames' stories are resolved by
   // diffing this collection across the batch (see below).
   const storiesBefore = await storyIdsSnapshot(host);
+  // Wave 4: the scene tree before/after names every element this batch
+  // made, so the chart can be REPLACED when the data changes.
+  const treeBefore = opts?.onLowered ? await readTreeIds(host) : null;
   const outcome = await host.document.mutate(batch);
   if (!outcome.applied) {
     host.log.warn("lowerChart: phase-1 batch rejected", outcome);
     return false;
+  }
+  if (opts?.onLowered) {
+    const treeAfter = treeBefore ? await readTreeIds(host) : null;
+    const elementIds =
+      treeBefore && treeAfter
+        ? [...treeAfter].filter(([k]) => !treeBefore.has(k)).map(([, id]) => id)
+        : [];
+    opts.onLowered({
+      chartIndex,
+      pageId,
+      bounds: placement.bounds,
+      elementIds,
+      contentVersion,
+      geometryKey: JSON.stringify(geom),
+    });
   }
 
   // Phase 2 — pour each label's text into its frame. The batch created one

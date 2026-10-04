@@ -24,7 +24,7 @@
 // explicit/runtime fallback. A fake host captures the mutate calls; a
 // fake engine returns a small LoweredContent.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   BundleHost,
@@ -699,16 +699,6 @@ describe("sheet_lower_swatch_mint_dedupe: the tab-text lane reads before it mint
 
 // ── live multi-frame pagination across the host chain (Wave 2D, S-05) ────────
 
-/** Drain the microtask queue until `pred` holds or `ticks` is exhausted —
- *  the async chain-lower flow hops several awaits (meta → frameChain →
- *  elementGeometry → paginate → per-frame hitTest/mutate), so a fixed
- *  `Promise.resolve()` count is brittle. */
-async function until(pred: () => boolean, ticks = 50): Promise<void> {
-  for (let i = 0; i < ticks && !pred(); i++) {
-    await Promise.resolve();
-  }
-}
-
 /** One page over a fixed 1-row content (the slice text differs per page). */
 function pageFor(frameIndex: number, text: string, continued: boolean): Page {
   return {
@@ -874,13 +864,16 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
       { widthPt: 50, heightPt: 54 },
     ]);
 
-    // Two pages → two tables, one per frame's resolved story.
+    // Two pages → two tables, both in the CHAIN'S story: threaded frames
+    // share one story, and insertTable appends, so story order is page
+    // order. (This used to hit-test each frame for "its" story, from a box
+    // re-based at the page origin — a hit on whatever sat there.)
     const inserts = mutations.filter((m) => m.op === "insertTable") as Array<{
       args: { storyId: string };
     }>;
     expect(inserts).toHaveLength(2);
     expect(inserts[0].args.storyId).toBe("Story/f0");
-    expect(inserts[1].args.storyId).toBe("Story/f1");
+    expect(inserts[1].args.storyId).toBe("Story/f0");
 
     // Each frame got its OWN page's cell text via individual insertText (the
     // text lane — NOT a batch), r0 → tbl1, r1 → tbl2.
@@ -893,54 +886,81 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
     expect(result!.tableIds).toEqual(["tbl1", "tbl2"]);
   });
 
-  it("re-paginates on a reflow event for a chain frame, ignores non-reflow", async () => {
-    const { host, mutations, fire } = fakeChainHost(CHAIN);
-    const { engine, paginateCalls } = fakeChainEngine();
+  it("re-paginates on a reflow (debounced), REPLACING its tables, ignores non-reflow [sheet.lower.paginate]", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, mutations, fire } = fakeChainHost(CHAIN);
+      const { engine, paginateCalls } = fakeChainEngine();
 
-    const sub = subscribeChainReflow(host, engine, 0, "A1:A6", "Story/f0", {
-      continuedMarker: true,
-    });
-    // Let the async chain-prime in subscribeChainReflow settle.
-    await until(() => false, 5);
+      const first = await lowerPaginatedToChain(host, engine, 0, "A1:A6", "Story/f0", {
+        continuedMarker: true,
+      });
+      const sub = subscribeChainReflow(host, engine, 0, "A1:A6", "Story/f0", {
+        continuedMarker: true,
+        from: first,
+        debounceMs: 100,
+      });
+      const tablesBefore = mutations.filter((m) => m.op === "insertTable").length;
+      expect(tablesBefore).toBe(2);
+      paginateCalls.length = 0;
 
-    const insertsBefore = mutations.filter((m) => m.op === "insertTable").length;
-    expect(paginateCalls).toHaveLength(0);
+      // (a) A change with NO reflow is the §8.5 transform case — IGNORED.
+      fire({ kind: "mutationApplied", pageIds: ["Page/u1"] });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(paginateCalls).toHaveLength(0);
 
-    // (a) A change with NO reflow is the §8.5 transform case — IGNORED.
-    fire({ kind: "mutationApplied", pageIds: ["Page/u1"] });
-    await until(() => false, 10); // give a re-pagination a chance to (not) run
-    expect(paginateCalls).toHaveLength(0);
-    expect(mutations.filter((m) => m.op === "insertTable").length).toBe(
-      insertsBefore,
-    );
+      // (b) A BURST of reflows for chain frames re-paginates ONCE, after the
+      // debounce — and the new split arrives in the SAME two tables: the
+      // engine now puts "r0b" on page 0 and only one page is needed.
+      engine.paginate = (sheet, range, frames) => {
+        paginateCalls.push({ sheet, range, frames });
+        return [pageFor(0, "r0b", false)];
+      };
+      const mark = mutations.length;
+      for (let i = 0; i < 3; i++) {
+        fire({
+          kind: "mutationApplied",
+          pageIds: ["Page/u1"],
+          reflow: { frameId: "f0", contentBox: [0, 0, 36 + i, 50] },
+        });
+        await vi.advanceTimersByTimeAsync(30);
+      }
+      expect(paginateCalls).toHaveLength(0); // still settling
+      await vi.advanceTimersByTimeAsync(200);
+      await sub.refresh(); // serialised behind the debounced pass
+      expect(paginateCalls.length).toBeGreaterThanOrEqual(1);
+      expect(mutations.filter((m) => m.op === "insertTable")).toHaveLength(tablesBefore);
+      // tbl1 re-poured in place (old text out, new text in) …
+      const after = mutations.slice(mark);
+      const tbl1Text = after.filter(
+        (m) =>
+          (m.op === "deleteRange" || m.op === "insertText") &&
+          (m.args as { cell?: { tableId: string } }).cell?.tableId === "tbl1",
+      );
+      expect(tbl1Text.map((m) => m.op)).toEqual(["deleteRange", "insertText"]);
+      // … and tbl2, no longer needed, emptied (no delete op on the wire).
+      const emptied = after.find(
+        (m) =>
+          m.op === "deleteRange" &&
+          (m.args as { cell?: { tableId: string } }).cell?.tableId === "tbl2",
+      );
+      expect(emptied).toBeDefined();
+      expect(sub.current()?.tables.map((t) => t.blank)).toEqual([false, true]);
 
-    // (b) A reflow for a frame IN the chain re-paginates the whole chain.
-    fire({
-      kind: "mutationApplied",
-      pageIds: ["Page/u1"],
-      reflow: { frameId: "f0", contentBox: [0, 0, 36, 50] },
-    });
-    await until(() => paginateCalls.length === 1);
+      // (c) A reflow for a frame NOT in the chain is ignored.
+      const calls = paginateCalls.length;
+      fire({
+        kind: "mutationApplied",
+        pageIds: ["Page/u1"],
+        reflow: { frameId: "fOTHER", contentBox: [0, 0, 10, 10] },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(paginateCalls).toHaveLength(calls);
 
-    expect(paginateCalls).toHaveLength(1); // re-paginated exactly once
-    await until(
-      () => mutations.filter((m) => m.op === "insertTable").length ===
-        insertsBefore + 2,
-    );
-    expect(mutations.filter((m) => m.op === "insertTable").length).toBe(
-      insertsBefore + 2, // two pages re-lowered
-    );
-
-    // (c) A reflow for a frame NOT in the chain is ignored.
-    fire({
-      kind: "mutationApplied",
-      pageIds: ["Page/u1"],
-      reflow: { frameId: "fOTHER", contentBox: [0, 0, 10, 10] },
-    });
-    await until(() => false, 10);
-    expect(paginateCalls).toHaveLength(1); // unchanged
-
-    sub.dispose();
+      sub.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns null when the story threads no frames", async () => {

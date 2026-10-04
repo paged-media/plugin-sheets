@@ -64,8 +64,10 @@ import {
   tableCellOps,
   tableDecorOps,
   tableInsertOp,
+  tableRefreshOps,
   type LoweredContent,
   type Page,
+  type Placement,
 } from "../../sheet-host-model/src";
 
 import type { FrameBox, SheetEngine } from "./engine";
@@ -137,14 +139,6 @@ async function measureColumnWidths(
   );
 }
 
-/** The frame center, page-local pt, from `[top, left, bottom, right]`. */
-function center(
-  bounds: [number, number, number, number],
-): [number, number] {
-  const [top, left, bottom, right] = bounds;
-  return [(left + right) / 2, (top + bottom) / 2];
-}
-
 /** The active page id (meta first, else the first page). Mirrors
  *  plugin-web's `activePageId`. */
 async function activePageId(host: BundleHost): Promise<PageId | null> {
@@ -152,6 +146,54 @@ async function activePageId(host: BundleHost): Promise<PageId | null> {
   if (meta.activePage) return meta.activePage;
   const pages = await host.document.collection<{ selfId: string }>("pages");
   return pages.length > 0 ? pages[0].selfId : null;
+}
+
+/** Where the current selection sits (Wave 4 — new frames land at the
+ *  selection instead of a fixed 24 pt from the page origin): the page and
+ *  page-local top-left of the FIRST selected element, its content box
+ *  carried through its item transform. Null with nothing selected, or when
+ *  the element is on the pasteboard (no page). */
+export async function selectionAnchor(
+  host: BundleHost,
+): Promise<{ pageId: PageId; top: number; left: number } | null> {
+  let selected: ElementId[];
+  try {
+    selected = host.selection.get();
+  } catch {
+    return null;
+  }
+  const first = selected.find(
+    (id) => id.kind !== "storyRange" && id.kind !== "table" && id.kind !== "tableCell",
+  );
+  if (!first) return null;
+  let geom: Awaited<ReturnType<BundleHost["document"]["elementGeometry"]>>;
+  try {
+    geom = await host.document.elementGeometry([first]);
+  } catch {
+    return null;
+  }
+  const g = geom[0];
+  if (!g || !g.pageId) return null;
+  const [top, left] = g.bounds;
+  const [a, b, c, d, tx, ty] = g.itemTransform ?? [1, 0, 0, 1, 0, 0];
+  return { pageId: g.pageId, left: a * left + c * top + tx, top: b * left + d * top + ty };
+}
+
+/** A placement for `content` at the current selection, or the default one
+ *  on the active page when nothing usable is selected. */
+export async function placementForContent(
+  host: BundleHost,
+  content: LoweredContent,
+): Promise<Placement | null> {
+  const at = await selectionAnchor(host);
+  if (at) {
+    const sized = defaultPlacement(at.pageId, content).bounds;
+    const h = sized[2] - sized[0];
+    const w = sized[3] - sized[1];
+    return { pageId: at.pageId, bounds: [at.top, at.left, at.top + h, at.left + w] };
+  }
+  const pageId = await activePageId(host);
+  return pageId ? defaultPlacement(pageId, content) : null;
 }
 
 /** The bare `table_id` STRING from a created Table ElementId. `insertTable`
@@ -251,6 +293,16 @@ export interface LoweredTableInfo {
   tableId: string;
   sheet: number;
   range: string;
+  /** The page the frame was placed on. */
+  pageId?: PageId;
+  /** What the table currently shows — the baseline a refresh diffs from
+   *  (Wave 4: placed tables refresh in place after edits). */
+  content?: LoweredContent;
+  /** The column widths the table was sized with. */
+  columnWidths?: number[];
+  /** The workbook content version this table reflects (also in its
+   *  binding metadata). */
+  contentVersion?: number;
 }
 
 /** Lane options for [`lowerSelectionToFrame`]. */
@@ -263,6 +315,24 @@ export interface LowerLaneOptions {
    *  table so a later "new style from cell" can address its cells (S-04).
    *  Never called on the fallback (no native table to address). */
   onLowered?: (info: LoweredTableInfo) => void;
+  /** Where the frame lands (Wave 4: the session places at the current
+   *  selection); default `defaultPlacement` on the active page. */
+  placement?: Placement;
+  /** The workbook content version recorded in the binding (default 0). */
+  contentVersion?: number;
+}
+
+/** The PAGE lowering of a range: real styles + conditional formatting
+ *  (`getRangePage`, Wave 4), falling back to the frozen key-0 door on an
+ *  engine that predates it. */
+export function pageContent(
+  engine: SheetEngine,
+  sheet: number,
+  range: string,
+): LoweredContent {
+  return engine.getRangePage
+    ? engine.getRangePage(sheet, range, { includeGridRules: true })
+    : engine.getRangeLowered(sheet, range, { includeGridRules: true });
 }
 
 /**
@@ -302,23 +372,24 @@ export async function lowerSelectionToFrame(
   range: string,
   opts?: LowerLaneOptions,
 ): Promise<string | null> {
-  const pageId = await activePageId(host);
+  const pageId = opts?.placement?.pageId ?? (await activePageId(host));
   if (!pageId) {
     host.log.warn("lower: no page to place the sheet frame into");
     return null;
   }
 
-  // Engine-computed IR (all spreadsheet semantics in Rust).
-  const content = engine.getRangeLowered(sheet, range, {
-    includeGridRules: true,
-  });
+  // Engine-computed IR (all spreadsheet semantics in Rust): the PAGE door —
+  // the workbook's real fills/borders with conditional formatting folded on
+  // top (Wave 4; until then this read the frozen key-0 door and every
+  // placed table came out unstyled).
+  const content = pageContent(engine, sheet, range);
   const sheetInfo = engine.listSheets().find((s) => s.id === sheet);
   const sheetName = sheetInfo ? sheetInfo.name : String(sheet);
 
-  const placement = defaultPlacement(pageId, content);
-  // contentVersion 0: T0 has no workbook revision counter (the engine
-  // gains one when save-back lands); the binding still round-trips.
-  const binding = makeBinding(sheetName, range, 0);
+  const placement = opts?.placement ?? defaultPlacement(pageId, content);
+  // The session's workbook revision (Wave 4) — a refresh rewrites it.
+  const contentVersion = opts?.contentVersion ?? 0;
+  const binding = makeBinding(sheetName, range, contentVersion);
 
   if (opts?.lane === "tab-text") {
     return lowerTabTextToFrame(host, content, placement, binding);
@@ -404,7 +475,17 @@ export async function lowerSelectionToFrame(
   // S-04 — report the resolved native table so the session can address its
   // cells for "new style from cell". Only the native-table lane reports
   // (the tab-text fallback has no table to address).
-  opts?.onLowered?.({ frameId, storyId, tableId, sheet, range });
+  opts?.onLowered?.({
+    frameId,
+    storyId,
+    tableId,
+    sheet,
+    range,
+    pageId,
+    content,
+    columnWidths,
+    contentVersion,
+  });
 
   // Phase 3 — pour the cell text (TEXT lane) then the decor (FRAME lane);
   // two lanes, never one batch (see pourCellContent).
@@ -487,20 +568,9 @@ async function lowerTabTextToFrame(
 
 /** A resolved chain frame: its raw frame id + content box (frame-content pt,
  *  §8.5 — the geometry door's bounds ARE the content box). */
-interface ChainFrame {
+export interface ChainFrame {
   frameId: string;
   box: FrameBox;
-}
-
-/** The active page id of a story-bearing frame, recovered via hitTest's
- *  storyId on the frame center. */
-async function frameStoryId(
-  host: BundleHost,
-  pageId: PageId,
-  bounds: [number, number, number, number],
-): Promise<string | null> {
-  const hit = await host.document.hitTest(pageId, center(bounds));
-  return hit?.storyId ?? null;
 }
 
 /** Resolve a frame's content box (frame-content pt) from its page geometry.
@@ -550,50 +620,114 @@ function idOf(id: ElementId): string | null {
   return null;
 }
 
-/**
- * Lower one paginated `Page` into a chain frame's story as a native table
- * (Wave 2D / S-05). Resolves the frame's storyId via hitTest, then drives
- * the two-phase native-table emission (`pageTableMutations`): insert (its
- * outcome mints the tableId) → pour the cells. Returns the resolved tableId
- * or null on any failure (mutate-never-throws: outcomes are checked).
- */
-async function lowerPageToFrame(
+/** The story a frame belongs to (Wave 4). There is no frame→story read
+ *  door (the hitTest door answers `storyId: null` for an empty frame), so
+ *  this walks the stories and asks each for its frame chain — the chain
+ *  that contains `frameId` names the story. One `frameChain` read per story;
+ *  null when no story threads the frame. */
+export async function storyOfFrame(
   host: BundleHost,
-  pageId: PageId,
-  frame: ChainFrame,
-  page: Page,
+  frameId: string,
 ): Promise<string | null> {
-  const storyId = await frameStoryId(host, pageId, frameBounds(frame));
-  if (!storyId) {
-    host.log.warn(
-      `chain-lower: could not resolve story for frame ${frame.frameId}`,
-    );
-    return null;
+  const stories = await host.document.collection<{ selfId: string }>("stories");
+  for (const s of stories) {
+    const links = await host.document.frameChain(s.selfId);
+    if (links.some((l) => l.frameId === frameId)) return s.selfId;
   }
-
-  const columnWidths = await measureColumnWidths(host, page.content);
-  const ops = pageTableMutations(page, storyId, columnWidths);
-
-  const tableOutcome = await host.document.mutate(ops.insert);
-  if (!tableOutcome.applied || !tableOutcome.createdId) {
-    host.log.warn("chain-lower: insertTable rejected", tableOutcome);
-    return null;
-  }
-  const tableId = tableIdOf(tableOutcome.createdId);
-
-  // Phase 3 — two lanes (text pour + decor batch), never one combined batch.
-  await pourCellContent(host, page.content, storyId, tableId);
-  return tableId;
+  return null;
 }
 
-/** A chain frame's page-local bounds for the hitTest center. The geometry
- *  door gave us the content box; we reconstruct a bounds tuple at the
- *  origin so the center lands inside the frame (hitTest uses page-local
- *  coords, but a frame's own center in content space coincides with the
- *  hittable interior — the existing single-frame flow uses the placement
- *  bounds the same way). */
-function frameBounds(frame: ChainFrame): [number, number, number, number] {
-  return [0, 0, frame.box.heightPt, frame.box.widthPt];
+/** Apply a placed table's in-place refresh (`tableRefreshOps`) in the
+ *  engine's apply lanes: the structure ops as one batch, the changed cells'
+ *  text one op each (the text lane), then the decor batch led by the fill
+ *  swatches it names. Returns the number of `mutate` calls. */
+async function applyTableRefresh(
+  host: BundleHost,
+  storyId: string,
+  tableId: string,
+  prev: LoweredContent,
+  prevWidths: readonly number[],
+  next: LoweredContent,
+  nextWidths: readonly number[],
+): Promise<number> {
+  const ops = tableRefreshOps(prev, next, storyId, tableId, prevWidths, nextWidths);
+  let calls = 0;
+  if (ops.structure.length > 0) {
+    calls += 1;
+    const r = await host.document.mutate({
+      op: "batch",
+      args: { ops: ops.structure },
+    });
+    if (!r.applied) host.log.warn("refresh: table reshape rejected", r);
+  }
+  for (const op of ops.text) {
+    calls += 1;
+    const r = await host.document.mutate(op);
+    if (!r.applied) host.log.warn("refresh: cell text rejected", r);
+  }
+  const wanted = cellFillSwatchOps(next);
+  const mints =
+    wanted.length === 0
+      ? []
+      : cellFillSwatchOps(next, await readKnownSwatchIds(host));
+  const decor = [...mints, ...ops.decor];
+  if (decor.length > 0) {
+    calls += 1;
+    const r = await host.document.mutate({ op: "batch", args: { ops: decor } });
+    if (!r.applied) host.log.warn("refresh: cell decor rejected", r);
+  }
+  return calls;
+}
+
+/**
+ * Refresh a placed native table IN PLACE to `next` (Wave 4 — placed tables
+ * follow edits). Diffs against the table's recorded content: only changed
+ * cells are re-poured, rows/columns reshaped at the tail, removed fills and
+ * edges reset — the table is never duplicated. Re-stamps the frame's binding
+ * with `contentVersion`. Returns the updated record (the new baseline).
+ */
+export async function refreshLoweredTable(
+  host: BundleHost,
+  info: LoweredTableInfo,
+  next: LoweredContent,
+  contentVersion: number,
+  sheetName: string,
+): Promise<LoweredTableInfo> {
+  const prev = info.content;
+  const prevWidths = info.columnWidths ?? [];
+  const nextWidths = await measureColumnWidths(host, next);
+  if (prev) {
+    await applyTableRefresh(
+      host,
+      info.storyId,
+      info.tableId,
+      prev,
+      prevWidths,
+      next,
+      nextWidths,
+    );
+  }
+  const r = await host.document.mutate({
+    op: "setPluginMetadata",
+    args: {
+      elementId: { kind: "textFrame", id: info.frameId },
+      key: BINDING_KEY,
+      value: JSON.stringify(makeBinding(sheetName, info.range, contentVersion)),
+    },
+  });
+  if (!r.applied) host.log.warn("refresh: binding re-stamp rejected", r);
+  return { ...info, content: next, columnWidths: nextWidths, contentVersion };
+}
+
+/** One table a chain placement owns: the table id and what it shows. A
+ *  `blank` table belongs to a frame the last pagination did not need (the
+ *  wire has no table-delete op, so it is emptied, kept, and reused when the
+ *  range needs more frames again). */
+export interface ChainTable {
+  tableId: string;
+  content: LoweredContent;
+  widths: number[];
+  blank: boolean;
 }
 
 /** The result of a chain pagination pass. */
@@ -604,53 +738,51 @@ export interface ChainLowerResult {
   chain: ChainFrame[];
   /** The pages the engine produced (one per filled frame). */
   pages: Page[];
-  /** The tableId lowered into each page's frame (null where a frame's story
-   *  could not be resolved or the table was rejected). */
+  /** The tableId lowered into each page's frame (null where the table was
+   *  rejected). */
   tableIds: (string | null)[];
+  /** Every table this placement owns, in story order (the baseline the
+   *  next pass refreshes from — see `subscribeChainReflow`'s `from`). */
+  tables: ChainTable[];
+}
+
+/** Pagination options (forwarded to the engine). */
+export interface ChainOptions {
+  repeatedHeaderRows?: number;
+  continuedMarker?: boolean;
+  keepRowsTogether?: [number, number][];
+}
+
+/** The content an unused chain table is reshaped to: one empty row. */
+function blankContent(like: LoweredContent): LoweredContent {
+  return {
+    cols: like.cols,
+    rows: [{ index: 0, heightPt: 1, cells: [] }],
+    rules: { h: [], v: [] },
+    merges: [],
+    styles: like.styles,
+  };
 }
 
 /**
- * Lower `sheet`/`range` ACROSS a host frame chain with live pagination
- * (Wave 2D, RFI C-2 / S-05; spec §8.2). Reads the real chain via
- * `host.document.frameChain(storyId)`, resolves each frame's content box via
- * `host.document.elementGeometry`, asks the engine to paginate the range into
- * those boxes (all threading math in Rust), and lowers each resulting `Page`
- * into ITS frame's story as a native table. Returns the pass result, or null
- * when no chain resolves.
- *
- * `chainStoryId` selects the chain; pass the story of the active/first frame
- * (the caller resolves it from selection or a known frame). The caller may
- * instead supply a ready `chain` (the frames + boxes) to bypass the host
- * reads — same downstream lowering.
+ * One pagination pass over a chain (Wave 2D / S-05; Wave 4 replace). Asks
+ * the engine to paginate the range into the chain's content boxes (all
+ * threading math in Rust), then for page i: REFRESHES the placement's i-th
+ * table in place when it has one, else appends a new table (insertTable
+ * appends to the story, so story order = page order). Tables the pass no
+ * longer needs are emptied (no delete op on the wire). All pages go into the
+ * CHAIN'S story — threaded frames share one story.
  */
-export async function lowerPaginatedToChain(
+async function paginatePass(
   host: BundleHost,
   engine: SheetEngine,
   sheet: number,
   range: string,
-  chainStoryId: string,
-  opts?: {
-    repeatedHeaderRows?: number;
-    continuedMarker?: boolean;
-    keepRowsTogether?: [number, number][];
-    chain?: ChainFrame[];
-  },
-): Promise<ChainLowerResult | null> {
-  const pageId = await activePageId(host);
-  if (!pageId) {
-    host.log.warn("chain-lower: no page to paginate into");
-    return null;
-  }
-
-  const chain =
-    opts?.chain ?? (await resolveChain(host, chainStoryId));
-  if (chain.length === 0) {
-    host.log.warn(`chain-lower: story ${chainStoryId} threads no frames`);
-    return null;
-  }
-
-  // Engine-computed pagination (all spreadsheet + threading semantics in
-  // Rust). Hand it the chain's content boxes in order.
+  storyId: string,
+  chain: ChainFrame[],
+  owned: ChainTable[],
+  opts?: ChainOptions,
+): Promise<ChainLowerResult> {
   const pages = engine.paginate(
     sheet,
     range,
@@ -661,33 +793,108 @@ export async function lowerPaginatedToChain(
       keepRowsTogether: opts?.keepRowsTogether,
     },
   );
-
-  // Lower each page into the frame it targets (page.frameIndex indexes the
-  // chain we handed the engine).
+  const tables: ChainTable[] = [];
   const tableIds: (string | null)[] = [];
-  for (const page of pages) {
-    const frame = chain[page.frameIndex];
-    if (!frame) {
-      // The engine returned a page for a frame index past the chain — should
-      // not happen (paginate only fills supplied frames), but stay honest.
+  for (const [i, page] of pages.entries()) {
+    const widths = await measureColumnWidths(host, page.content);
+    const prev = owned[i];
+    if (prev) {
+      await applyTableRefresh(
+        host,
+        storyId,
+        prev.tableId,
+        prev.content,
+        prev.widths,
+        page.content,
+        widths,
+      );
+      tables.push({ tableId: prev.tableId, content: page.content, widths, blank: false });
+      tableIds.push(prev.tableId);
+      continue;
+    }
+    const ops = pageTableMutations(page, storyId, widths);
+    const outcome = await host.document.mutate(ops.insert);
+    if (!outcome.applied || !outcome.createdId) {
+      host.log.warn("chain-lower: insertTable rejected", outcome);
       tableIds.push(null);
       continue;
     }
-    tableIds.push(await lowerPageToFrame(host, pageId, frame, page));
+    const tableId = tableIdOf(outcome.createdId);
+    await pourCellContent(host, page.content, storyId, tableId);
+    tables.push({ tableId, content: page.content, widths, blank: false });
+    tableIds.push(tableId);
   }
+  // Tables the range no longer needs: emptied, kept for reuse.
+  const spare = owned.slice(pages.length);
+  if (spare.some((t) => !t.blank)) {
+    host.log.warn(
+      `chain-lower: ${spare.length} table(s) no longer needed were emptied — ` +
+        "the wire has no table-delete op (RFI candidate deleteTable)",
+    );
+  }
+  for (const t of spare) {
+    if (t.blank) {
+      tables.push(t);
+      continue;
+    }
+    const blank = blankContent(t.content);
+    await applyTableRefresh(host, storyId, t.tableId, t.content, t.widths, blank, t.widths);
+    tables.push({ ...t, content: blank, blank: true });
+  }
+  return { storyId, chain, pages, tableIds, tables };
+}
 
-  return { storyId: chainStoryId, chain, pages, tableIds };
+/**
+ * Lower `sheet`/`range` ACROSS a host frame chain with live pagination
+ * (Wave 2D, RFI C-2 / S-05; spec §8.2). Reads the real chain via
+ * `host.document.frameChain(storyId)`, resolves each frame's content box via
+ * `host.document.elementGeometry`, asks the engine to paginate the range into
+ * those boxes (all threading math in Rust), and lowers each resulting `Page`
+ * as a native table into the chain's story. Returns the pass result, or null
+ * when no chain resolves.
+ *
+ * `chainStoryId` selects the chain (the story the threaded frames share).
+ * The caller may supply a ready `chain` (the frames + boxes) to bypass the
+ * host reads — same downstream lowering.
+ */
+export async function lowerPaginatedToChain(
+  host: BundleHost,
+  engine: SheetEngine,
+  sheet: number,
+  range: string,
+  chainStoryId: string,
+  opts?: ChainOptions & { chain?: ChainFrame[] },
+): Promise<ChainLowerResult | null> {
+  const chain = opts?.chain ?? (await resolveChain(host, chainStoryId));
+  if (chain.length === 0) {
+    host.log.warn(`chain-lower: story ${chainStoryId} threads no frames`);
+    return null;
+  }
+  return paginatePass(host, engine, sheet, range, chainStoryId, chain, [], opts);
+}
+
+/** How long a burst of reflow events settles before ONE re-pagination. */
+export const CHAIN_REFLOW_DEBOUNCE_MS = 150;
+
+/** A live chain placement (Wave 4): re-paginates on reflow (debounced) and
+ *  on demand (`refresh()`, after workbook edits), always REPLACING the
+ *  placement's own tables rather than adding new ones. */
+export interface ChainSubscription extends Disposable {
+  /** Re-paginate now (serialised behind any pass in flight). */
+  refresh(): Promise<ChainLowerResult | null>;
+  /** The latest pass (null before the first). */
+  current(): ChainLowerResult | null;
 }
 
 /**
  * Subscribe to live re-pagination for a chain (Wave 2D, S-05; §8.5). Every
  * `host.document.onDidChange` event that carries `reflow` for a frame IN the
- * active chain re-runs `lowerPaginatedToChain` (a content-box resize changed
- * the available height — re-split). Events with NO `reflow` are the §8.5
- * transform case (move/scale/rotate is display-only) and are IGNORED — they
- * never re-paginate. Returns the subscription `Disposable`; the chain is
- * re-resolved on every reflow (a resize can add/remove fitting rows but the
- * topology read stays cheap).
+ * chain schedules a re-pagination, DEBOUNCED (`debounceMs`) so a resize drag
+ * paginates once at its end. Events with NO `reflow` are the §8.5 transform
+ * case (move/scale/rotate is display-only) and are IGNORED. Each pass
+ * refreshes the tables of the previous one in place (pass `from` — the
+ * `lowerPaginatedToChain` result — so the first reflow replaces what that
+ * placed instead of adding to it).
  */
 export function subscribeChainReflow(
   host: BundleHost,
@@ -695,38 +902,59 @@ export function subscribeChainReflow(
   sheet: number,
   range: string,
   chainStoryId: string,
-  opts?: {
-    repeatedHeaderRows?: number;
-    continuedMarker?: boolean;
-    keepRowsTogether?: [number, number][];
-  },
-): Disposable {
-  // Track the chain frame ids so we only react to reflow of OUR frames.
-  let chainFrameIds = new Set<string>();
-  void resolveChain(host, chainStoryId).then((chain) => {
-    chainFrameIds = new Set(chain.map((c) => c.frameId));
-  });
+  opts?: ChainOptions & { from?: ChainLowerResult | null; debounceMs?: number },
+): ChainSubscription {
+  let last: ChainLowerResult | null = opts?.from ?? null;
+  let chainFrameIds = new Set<string>(last?.chain.map((c) => c.frameId) ?? []);
+  if (chainFrameIds.size === 0) {
+    void resolveChain(host, chainStoryId).then((chain) => {
+      if (chainFrameIds.size === 0) chainFrameIds = new Set(chain.map((c) => c.frameId));
+    });
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inflight: Promise<ChainLowerResult | null> = Promise.resolve(last);
+  let disposed = false;
 
-  return host.document.onDidChange((e) => {
-    // §8.5: no reflow → a pure transform → DO NOT re-paginate.
-    if (!e.reflow) return;
-    // Only re-paginate when the resized frame belongs to this chain. If we
-    // have not yet resolved the chain (the async prime is in flight), fall
-    // through and re-paginate — re-resolving the chain is the source of truth.
-    if (chainFrameIds.size > 0 && !chainFrameIds.has(e.reflow.frameId)) return;
-
-    void (async () => {
-      const result = await lowerPaginatedToChain(
+  const run = (): Promise<ChainLowerResult | null> => {
+    inflight = inflight.then(async () => {
+      if (disposed) return last;
+      const chain = await resolveChain(host, chainStoryId);
+      if (chain.length === 0) return last;
+      last = await paginatePass(
         host,
         engine,
         sheet,
         range,
         chainStoryId,
+        chain,
+        last?.tables ?? [],
         opts,
       );
-      if (result) {
-        chainFrameIds = new Set(result.chain.map((c) => c.frameId));
-      }
-    })();
+      chainFrameIds = new Set(last.chain.map((c) => c.frameId));
+      return last;
+    });
+    return inflight;
+  };
+
+  const sub = host.document.onDidChange((e) => {
+    // §8.5: no reflow → a pure transform → DO NOT re-paginate.
+    if (!e.reflow) return;
+    if (chainFrameIds.size > 0 && !chainFrameIds.has(e.reflow.frameId)) return;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      void run();
+    }, opts?.debounceMs ?? CHAIN_REFLOW_DEBOUNCE_MS);
   });
+
+  return {
+    refresh: run,
+    current: () => last,
+    dispose() {
+      disposed = true;
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      sub.dispose();
+    },
+  };
 }
