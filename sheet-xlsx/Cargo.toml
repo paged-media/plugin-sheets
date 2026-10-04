@@ -36,6 +36,13 @@ sheet-chart = { path = "../sheet-chart" }
 # sheet-lower/sheet-chart — declaring it directly makes the dependency explicit.
 # No SDK, no inter-plugin contact, no cycle (xlsx -> format -> core).
 sheet-format = { path = "../sheet-format" }
+# DOCUMENTED DEVIATION from the spec §4 dependency table (xlsx -> core only).
+# A shared-formula member (`<f t="shared" si=".."/>`) carries no text; its
+# formula is the master's with relative refs moved by the member's offset.
+# `sheet_parser::shift_formula_text` does that on the parser's own lexer (the
+# single source of the A1 token grammar). `sheet-parser` is a PURE leaf crate
+# (deps = core); no cycle (xlsx -> parser -> core).
+sheet-parser = { path = "../sheet-parser" }
 zip.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true

@@ -1001,6 +1001,7 @@ dependencies = [
  "sheet-core",
  "sheet-format",
  "sheet-lower",
+ "sheet-parser",
  "thiserror",
  "zip",
 ]

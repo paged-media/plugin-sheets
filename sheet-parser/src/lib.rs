@@ -62,6 +62,7 @@ mod pratt;
 mod print;
 mod refs;
 mod rewrite;
+mod shift;
 mod structured;
 
 pub use error::ParseError;
@@ -69,6 +70,7 @@ pub use extract::{extract_refs, RefSet};
 pub use future::{storage_prefix, strip_storage_prefixes};
 pub use print::{print, print_ooxml};
 pub use rewrite::{rewrite, rewrite_fill, Edit};
+pub use shift::shift_formula_text;
 
 use sheet_core::ast::{Formula, NameId};
 use sheet_core::SheetId;

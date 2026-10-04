@@ -97,7 +97,7 @@ pub fn parse(xml: &[u8], shared: &[CompactString]) -> Result<ParsedWorksheet, Xl
     // Shared-formula masters: si -> (master text, master ref). Members with
     // the same si but no <f> text reuse the master's TEXT verbatim (T0
     // honest limitation, documented below).
-    let mut shared_masters: BTreeMap<u32, String> = BTreeMap::new();
+    let mut shared_masters: BTreeMap<u32, (String, u32, u32)> = BTreeMap::new();
 
     // The depth-1 element name we are currently inside (a direct child of
     // <worksheet>), for unknown-subtree capture.
@@ -353,27 +353,33 @@ impl CellAccum {
 /// Finalize a `<c>` accumulator into a [`ParsedCell`], resolving the value by
 /// its `t=` type and handling shared-formula masters/members.
 ///
-/// Shared-formula handling (T0, honest limitation): when a member has no `<f>`
-/// text but carries `si=`, we copy the **master's text verbatim** rather than
-/// translating the relative refs to the member's position. The text round-
-/// trips losslessly; the consumer (sheet-js) re-derives correct refs when it
-/// parses. Recorded as the `sheet.xlsx.worksheet.cells` registry note.
+/// Shared-formula handling: a member with no `<f>` text but an `si=` gets the
+/// master's text with every RELATIVE reference moved by the member's offset
+/// from the master (ECMA-376 §18.3.1.40), so each cell carries its own
+/// formula — the engine evaluates it and a dirty re-encode writes it as a
+/// plain `<f>`. Text that does not lex keeps the master text verbatim.
 fn push_cell(
     out: &mut ParsedWorksheet,
     acc: CellAccum,
     shared: &[CompactString],
-    shared_masters: &mut BTreeMap<u32, String>,
+    shared_masters: &mut BTreeMap<u32, (String, u32, u32)>,
 ) -> Result<(), XlsxError> {
     // Resolve the formula text.
     let formula = if !acc.f.is_empty() {
         if acc.f_is_shared_master {
             if let Some(si) = acc.f_shared_si {
-                shared_masters.insert(si, acc.f.clone());
+                shared_masters.insert(si, (acc.f.clone(), acc.row, acc.col));
             }
         }
         Some(acc.f.clone())
     } else if let Some(si) = acc.f_shared_si {
-        shared_masters.get(&si).cloned()
+        shared_masters.get(&si).map(|(text, mr, mc)| {
+            let (dr, dc) = (
+                i64::from(acc.row) - i64::from(*mr),
+                i64::from(acc.col) - i64::from(*mc),
+            );
+            sheet_parser::shift_formula_text(text, dr, dc).unwrap_or_else(|| text.clone())
+        })
     } else {
         None
     };
@@ -563,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_formula_member_reuses_master_text() {
+    fn shared_formula_member_gets_master_shifted_to_its_position() {
         let xml = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>
     <row r="1">
@@ -578,8 +584,8 @@ mod tests {
         let a1 = ws.cells.iter().find(|c| c.row == 0 && c.col == 0).unwrap();
         let a2 = ws.cells.iter().find(|c| c.row == 1 && c.col == 0).unwrap();
         assert_eq!(a1.formula.as_deref(), Some("B1*2"));
-        // T0 honest limitation: member reuses master text verbatim.
-        assert_eq!(a2.formula.as_deref(), Some("B1*2"));
+        // The member is the master moved one row down (ECMA-376 §18.3.1.40).
+        assert_eq!(a2.formula.as_deref(), Some("B2*2"));
     }
 
     #[test]
