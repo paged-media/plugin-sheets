@@ -120,8 +120,9 @@ const N: u32 = 2000;
 // COVERS: the range-dependency walk (graph.rs dependents_of / precedents_in,
 // the M1 interval-index seam) and range materialization (argview.rs).
 // Editing A1 of a 2000-row running total: 2000 evaluations are inherent
-// (every total changes); the 4 000 000 box scans are not — an interval
-// index makes the probes ~n log n. The range views borrow the model (no
+// (every total changes). The dirty walk is the interval index's: each
+// probe costs the tree levels plus its hits (before 2026-10 each probe
+// scanned every box: 4 000 000). The range views borrow the model (no
 // copies); the N²/2 cells READ are SUM's own scan.
 #[test]
 fn perf_running_total_edit_head__feat__sheet_calc_engine() {
@@ -136,8 +137,8 @@ fn perf_running_total_edit_head__feat__sheet_calc_engine() {
         work,
         PerfCounters {
             range_probes: 2_001,
-            range_keys_scanned: 4_002_000, // N² — interval index → ~n log n
-            precedent_candidates_scanned: 4_000_000, // N² — keys × dirty cut
+            range_keys_scanned: 2_011, // 2000 hits + 11 tree levels (was 4 002 000: every probe scanned every box)
+            precedent_candidates_scanned: 2_000, // one column seek per dirty total (was 4 000 000: boxes × dirty cut)
             ranges_materialized: 2_000,
             cells_read: 2_001_000, // N²/2 — inherent for SUM-by-scan (was 2_001_000 cells COPIED; views copy 0)
             evaluations: 2_000,
@@ -149,8 +150,7 @@ fn perf_running_total_edit_head__feat__sheet_calc_engine() {
 }
 
 // COVERS: the same walk from the tail — one formula reads A2000, so only one
-// evaluation is inherent; the dirty walk still pays one full box scan per
-// visited cell.
+// evaluation is inherent; the probe walks the tree levels to its one hit.
 #[test]
 fn perf_running_total_edit_tail__feat__sheet_calc_engine() {
     let mut e = running_total(N);
@@ -163,7 +163,7 @@ fn perf_running_total_edit_tail__feat__sheet_calc_engine() {
         work,
         PerfCounters {
             range_probes: 2,
-            range_keys_scanned: 4_000, // 2 probes × 2000 boxes — interval index → ~2 log n
+            range_keys_scanned: 12, // 11 tree levels + 1 hit (was 4 000)
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
             cells_read: 2_000,
@@ -176,7 +176,8 @@ fn perf_running_total_edit_tail__feat__sheet_calc_engine() {
 }
 
 // COVERS: building the running total formula by formula — what a paste or
-// a load-by-entry pays. Each entry probes every box registered so far.
+// a load-by-entry pays. (Before the index each entry probed every box
+// registered so far; now the column-B writes meet no lane holding a box.)
 #[test]
 fn perf_running_total_build__feat__sheet_calc_engine() {
     let mut e = engine();
@@ -195,7 +196,7 @@ fn perf_running_total_build__feat__sheet_calc_engine() {
         work,
         PerfCounters {
             range_probes: 4_000,
-            range_keys_scanned: 2_001_000, // N²/2
+            range_keys_scanned: 0, // no probe meets a lane holding a box (was 2 001 000)
             precedent_candidates_scanned: 2_000,
             ranges_materialized: 2_000,
             cells_read: 2_001_000, // N²/2 — inherent for SUM-by-scan (copies: 2_001_000 → 0)
@@ -246,8 +247,8 @@ fn perf_vlookup_edit_table__feat__sheet_calc_engine() {
         work,
         PerfCounters {
             range_probes: 1_001,
-            range_keys_scanned: 1_001,
-            precedent_candidates_scanned: 1_000_000, // 1000 dirty × 1000 candidates — interval index → ~0
+            range_keys_scanned: 1, // the one shared table box (flat-scanned lane)
+            precedent_candidates_scanned: 2_000, // 2 column seeks per lookup (was 1 000 000)
             ranges_materialized: 1_000,
             cells_read: 501_500, // each lookup reads keys until it matches + 1 value (was 2_000_000 COPIED)
             evaluations: 1_000,
@@ -270,7 +271,7 @@ fn perf_vlookup_edit_key__feat__sheet_calc_engine() {
         work,
         PerfCounters {
             range_probes: 2,
-            range_keys_scanned: 2,
+            range_keys_scanned: 0,
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
             cells_read: 8, // the lookup reads 7 keys + 1 value (was 2_000 COPIED)
@@ -306,7 +307,7 @@ fn perf_insert_row__feat__sheet_calc_engine() {
         PerfCounters {
             range_probes: 0,
             range_keys_scanned: 0,
-            precedent_candidates_scanned: 1_000_000, // N² — the topo sort over the rebuilt all-dirty graph
+            precedent_candidates_scanned: 1_000, // one seek per formula (was 1 000 000) — evaluations stay all-dirty
             ranges_materialized: 1_000,
             cells_read: 501_000,
             evaluations: 1_000, // every formula, whatever the edit touched — only the shifted ones need it

@@ -859,6 +859,7 @@ name = "sheet-calc"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "proptest",
  "rustc-hash",
  "sheet-calc",
  "sheet-core",

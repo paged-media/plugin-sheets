@@ -51,7 +51,7 @@ use std::collections::BinaryHeap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use sheet_core::CellRef;
 
-use crate::graph::DepGraph;
+use crate::graph::{Candidates, DepGraph};
 
 /// The result of ordering a dirty cut: the cells to evaluate in dependency
 /// order, plus the cells that could not be ordered because they sit on a cycle.
@@ -72,8 +72,9 @@ pub fn order(dirty: &FxHashSet<CellRef>, graph: &DepGraph) -> TopoOrder {
     let mut in_degree: FxHashMap<CellRef, usize> = FxHashMap::default();
     let mut dependents: FxHashMap<CellRef, Vec<CellRef>> = FxHashMap::default();
 
+    let candidates = Candidates::new(dirty);
     for &cell in dirty {
-        let precedents = graph.precedents_in(cell, dirty);
+        let precedents = graph.precedents_in(cell, &candidates);
         in_degree.entry(cell).or_insert(0);
         for p in precedents {
             // Edge p -> cell.

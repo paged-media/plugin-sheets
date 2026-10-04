@@ -98,7 +98,7 @@ fn perf_sort_1k_rows_with_sum__feat__sheet_edit_ops() {
         work,
         PerfCounters {
             range_probes: 2_000,
-            range_keys_scanned: 2_000,
+            range_keys_scanned: 1_000, // one box test per write into column A (was 2 000)
             precedent_candidates_scanned: 1_000,
             ranges_materialized: 1_000,
             cells_read: 1_000_000, // the column once per moved cell — batched → 1_000
@@ -135,7 +135,7 @@ fn perf_paste_100x10_under_totals__feat__sheet_edit_ops() {
         work,
         PerfCounters {
             range_probes: 2_000,
-            range_keys_scanned: 20_000,
+            range_keys_scanned: 2_000, // one box per column lane (was 20 000: every probe × 10 boxes)
             precedent_candidates_scanned: 1_000,
             ranges_materialized: 1_000,
             cells_read: 100_000,

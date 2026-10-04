@@ -51,14 +51,20 @@ use std::cell::Cell;
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct PerfCounters {
     /// `DepGraph::dependents_of` calls — one per cell a dirty walk visits
-    /// (`graph.rs`). Each is a probe of the range-dependency index.
+    /// (`graph.rs`). Each is a stab of the range-dependency index.
     pub range_probes: u64,
-    /// Registered range boxes EXAMINED across those probes. Every probe scans
-    /// every registered box today (the M1 interval-index seam), so this is
-    /// probes × boxes — the quadratic the interval index removes.
+    /// Range-index work across those probes (`graph.rs` `RangeIndex::stab`):
+    /// segment-tree levels visited (only levels holding a node, in the lanes
+    /// that exist for the probed column — 0 when no box covers it; at most
+    /// 33 per lane) plus the box entries
+    /// examined at them. Before the interval index (2026-10) every probe
+    /// scanned every registered box: probes × boxes.
     pub range_keys_scanned: u64,
-    /// Range-box × dirty-candidate containment tests in
-    /// `DepGraph::precedents_in` (`graph.rs`, per dirty cell from `topo`).
+    /// Precedent search work in `DepGraph::precedents_in` (`graph.rs`
+    /// `Candidates::inside`, per dirty cell from `topo`): one per box-column
+    /// seek plus one per candidate found (or one per candidate on the scan
+    /// fallback for boxes wider than the dirty cut). Before 2026-10 it was
+    /// boxes × the whole dirty cut.
     pub precedent_candidates_scanned: u64,
     /// Range views built (`argview.rs` `materialize_range*`) — one per range
     /// argument per evaluation.

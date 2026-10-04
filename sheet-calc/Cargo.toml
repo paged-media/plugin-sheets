@@ -30,6 +30,7 @@ sheet-calc = { path = ".", features = ["perf-counters"] }
 # Wall-clock benches (benches/): trended, never gated — the gates are the
 # count budgets in tests/perf_budgets.rs. No plotters/rayon.
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+proptest.workspace = true
 
 [[bench]]
 name = "calc"
