@@ -65,11 +65,11 @@
 use sheet_core::{CellValue, SheetId, StyleId};
 use sheet_format::sections::SectionKind;
 use sheet_format::serial::{serial_to_ymd, ymd_to_serial};
-use sheet_format::FormatCache;
+use sheet_format::{FormatCache, FormatCtx};
 use sheet_parser::{parse, print, rewrite_fill};
 
 use super::{
-    cell_input_text, parse_range, CellChange, CellEdit, CircularRef, ModelParseCtx,
+    cell_display, cell_input_text, parse_range, CellChange, CellEdit, CellInput, ModelParseCtx,
     ModelSheetNames, SessionError, SheetSession, SortResult, T0_LOWER_CELL_CAP,
 };
 
@@ -372,44 +372,52 @@ impl SheetSession {
             self.extra_dirty.insert(sheet);
         }
 
-        // ── inputs through the normal entry lane.
-        let mut edits = Vec::new();
-        let mut changed: std::collections::BTreeMap<(u16, u32, u32), String> = Default::default();
-        let mut circular: std::collections::BTreeSet<(u16, u32, u32)> = Default::default();
-        for (row, col, next, _) in plan {
-            let prev = cell_input_text(self.engine().model(), sheet, row, col);
-            if prev == next {
-                continue;
-            }
-            let r = self.set_cell(sheet, row, col, &next)?;
-            for c in r.changed {
-                changed.insert((c.sheet, c.row, c.col), c.display);
-            }
-            for c in r.circular {
-                circular.insert((c.sheet, c.row, c.col));
-            }
-            edits.push(CellEdit {
-                sheet,
-                row,
-                col,
-                prev_input: prev,
-                next_input: next,
-            });
-        }
-        Ok(SortResult {
-            changed: changed
-                .into_iter()
-                .map(|((sheet, row, col), display)| CellChange {
+        // ── inputs in ONE batch write (one recalc); the reply's priors are
+        //    the journal's inverse. Every input is engine-printed, so the
+        //    all-or-nothing parse does not refuse a fill in practice — when
+        //    it does, nothing is written and the reason surfaces.
+        let writes: Vec<CellInput> = {
+            let model = self.engine().model();
+            plan.into_iter()
+                .filter(|(row, col, next, _)| cell_input_text(model, sheet, *row, *col) != *next)
+                .map(|(row, col, input, _)| CellInput {
                     sheet,
                     row,
                     col,
-                    display,
+                    input,
                 })
-                .collect(),
-            circular: circular
-                .into_iter()
-                .map(|(sheet, row, col)| CircularRef { sheet, row, col })
-                .collect(),
+                .collect()
+        };
+        if writes.is_empty() {
+            return Ok(SortResult::default());
+        }
+        let res = self.set_cells(&writes)?;
+        let model = self.engine().model();
+        let mut cache = FormatCache::default();
+        let ctx = FormatCtx::new(model.calc.date_system, model.calc.locale);
+        let changed = writes
+            .iter()
+            .map(|w| CellChange {
+                sheet,
+                row: w.row,
+                col: w.col,
+                display: cell_display(model, sheet, w.row, w.col, &mut cache, &ctx),
+            })
+            .collect();
+        let edits = writes
+            .into_iter()
+            .zip(res.prev_inputs)
+            .map(|(w, prev_input)| CellEdit {
+                sheet,
+                row: w.row,
+                col: w.col,
+                prev_input,
+                next_input: w.input,
+            })
+            .collect();
+        Ok(SortResult {
+            changed,
+            circular: res.circular,
             edits,
         })
     }

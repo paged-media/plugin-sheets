@@ -311,3 +311,35 @@ fn perf_save_then_edit__feat__sheet_xlsx_roundtrip() {
     assert_eq!(back.get_cell_display(0, 499, 1), "2");
     assert_eq!(back.get_cell_display(0, 0, 1), "2");
 }
+
+// COVERS: the fill handle (`fill_range`, Wave 5) — a 2-cell number series
+// dragged down 998 rows under a column total. Applied through the batch
+// door: ONE recalc, the total evaluated once.
+#[test]
+fn perf_fill_series_1k_under_sum__feat__sheet_edit_ops() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "1").unwrap();
+    s.set_cell(0, 1, 0, "2").unwrap();
+    s.set_cell(0, ROWS, 0, &format!("=SUM(A1:A{ROWS})"))
+        .unwrap();
+    let (res, work) = measure(|| s.fill_range(0, "A1:A2", &format!("A1:A{ROWS}"), true));
+    let res = res.expect("the fill applies");
+    assert_eq!(res.edits.len(), (ROWS - 2) as usize);
+    assert_eq!(s.get_cell_display(0, ROWS - 1, 0), ROWS.to_string());
+    assert_eq!(s.get_cell_display(0, ROWS, 0), "500500");
+    check(
+        "fill a series down 998 rows under a SUM",
+        work,
+        PerfCounters {
+            range_probes: 999,
+            range_keys_scanned: 999,
+            precedent_candidates_scanned: 1,
+            ranges_materialized: 1,
+            cells_read: 1_000, // the total once (per-cell lane: one read of A1:A1000 per cell)
+            evaluations: 1,
+            recalcs: 1, // one batch (per-cell lane: 998)
+            recalc_passes: 1,
+            cells_marked_dirty: 1,
+        },
+    );
+}
