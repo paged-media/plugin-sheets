@@ -174,9 +174,8 @@ pub fn render_number(x: f64, section: &Section, force_minus: bool, loc: &LocaleD
                     out.push_str(&int_rendered);
                     int_written = true;
                 }
-                if !frac_rendered.is_empty() || frac_has_forced(&frac_specs) {
-                    out.push_str(loc.decimal);
-                }
+                // The point is always shown (Excel 16: `#.##` on 1 is "1.").
+                out.push_str(loc.decimal);
             }
             Token::DigitZero | Token::DigitHash | Token::DigitSpace => {
                 if seen_decimal {
@@ -377,11 +376,6 @@ enum DigitKind {
     Zero,
     Hash,
     Space,
-}
-
-fn frac_has_forced(frac: &[DigitKind]) -> bool {
-    frac.iter()
-        .any(|d| matches!(d, DigitKind::Zero | DigitKind::Space))
 }
 
 /// Render the integer part: pad to the count of forced placeholders, add
@@ -682,7 +676,7 @@ fn render_fraction(
                     } else {
                         out.push_str(&render_frac_digits(num, &num_specs));
                         out.push('/');
-                        out.push_str(&render_frac_digits(den, &den_specs));
+                        out.push_str(&render_den_digits(den, &den_specs));
                     }
                     frac_written = true;
                 }
@@ -732,6 +726,25 @@ fn render_frac_digits(value: u32, specs: &[DigitKind]) -> String {
         let mut p = " ".repeat(pad);
         p.push_str(&body);
         body = p;
+    }
+    body
+}
+
+/// The denominator: LEFT-aligned, its `?` slots padded AFTER it (Excel 16:
+/// `# ??/??` on 1/7 is "  1/7 ", not "  1/ 7"); `0` slots zero-pad in front.
+fn render_den_digits(value: u32, specs: &[DigitKind]) -> String {
+    let zero_only: Vec<DigitKind> = specs
+        .iter()
+        .copied()
+        .filter(|d| *d == DigitKind::Zero)
+        .collect();
+    let mut body = render_frac_digits(value, &zero_only);
+    let want = specs
+        .iter()
+        .filter(|d| matches!(d, DigitKind::Zero | DigitKind::Space))
+        .count();
+    while body.len() < want {
+        body.push(' ');
     }
     body
 }
@@ -860,7 +873,8 @@ mod tests {
     #[test]
     fn optional_digits() {
         assert_eq!(fmt("#.##", 1.5), "1.5");
-        assert_eq!(fmt("#.##", 1.0), "1");
+        // The point always shows (Excel 16: "1.").
+        assert_eq!(fmt("#.##", 1.0), "1.");
         assert_eq!(fmt("0.##", 0.5), "0.5");
     }
 

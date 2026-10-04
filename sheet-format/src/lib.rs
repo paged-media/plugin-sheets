@@ -173,15 +173,16 @@ fn format_number_value(
         return (String::new(), color);
     }
 
-    // A `[$…-LCID]` locale token on the CODE overrides the document locale for
-    // this code (ruling `sheet.format.locale.locale-from-workbook`): a cell-
-    // level numFmt with `[$-407]` renders de regardless of the ctx locale.
-    // `None` (every code with no locale token) keeps the ctx locale, so en-US
-    // output stays byte-identical.
-    let loc = locale::locale_data(fmt.locale.unwrap_or(ctx.locale));
+    // A `[$…-LCID]` locale token on the CODE names the LANGUAGE of month and
+    // day names (`[$-407]mmmm` is "Januar"); number SEPARATORS always come
+    // from the workbook/display locale — Excel 16 renders `[$€-407]#,##0` as
+    // €1,234 under en-US (recorded). The token still declares the workbook
+    // locale on load (ruling `sheet.format.locale.locale-from-workbook`).
+    let names = locale::locale_data(fmt.locale.unwrap_or(ctx.locale));
+    let loc = locale::locale_data(ctx.locale);
     let s = match section.kind {
         sections::SectionKind::DateTime => {
-            match datetime::render_datetime(n, section, ctx.date_system, loc) {
+            match datetime::render_datetime(n, section, ctx.date_system, names) {
                 Some(s) => s,
                 // Out-of-domain serial: Excel shows ###### but for typeset
                 // output we fall back to General.
@@ -327,13 +328,11 @@ mod tests {
     }
 
     #[test]
-    fn conditional_default_section_suppresses_minus() {
-        // Excel: the unconditioned fallthrough is the "otherwise" (negative)
-        // section — it does NOT auto-prefix a minus
-        // (ruling sheet.format.conditional-sections; #,##0;#,##0 rule).
-        assert_eq!(fv("[>=100]0;0", CellValue::Number(-5.0)), "5");
-        // The author's own minus is honored exactly once (no doubling).
-        assert_eq!(fv("[>=100]0;-0", CellValue::Number(-5.0)), "-5");
+    fn conditional_default_section_auto_signs_negative() {
+        // Excel 16 (recorded): the unconditioned fallthrough auto-prefixes a
+        // minus to a negative, even over the author's own.
+        assert_eq!(fv("[>=100]0;0", CellValue::Number(-5.0)), "-5");
+        assert_eq!(fv("[>=100]0;-0", CellValue::Number(-5.0)), "--5");
         // A matched conditional section owns its sign too.
         assert_eq!(fv("[>100]0;[<0]0;0", CellValue::Number(-5.0)), "5");
     }

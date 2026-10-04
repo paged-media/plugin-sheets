@@ -225,19 +225,25 @@ fn sheet_format_locale_from_workbook() {
     assert_eq!(locale_from_lcid(0x0407), Locale::DeDe);
     assert_eq!(locale_from_lcid(0x0409), Locale::EnUs);
 
-    // A `[$-407]` token on the CODE overrides the ctx locale: under an EN ctx,
-    // the code still renders de.
+    // A `[$-407]` token on the CODE names the language of month/day names;
+    // the SEPARATORS follow the display locale (Excel 16, recorded). Under
+    // an EN ctx the number stays en; the month name is German.
     let f = compile("[$-407]#,##0.00").unwrap();
     let en_ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
     assert_eq!(
         format_value(&CellValue::Number(1234.5), &f, &en_ctx),
-        "1.234,50"
+        "1,234.50"
     );
-    // A `[$€-407]` token keeps the € symbol AND localizes the separators.
+    let m = compile("[$-407]mmmm").unwrap();
+    assert_eq!(
+        format_value(&CellValue::Number(45306.0), &m, &en_ctx),
+        "Januar"
+    );
+    // A `[$€-407]` token keeps the € symbol, en separators under en.
     let fc = compile("[$€-407]#,##0.00").unwrap();
     assert_eq!(
         format_value(&CellValue::Number(1234.5), &fc, &en_ctx),
-        "€1.234,50"
+        "€1,234.50"
     );
     // A code with NO locale token follows the ctx locale (en here → unchanged).
     let plain = compile("#,##0.00").unwrap();
@@ -395,8 +401,8 @@ fn sheet_format_locale_latin_tier() {
     let en_ctx = FormatCtx::new(DateSystem::Date1900, Locale::EnUs);
     assert_eq!(
         format_value(&CellValue::Number(1234.5), &fr_code, &en_ctx),
-        "1 234,50",
-        "a [$-40c] token renders fr separators even under an en ctx"
+        "1,234.50",
+        "a [$-40c] token keeps the display locale's separators (Excel 16)"
     );
 
     // 6) REGRESSION GUARD: en-US AND de-DE output the SAME codes byte-identically

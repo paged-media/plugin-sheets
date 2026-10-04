@@ -375,14 +375,11 @@ impl CompiledFormat {
     ///    against the RAW value, signed — `[<0]` matches negatives).
     /// 2. The first section WITHOUT a condition is the fallthrough default —
     ///    the "otherwise" section of a conditioned code.
-    /// 3. NO selected section auto-signs (ruling
-    ///    `sheet.format.conditional-sections`). Excel never auto-prefixes a
-    ///    minus inside a conditioned code: a matched conditional section owns
-    ///    its sign, AND the unconditioned fallthrough behaves like a dedicated
-    ///    *negative* section (the `#,##0;#,##0` minus-suppression rule), not
-    ///    like the lone single-section case. So `[>=100]0;0` over `-5` yields
-    ///    `5` (matching Excel), not `-5`, and `[>=100]0;-0` yields `-5`
-    ///    (the author's own `-`), not the doubled `--5`.
+    /// 3. A matched conditional section owns its sign; the unconditioned
+    ///    FALLTHROUGH auto-prefixes a minus to a negative value, even when it
+    ///    writes its own (recorded on Excel 16: `[>=100]0;0` over `-5` is
+    ///    `-5`, `[>=100]0;-0` is `--5`). The earlier "never auto-sign" ruling
+    ///    was wrong on both.
     ///
     /// The lone pathological branch — every section conditioned, none matched —
     /// is where Excel shows `######`; for typeset output we fall back to the
@@ -405,12 +402,22 @@ impl CompiledFormat {
                 }
             }
         }
-        // No condition matched: use the first UNCONDITIONED section as default.
-        // The fallthrough is the "otherwise" (negative-like) section, so it
-        // does NOT auto-sign — the author owns the minus.
+        // No condition matched: use the first UNCONDITIONED section as default;
+        // it auto-signs a negative value (Excel 16).
         for sec in &secs {
             if sec.condition.is_none() {
-                return (sec, false);
+                // ...only when it shows a number: a literal-only section
+                // (`[>=0]"pos";"neg"`) gets no minus (Excel 16).
+                let shows_digits = sec.tokens.iter().any(|t| {
+                    matches!(
+                        t,
+                        Token::DigitZero
+                            | Token::DigitHash
+                            | Token::DigitSpace
+                            | Token::Fraction(_)
+                    )
+                });
+                return (sec, x < 0.0 && shows_digits);
             }
         }
         // Pathological: every section was conditioned and none matched. Excel

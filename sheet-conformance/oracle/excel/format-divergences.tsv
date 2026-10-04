@@ -1,17 +1,10 @@
 # Engine-vs-Excel disagreements over the number-format corpus
 # (tests/excel_oracle.rs::excel_oracle_format_corpus). Same rules as divergences.tsv.
 # file	id	kind (defect|diverges)	engine	excel	reason
-conditional.golden.tsv	cond-author-minus	defect	s:-5	s:--5	with a custom condition in section 1, Excel adds its own minus even when section 2 writes one ([>=100]0;-0 on -5 -> --5)
-conditional.golden.tsv	cond-default-no-minus	defect	s:5	s:-5	with a custom condition in section 1, Excel prefixes a minus to a negative value rendered by the unconditioned section 2 ([>=100]0;0 on -5 -> -5); the engine drops it
-currency.golden.tsv	cur-euro-407	defect	s:€1.234	s:€1,234	a [$€-407] locale tag changes the currency symbol only; Excel keeps the workbook's en-US separators (€1,234), the engine switches to German grouping
-currency.golden.tsv	cur-euro-suffix	defect	s:9,50 €	s:9.50 €	a [$€-407] locale tag changes the currency symbol only; Excel keeps the en-US decimal point (9.50 €)
-fractions.golden.tsv	frac-seventh	defect	s:  1/ 7	s:  1/7 	a ?? denominator is LEFT-aligned and padded after it (  1/7 ) in Excel; the engine right-aligns it
-fractions.golden.tsv	frac-twothirds-2	defect	s:  2/ 3	s:  2/3 	a ?? denominator is LEFT-aligned and padded after it (  2/3 ) in Excel; the engine right-aligns it (  2/ 3)
 general.golden.tsv	gen-15sig	diverges	s:123456789012345	s:1.23457E+14	harness/ruling: TEXT(x,"General") renders General at the 11-character width of a standard column; the engine's General is the 15-significant-digit display (registry ruling), which is what an unconstrained cell shows
 general.golden.tsv	gen-1e15	diverges	s:1000000000000000	s:1E+15	harness/ruling: TEXT(x,"General") renders General at the 11-character width of a standard column; the engine's General is the 15-significant-digit display (registry ruling), which is what an unconstrained cell shows
 general.golden.tsv	gen-pi	diverges	s:3.14159265358979	s:3.141592654	harness/ruling: TEXT(x,"General") renders General at the 11-character width of a standard column; the engine's General is the 15-significant-digit display (registry ruling), which is what an unconstrained cell shows
 general.golden.tsv	gen-sci-small	diverges	s:1.5E-08	s:0.000000015	harness/ruling: TEXT(x,"General") renders General at the 11-character width of a standard column; the engine's General is the 15-significant-digit display (registry ruling), which is what an unconstrained cell shows
-number.golden.tsv	num-optional-int	defect	s:1	s:1.	#.## on an integer keeps the decimal point in Excel (1.); the engine drops it
 padding.golden.tsv	pad-fill-dash-after	diverges	s:5x-	s:5x	harness: TEXT() has no column width, so a * fill repeats zero times and the fill character vanishes; the engine renders the fill character once (no width at format time)
 padding.golden.tsv	pad-fill-dash-before	diverges	s:-5	s:5	harness: TEXT() has no column width, so a * fill repeats zero times and the fill character vanishes; the engine renders the fill character once (no width at format time)
 padding.golden.tsv	pad-fill-decimals	diverges	s:2.5-	s:2.5	harness: TEXT() has no column width, so a * fill repeats zero times and the fill character vanishes; the engine renders the fill character once (no width at format time)

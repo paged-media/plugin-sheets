@@ -14,11 +14,11 @@ frac-half	# ?/?	0.5	 1/2
 frac-mixed-quarter	# ?/?	2.25	2 1/4
 frac-16ths	# ??/??	0.3125	  5/16
 frac-twothirds-1	# ?/?	0.6666666667	 2/3
-frac-twothirds-2	# ??/??	0.6666666667	  2/ 3
+frac-twothirds-2	# ??/??	0.6666666667	  2/3 
 frac-fixed16	# ?/16	0.5	 8/16
 frac-fixed8	# ?/8	0.5	 4/8
 frac-improper	?/?	0.5	1/2
 frac-carry	# ??/??	2.96	2 24/25
 frac-negative	# ?/?	-2.25	-2 1/4
-frac-seventh	# ??/??	0.142857142857	  1/ 7
+frac-seventh	# ??/??	0.142857142857	  1/7 
 frac-eighth-fit	# ?/?	0.875	 7/8

@@ -222,8 +222,8 @@ fn sheet_format_fractions() {
     // Zero fraction with an integer part blanks the slot to spaces (trailing
     // whitespace — asserted here, not in the trailing-whitespace-free corpus).
     assert_eq!(nfmt("# ?/?", 4.0), "4    ");
-    // The ? denominator slot space-pads to its width (documented T0 alignment).
-    assert_eq!(nfmt("# ??/??", 0.666_666_666_7), "  2/ 3");
+    // The ? denominator is LEFT-aligned, padded after (Excel 16, recorded).
+    assert_eq!(nfmt("# ??/??", 0.666_666_666_7), "  2/3 ");
     // Negative carries its minus.
     assert_eq!(nfmt("# ?/?", -2.25), "-2 1/4");
 }
@@ -236,11 +236,11 @@ fn sheet_format_conditional_sections() {
     // Matched conditional section vs the unconditioned default.
     assert_eq!(nfmt("[>=100]0\"+\";0", 150.0), "150+");
     assert_eq!(nfmt("[>=100]0\"+\";0", 50.0), "50");
-    // The unconditioned fallthrough is the "otherwise" (negative) section: it
-    // does NOT auto-prefix a minus (the #,##0;#,##0 minus-suppression rule).
-    assert_eq!(nfmt("[>=100]0;0", -5.0), "5");
-    // The author's own minus is honored exactly once — no doubled "--5".
-    assert_eq!(nfmt("[>=100]0;-0", -5.0), "-5");
+    // The unconditioned fallthrough auto-prefixes a minus to a negative,
+    // even over the author's own (Excel 16, recorded: -5 and --5); a
+    // literal-only fallthrough gets none.
+    assert_eq!(nfmt("[>=100]0;0", -5.0), "-5");
+    assert_eq!(nfmt("[>=100]0;-0", -5.0), "--5");
     // A matched [<0] section also suppresses the auto-minus (author owns sign).
     assert_eq!(nfmt("[>100]0;[<0]0;0", -5.0), "5");
     // Comparison is against the RAW signed value.
@@ -311,10 +311,11 @@ fn sheet_format_padding() {
 fn sheet_format_locale_currency_token() {
     run_corpus("corpus/format-corpus/currency.golden.tsv");
 
-    // The symbol portion is emitted; the -locale suffix selects the separators
-    // (M3 localization track): en LCIDs keep en grouping, de LCID 407 localizes.
+    // The symbol portion is emitted; the -locale suffix does NOT change the
+    // separators — they follow the display locale (Excel 16, recorded:
+    // [$€-407]#,##0 is €1,234 under en-US).
     assert_eq!(nfmt("[$$-409]#,##0", 1234.0), "$1,234");
-    assert_eq!(nfmt("[$€-407]#,##0", 1234.0), "€1.234"); // de-DE "." grouping
+    assert_eq!(nfmt("[$€-407]#,##0", 1234.0), "€1,234");
     assert_eq!(nfmt("[$£-809]#,##0.00", 12.5), "£12.50"); // en-GB stays en
                                                           // A pure locale tag [$-409] has an empty symbol — no literal contributed.
     assert_eq!(nfmt("[$-409]#,##0", 1234.0), "1,234");
