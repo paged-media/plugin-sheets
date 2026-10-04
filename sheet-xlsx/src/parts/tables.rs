@@ -40,7 +40,9 @@
 //!
 //! ## What we read
 //!
-//! - `name` (falling back to `displayName`) — the workbook-scoped table name;
+//! - `displayName` (falling back to `name`) — the workbook-scoped table name
+//!   formulas use (`name` is an internal id and may differ: `Table1` vs
+//!   `Items`);
 //! - `ref` — the FULL extent range (header + body + totals rows);
 //! - `headerRowCount` — `1` by default, `0` for a headerless table;
 //! - `totalsRowCount` — `0` by default, `1` when a totals row is present;
@@ -79,7 +81,10 @@ pub fn parse(xml: &[u8], sheet: sheet_core::SheetId) -> Result<Table, XlsxError>
     loop {
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
-                b"table" => {
+                // Only the root `<table>`: Office writes an `<x14:table
+                // altTextSummary=…/>` in the extLst, whose local name is also
+                // `table` — it reset name/ref and every such table was dropped.
+                b"table" if range.is_none() && name.is_none() && display_name.is_none() => {
                     name = attr(&e, b"name")?;
                     display_name = attr(&e, b"displayName")?;
                     if let Some(rf) = attr(&e, b"ref")? {
@@ -108,8 +113,8 @@ pub fn parse(xml: &[u8], sheet: sheet_core::SheetId) -> Result<Table, XlsxError>
         buf.clear();
     }
 
-    let name = name
-        .or(display_name)
+    let name = display_name
+        .or(name)
         .ok_or_else(|| XlsxError::Structure("<table> missing name/displayName".into()))?;
     let range =
         range.ok_or_else(|| XlsxError::Structure(format!("table {name:?} missing/invalid ref")))?;
@@ -158,6 +163,14 @@ fn parse_ref(s: &str, sheet: sheet_core::SheetId) -> Option<RangeRef> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x14_table_in_ext_lst_does_not_reset_the_root() {
+        let xml = br#"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="T" displayName="Inv" ref="B3:C5"><tableColumns count="2"><tableColumn id="1" name="A"/><tableColumn id="2" name="B"/></tableColumns><extLst><ext uri="{504A1905-F514-4f6f-8877-14C23A59335A}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:table altTextSummary="x"/></ext></extLst></table>"#;
+        let t = parse(xml, 0).expect("Office's extLst x14:table is not the root");
+        assert_eq!(t.name.as_str(), "Inv");
+        assert_eq!(t.columns.len(), 2);
+    }
 
     #[test]
     fn parses_name_ref_columns_header_totals() {

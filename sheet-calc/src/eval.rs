@@ -227,6 +227,16 @@ fn resolve_structured_ref(
     s: &StructuredRef,
     ctx: &EvalCtx,
 ) -> Result<RangeRef, CellError> {
+    resolve_structured_at(model, s, ctx.current)
+}
+
+/// [`resolve_structured_ref`] for a formula at `current` (the dependency
+/// graph resolves the exact area a formula reads with it).
+pub(crate) fn resolve_structured_at(
+    model: &SheetModel,
+    s: &StructuredRef,
+    current: CellRef,
+) -> Result<RangeRef, CellError> {
     use sheet_core::ast::TableArea;
 
     // Resolve the table. The bare `[@Col]` / `[[#…],[Col]]` forms carry an
@@ -235,7 +245,7 @@ fn resolve_structured_ref(
     // outside the table" → `#VALUE!` (the prompt's ruling); any other bare area
     // form is `#REF!`.
     let (sheet, table) = if s.table.is_empty() {
-        match table_containing(model, ctx.current) {
+        match table_containing(model, current) {
             Some(pair) => pair,
             None if s.area == TableArea::ThisRow => return Err(CellError::Value),
             None => return Err(CellError::Ref),
@@ -268,8 +278,8 @@ fn resolve_structured_ref(
         TableArea::Data => data_body_rows(&full, header_rows, totals_rows)?,
         TableArea::ThisRow => {
             let (d0, d1) = data_body_rows(&full, header_rows, totals_rows)?;
-            let cur = ctx.current.row;
-            if ctx.current.sheet != sheet || cur < d0 || cur > d1 {
+            let cur = current.row;
+            if current.sheet != sheet || cur < d0 || cur > d1 {
                 // The formula's own row is outside this table's data body.
                 return Err(CellError::Value);
             }

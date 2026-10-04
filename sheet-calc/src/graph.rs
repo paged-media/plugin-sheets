@@ -183,18 +183,42 @@ impl DepGraph {
                     range_keys.push(key);
                     self.add_range_edge(key, cell);
                 }
-                // NameTarget::Formula contributes no edge (T1, eval -> #NAME?).
+                // A Formula target's own refs arrive merged into `refs`
+                // (`names::refs_with_names`).
             }
         }
-        // Structured-reference (table) deps: a `Table1[Col]` reads its table by
-        // NAME (spec §6.4). We resolve the name to the table's FULL extent box
-        // and register that as a range key — so a write ANYWHERE inside the
-        // table (a data edit, or extending the header/totals rows) dirties the
-        // structured-ref dependents (the table-track dep edge, registered HERE
-        // rather than in `extract.rs`, which has no model to resolve against).
-        // The whole-extent box is a deliberate over-approximation (cheap and
-        // correct: a structured ref's resolved area is always a sub-box of it).
+        // Structured-reference (table) deps (spec §6.4): each ref is resolved
+        // HERE (the graph has the cell and the model) to the EXACT area it
+        // reads from this cell — `[@Qty]` in a calculated column is one cell
+        // of its own row. Before 2026-10 every ref registered the table's
+        // whole extent, which made each calculated column a cycle (#REF!).
+        // A table changing shape is a structural edit, which rebuilds the
+        // graph. A ref that does not resolve keeps the whole-extent box.
+        let mut precise: Vec<&str> = Vec::new();
+        let mut self_precise = refs.has_self_table_ref;
+        let mut imprecise: Vec<&str> = Vec::new();
+        for s in &refs.structured {
+            match crate::eval::resolve_structured_at(model, s, cell) {
+                Ok(r) => {
+                    let key = RangeKey::from_range(r);
+                    range_keys.push(key);
+                    self.add_range_edge(key, cell);
+                    precise.push(s.table.as_str());
+                }
+                Err(_) => {
+                    imprecise.push(s.table.as_str());
+                    if s.table.is_empty() {
+                        self_precise = false;
+                    }
+                }
+            }
+        }
         for name in &refs.tables {
+            if precise.iter().any(|p| p.eq_ignore_ascii_case(name))
+                && !imprecise.iter().any(|p| p.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
             if let Some((_sid, t)) = model.resolve_table(name) {
                 let key = RangeKey::from_range(t.range);
                 range_keys.push(key);
@@ -208,7 +232,7 @@ impl DepGraph {
         // column just OUTSIDE the table's columns but row-aligned still depends
         // on the table. Register its box so a write inside the table reflows the
         // in-table formula.
-        if refs.has_self_table_ref {
+        if refs.has_self_table_ref && !(self_precise && precise.contains(&"")) {
             if let Some(ws) = model.sheet(cell.sheet) {
                 if let Some(t) = ws.tables.iter().find(|t| {
                     let n = t.range.normalized();

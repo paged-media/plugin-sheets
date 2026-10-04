@@ -239,3 +239,92 @@ fn geometry_functions_over_their_own_cell_are_not_cycles__feat__sheet_calc_engin
     assert_eq!(s.get_cell_display(0, 2, 1), "3");
     assert_eq!(s.get_cell_display(0, 2, 2), "9");
 }
+
+const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+
+/// A 3-row table `Items` (displayName; internal name `Table1`) over A1:C5:
+/// header row 1, body rows 2-4, totals row 5. Columns `Item`, `Unit Price`,
+/// `Qty`.
+fn items_workbook(formulas: &[(&str, &str)]) -> Vec<u8> {
+    let s = |r: u32, c: &str, t: &str| format!(r#"<c r="{c}{r}" t="inlineStr"><is><t>{t}</t></is></c>"#);
+    let mut rows = vec![
+        format!("<row r=\"1\">{}{}{}</row>", s(1, "A", "Item"), s(1, "B", "Unit Price"), s(1, "C", "Qty")),
+        format!("<row r=\"2\">{}{}{}</row>", s(2, "A", "pen"), num(2, "B", 2.0), num(2, "C", 3.0)),
+        format!("<row r=\"3\">{}{}{}</row>", s(3, "A", "ink"), num(3, "B", 5.0), num(3, "C", 1.0)),
+        format!("<row r=\"4\">{}{}{}</row>", s(4, "A", "pad"), num(4, "B", 4.0), num(4, "C", 2.0)),
+        format!("<row r=\"5\">{}{}</row>", s(5, "A", "Total"), num(5, "C", 6.0)),
+    ];
+    // Formulas go in column E, one row each from row 1.
+    for (i, (_, f)) in formulas.iter().enumerate() {
+        let r = i as u32 + 1;
+        let cell = fml(r, "E", &f.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"));
+        if r <= 5 {
+            rows[i] = rows[i].replace("</row>", &format!("{cell}</row>"));
+        } else {
+            rows.push(format!("<row r=\"{r}\">{cell}</row>"));
+        }
+    }
+    let table = r#"<?xml version="1.0"?><table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" displayName="Items" ref="A1:C5" totalsRowCount="1"><tableColumns count="3"><tableColumn id="1" name="Item"/><tableColumn id="2" name="Unit Price"/><tableColumn id="3" name="Qty"/></tableColumns></table>"#;
+    pkg(
+        "",
+        &[("Sheet1", &rows.concat(), "")],
+        &[("xl/tables/table1.xml", table, TABLE_CT, 0)],
+    )
+}
+
+/// Structured references as Excel writes them (419 corpus cells were
+/// unparsed or `#REF!`/`#NAME?`). Every expected value is what Excel shows.
+#[test]
+fn structured_references_resolve_like_excel__feat__sheet_table_structured() {
+    let cases: &[(&str, &str)] = &[
+        ("display name", "SUM(Items[Qty])"),
+        ("spaced column", "SUM(Items[Unit Price])"),
+        ("escaped bracket form", "SUM(Items[[Unit Price]])"),
+        ("headers", "Items[[#Headers],[Qty]]"),
+        ("totals", "Items[[#Totals],[Qty]]"),
+        ("column span", "SUM(Items[[Unit Price]:[Qty]])"),
+        ("all", "ROWS(Items[#All])"),
+        ("empty brackets = data", "ROWS(Items[])"),
+        ("data rows count", "COUNTA(Items[Item])"),
+        ("headers row", "COUNTA(Items[#Headers])"),
+    ];
+    // Not modelled: two-area specifiers (`[[#Headers],[#Data],[Qty]]`) — the
+    // frozen TableArea has no combined area; none occur in the corpus.
+    let want = ["6", "11", "11", "Qty", "6", "17", "5", "3", "3", "3"];
+    let s = SheetSession::load_xlsx(&items_workbook(cases)).unwrap();
+    let got: Vec<String> = (0..cases.len() as u32).map(|r| s.get_cell_display(0, r, 4)).collect();
+    let wrong: Vec<String> = cases
+        .iter()
+        .zip(&got)
+        .zip(want)
+        .filter(|((_, g), w)| g.as_str() != *w)
+        .map(|(((label, f), g), w)| format!("{label}: ={f} -> {g}, Excel {w}"))
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// `[@Col]` / `[[#This Row],[Col]]` inside the table's rows (a calculated
+/// column) intersect with the formula's own row.
+#[test]
+fn this_row_references_intersect_the_formula_row__feat__sheet_table_structured() {
+    let s = |r: u32, c: &str, t: &str| format!(r#"<c r="{c}{r}" t="inlineStr"><is><t>{t}</t></is></c>"#);
+    let mut rows = vec![format!(
+        "<row r=\"1\">{}{}{}</row>",
+        s(1, "A", "Unit Price"),
+        s(1, "B", "Qty"),
+        s(1, "C", "Line")
+    )];
+    for (r, (p, q)) in [(2u32, (2.0, 3.0)), (3, (5.0, 1.0))] {
+        let f = if r == 2 {
+            "Items[[#This Row],[Unit Price]]*Items[[#This Row],[Qty]]"
+        } else {
+            "[@[Unit Price]]*[@Qty]"
+        };
+        rows.push(format!("<row r=\"{r}\">{}{}{}</row>", num(r, "A", p), num(r, "B", q), fml(r, "C", f)));
+    }
+    let table = r#"<?xml version="1.0"?><table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" displayName="Items" ref="A1:C3"><tableColumns count="3"><tableColumn id="1" name="Unit Price"/><tableColumn id="2" name="Qty"/><tableColumn id="3" name="Line"/></tableColumns></table>"#;
+    let bytes = pkg("", &[("Sheet1", &rows.concat(), "")], &[("xl/tables/table1.xml", table, TABLE_CT, 0)]);
+    let s = SheetSession::load_xlsx(&bytes).unwrap();
+    assert_eq!(s.get_cell_display(0, 1, 2), "6");
+    assert_eq!(s.get_cell_display(0, 2, 2), "5");
+}

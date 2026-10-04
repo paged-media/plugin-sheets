@@ -156,6 +156,8 @@ pub fn refs_with_names(model: &SheetModel, f: &sheet_core::ast::Formula, cell: C
         refs.cells.extend(r.cells);
         refs.ranges.extend(r.ranges);
         refs.tables.extend(r.tables);
+        refs.structured.extend(r.structured);
+        refs.has_self_table_ref |= r.has_self_table_ref;
         refs.has_volatile |= r.has_volatile;
         for n in r.names {
             if !refs.names.contains(&n) {

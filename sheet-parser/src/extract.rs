@@ -65,6 +65,11 @@ pub struct RefSet {
     pub has_self_table_ref: bool,
     /// True if any called function is registry-`volatile`.
     pub has_volatile: bool,
+    /// Every structured reference as written, so the graph can resolve the
+    /// exact area against the formula's own cell (a calculated column's
+    /// `[@Qty]` reads ONE cell of its row — depending on the whole table
+    /// made every calculated column a cycle).
+    pub structured: Vec<sheet_core::ast::StructuredRef>,
 }
 
 /// Extract the [`RefSet`] of a formula.
@@ -113,6 +118,7 @@ fn walk(e: &Expr, set: &mut RefSet) {
         // containing the formula's OWN cell — the graph resolves that, so we
         // only flag its presence here.
         Expr::StructuredRef(s) => {
+            set.structured.push(s.clone());
             if s.table.is_empty() {
                 set.has_self_table_ref = true;
             } else {
