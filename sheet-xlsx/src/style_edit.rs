@@ -61,8 +61,9 @@ use sheet_core::{StyleId, StyleTable};
 
 use crate::error::XlsxError;
 use crate::opc::{ModeledKind, PartEntry};
-use crate::parts::styles::builtin_num_fmt;
-use crate::rels::part_dir;
+use crate::parts::styles::{builtin_num_fmt, indexed_color, theme_color};
+use crate::parts::theme::{apply_tint, ThemePalette};
+use crate::rels::{part_dir, resolve_target, Relationships};
 use crate::splice::{
     attr_local, attrs_of, children_of, escape_attr, prefix_of, render_tag, root_children, set_attr,
     splice, Span,
@@ -699,16 +700,49 @@ fn apply_to_xf(xml: Vec<u8>, base: usize, p: &StylePatch) -> Result<(Vec<u8>, us
     find_or_append(xml, "cellXfs", "xf", &xf, &prefix)
 }
 
-/// A colour element → `#RRGGBB` when it is an explicit ARGB (`None` for
-/// theme / indexed / auto colours, which a patch never writes).
-fn rgb_of(el: Option<&Elem>) -> Option<String> {
-    let rgb = el?.attr("rgb")?;
-    let hex = if rgb.len() == 8 {
-        &rgb[2..]
+/// What a colour reference resolves against (Wave 9): the document theme's
+/// scheme and the workbook's own indexed palette (`<colors><indexedColors>`,
+/// which overrides the legacy default table when present).
+#[derive(Default)]
+struct ColorCtx {
+    theme: Option<ThemePalette>,
+    indexed: Vec<String>,
+}
+
+/// Resolve a `<color>`-shaped element to `#RRGGBB`: `rgb` (alpha dropped),
+/// else `indexed` (the workbook's palette, else the default table; 64/65 —
+/// system colours — have none), else `theme` (the theme part's scheme, else
+/// the Office-default best effort), then its `tint`. `auto` / nothing →
+/// `None` (the document default).
+fn color_of(el: Option<&Elem>, ctx: &ColorCtx) -> Option<String> {
+    let el = el?;
+    if el.attr("auto").is_some_and(|a| a == "1" || a == "true") {
+        return None;
+    }
+    let base = if let Some(rgb) = el.attr("rgb") {
+        let hex = if rgb.len() == 8 {
+            &rgb[2..]
+        } else {
+            rgb.as_str()
+        };
+        format!("#{}", hex.to_ascii_uppercase())
+    } else if let Some(i) = el.attr("indexed").and_then(|v| v.parse::<usize>().ok()) {
+        match ctx.indexed.get(i) {
+            Some(c) => c.clone(),
+            None => indexed_color(i as u32)?.to_string(),
+        }
+    } else if let Some(t) = el.attr("theme").and_then(|v| v.parse::<u32>().ok()) {
+        match ctx.theme.as_ref().and_then(|p| p.color(t)) {
+            Some(c) => c.to_string(),
+            None => theme_color(t)?.to_string(),
+        }
     } else {
-        rgb.as_str()
+        return None;
     };
-    Some(format!("#{}", hex.to_ascii_uppercase()))
+    match el.attr("tint").and_then(|v| v.parse::<f64>().ok()) {
+        Some(tint) => Some(apply_tint(&base, tint)),
+        None => Some(base),
+    }
 }
 
 impl XlsxDocument {
@@ -773,11 +807,50 @@ impl XlsxDocument {
         Ok((map, table))
     }
 
+    /// The colour context of [`Self::describe_style`]: the theme part the
+    /// workbook relates (`/theme`) and the styles' `<indexedColors>`. A
+    /// missing or unreadable theme leaves the best-effort default.
+    fn color_ctx(&self, styles_xml: &[u8]) -> ColorCtx {
+        let theme = self
+            .part_bytes(&self.wb_rels_part)
+            .and_then(|raw| Relationships::parse(&raw).ok())
+            .and_then(|rels| {
+                rels.by_type("/theme")
+                    .map(|r| resolve_target(&part_dir(&self.workbook_part), &r.target))
+            })
+            .and_then(|part| self.part_bytes(&part))
+            .and_then(|xml| ThemePalette::parse(&xml).ok());
+        let mut indexed = Vec::new();
+        let palette = section(styles_xml, "colors")
+            .ok()
+            .flatten()
+            .and_then(|sec| records(styles_xml, &sec, "indexedColors").ok())
+            .and_then(|v| v.into_iter().next());
+        if let Some(sec) = palette {
+            for sp in records(styles_xml, &sec, "rgbColor").unwrap_or_default() {
+                let a = attrs_of(styles_xml, &sp).unwrap_or_default();
+                let Some(rgb) = attr_local(&a, "rgb") else {
+                    continue;
+                };
+                let hex = if rgb.len() == 8 {
+                    &rgb[2..]
+                } else {
+                    rgb.as_str()
+                };
+                indexed.push(format!("#{}", hex.to_ascii_uppercase()));
+            }
+        }
+        ColorCtx { theme, indexed }
+    }
+
     /// What style `id` says, as a fully populated [`StylePatch`] (the shape a
-    /// format panel shows and edits). Theme / indexed colours read as `None`
-    /// — only explicit RGB colours are reported.
+    /// format panel shows and edits). Colours are reported resolved:
+    /// explicit RGB, the workbook's indexed palette, and the theme part's
+    /// scheme, each with its tint applied (Wave 9 — theme and indexed
+    /// colours used to read as empty).
     pub fn describe_style(&self, id: StyleId) -> Result<StylePatch, XlsxError> {
         let xml = self.styles_bytes();
+        let ctx = self.color_ctx(&xml);
         let Some(xf) =
             record(&xml, "cellXfs", "xf", id.0 as usize)?.or(record(&xml, "cellXfs", "xf", 0)?)
         else {
@@ -810,7 +883,7 @@ impl XlsxDocument {
             .and_then(|f| f.child("patternFill"))
             .and_then(|pf| {
                 (pf.attr("patternType").as_deref() == Some("solid"))
-                    .then(|| rgb_of(pf.child("fgColor")))
+                    .then(|| color_of(pf.child("fgColor"), &ctx))
                     .flatten()
             });
         let border = record(&xml, "borders", "border", idx_of("borderId"))?;
@@ -818,7 +891,7 @@ impl XlsxDocument {
             let e = border.as_ref()?.child(l)?;
             Some(EdgePatch {
                 style: e.attr("style").unwrap_or_else(|| "none".into()),
-                color: rgb_of(e.child("color")),
+                color: color_of(e.child("color"), &ctx),
             })
         };
         let al = xf.child("alignment");
@@ -837,7 +910,7 @@ impl XlsxDocument {
             italic: Some(flag("i")),
             underline: Some(flag("u")),
             font_color: Some(
-                rgb_of(font.as_ref().and_then(|f| f.child("color"))).unwrap_or_default(),
+                color_of(font.as_ref().and_then(|f| f.child("color")), &ctx).unwrap_or_default(),
             ),
             fill: Some(fill_rgb.unwrap_or_default()),
             border_top: edge("top"),

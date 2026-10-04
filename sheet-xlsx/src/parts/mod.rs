@@ -44,5 +44,6 @@ pub mod freeze;
 pub mod shared_strings;
 pub mod styles;
 pub mod tables;
+pub mod theme;
 pub mod workbook;
 pub mod worksheet;

@@ -291,8 +291,9 @@ impl SheetSession {
     }
 
     /// The full style of one cell (every field populated): number-format
-    /// code, font, fill, borders, alignment, wrap. Theme / indexed colours
-    /// read as empty (only explicit RGB is reported).
+    /// code, font, fill, borders, alignment, wrap. Colours are resolved:
+    /// explicit RGB, the workbook's indexed palette and its theme part's
+    /// scheme, tints applied (empty only for `auto` / no colour).
     pub fn get_style(&self, sheet: u16, row: u32, col: u32) -> Result<StylePatchArg, SessionError> {
         self.validate_sheet(sheet)?;
         let id = self
