@@ -757,6 +757,13 @@ pub(crate) fn resolve_name_targets(model: &mut sheet_core::SheetModel) {
             Ok(Expr::Ref(c)) => sheet_core::RangeRef { start: c, end: c },
             _ => continue,
         };
+        // A relative part is relative to the REFERRING cell (`$A1048576` is
+        // "the row above"); such a name stays a formula target, which the
+        // engine re-bases per use (sheet-calc `names`).
+        let rel = |c: &sheet_core::CellRef| !c.row_abs || !c.col_abs;
+        if rel(&range.start) || rel(&range.end) {
+            continue;
+        }
         resolved.push((id, range));
     }
     if resolved.is_empty() {

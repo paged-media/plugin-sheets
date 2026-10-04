@@ -96,6 +96,7 @@ pub mod external;
 pub mod graph;
 pub mod iterate;
 pub mod layout;
+pub mod names;
 #[cfg(feature = "perf-counters")]
 pub mod perf;
 pub mod spill;
@@ -180,7 +181,8 @@ impl Engine {
     /// Build from an existing model (e.g. an xlsx load): registers every cell
     /// that has a [`sheet_core::FormulaId`], marks everything dirty. Does NOT
     /// recalc — the caller chooses `recalc_all`/`recalc_dirty`.
-    pub fn new(model: SheetModel, config: EngineConfig) -> Engine {
+    pub fn new(mut model: SheetModel, config: EngineConfig) -> Engine {
+        names::compile_names(&mut model);
         let mut graph = DepGraph::new();
         graph.rebuild(&model);
         let mut dirty = Dirty::new();
@@ -397,7 +399,7 @@ impl Engine {
                 }
             }
             SetInput::Formula(f) => {
-                let refs = sheet_parser::extract_refs(&f);
+                let refs = names::refs_with_names(&self.model, &f, cref);
                 let volatile = refs.has_volatile;
                 let fid = self.model.intern_formula(f);
                 let style = self.style_of(cref);
@@ -1002,7 +1004,7 @@ fn seed_volatility(model: &SheetModel, graph: &DepGraph, dirty: &mut Dirty) {
             if let Some(cell) = ws.cell(cref.row, cref.col) {
                 if let Some(fid) = cell.formula {
                     if let Some(f) = model.formula(fid) {
-                        let refs = sheet_parser::extract_refs(f);
+                        let refs = names::refs_with_names(model, f, cref);
                         dirty.set_volatile(cref, refs.has_volatile);
                     }
                 }
@@ -1190,9 +1192,9 @@ fn shift_merge(
 
 /// A [`ParseCtx`] over the engine's [`SheetModel`]: resolves sheet names and
 /// defined names for the parser, with the entered cell's sheet as home.
-struct ModelParseCtx<'a> {
-    model: &'a SheetModel,
-    current: SheetId,
+pub(crate) struct ModelParseCtx<'a> {
+    pub(crate) model: &'a SheetModel,
+    pub(crate) current: SheetId,
 }
 
 impl ParseCtx for ModelParseCtx<'_> {

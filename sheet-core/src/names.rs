@@ -65,6 +65,10 @@ pub enum NameTarget {
 #[derive(Default, Debug)]
 pub struct NameTable {
     defs: Vec<NameDef>,
+    /// The parsed form of each `Formula` target (`None` = not compiled or
+    /// not parseable). Filled by the engine (`sheet-calc`, which owns the
+    /// parser dependency) when it is built; a rebuilt table starts empty.
+    compiled: Vec<Option<crate::ast::Formula>>,
 }
 
 impl NameTable {
@@ -77,6 +81,23 @@ impl NameTable {
 
     pub fn get(&self, id: NameId) -> Option<&NameDef> {
         self.defs.get(id.0 as usize)
+    }
+
+    /// Store the parsed form of name `id`'s `Formula` target.
+    pub fn set_compiled(&mut self, id: NameId, f: Option<crate::ast::Formula>) {
+        let i = id.0 as usize;
+        if i >= self.defs.len() {
+            return;
+        }
+        if self.compiled.len() < self.defs.len() {
+            self.compiled.resize(self.defs.len(), None);
+        }
+        self.compiled[i] = f;
+    }
+
+    /// The parsed form of name `id`'s `Formula` target, if compiled.
+    pub fn compiled(&self, id: NameId) -> Option<&crate::ast::Formula> {
+        self.compiled.get(id.0 as usize).and_then(Option::as_ref)
     }
 
     /// Resolve `name` as seen from `sheet`. A `Sheet(sheet)`-scoped def

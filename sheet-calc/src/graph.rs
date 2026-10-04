@@ -312,14 +312,14 @@ impl DepGraph {
             for (&(row, col), cell) in ws.iter_cells() {
                 if let Some(fid) = cell.formula {
                     if let Some(f) = model.formula(fid) {
-                        let refs = sheet_parser::extract_refs(f);
-                        let cref = CellRef {
+                                                let cref = CellRef {
                             sheet,
                             row,
                             col,
                             row_abs: false,
                             col_abs: false,
                         };
+                        let refs = crate::names::refs_with_names(model, f, cref);
                         self.register(cref, &refs, model);
                     }
                 }

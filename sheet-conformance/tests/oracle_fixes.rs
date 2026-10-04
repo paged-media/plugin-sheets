@@ -75,3 +75,167 @@ fn shared_formula_members_shift_and_survive_a_dirty_save__feat__sheet_xlsx_round
     let after: Vec<String> = (1..8).map(|row| r.get_cell_display(0, row, 128)).collect();
     assert_eq!(before, after);
 }
+
+/// A minimal package: `sheets` are (name, `<sheetData>` inner XML, extra XML
+/// after `</sheetData>`); `defined` is the `<definedNames>` inner XML;
+/// `parts` are extra (path, body, content type, owning sheet index) parts
+/// related from their sheet (tables).
+fn pkg(
+    defined: &str,
+    sheets: &[(&str, &str, &str)],
+    parts: &[(&str, &str, &str, usize)],
+) -> Vec<u8> {
+    use std::io::Write;
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let mut add = |name: &str, body: String| {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        };
+        const WS: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+        let mut ct = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>"#,
+        );
+        for i in 0..sheets.len() {
+            ct += &format!(
+                r#"<Override PartName="/xl/worksheets/sheet{}.xml" ContentType="{WS}"/>"#,
+                i + 1
+            );
+        }
+        for (path, _, ctype, _) in parts {
+            ct += &format!(r#"<Override PartName="/{path}" ContentType="{ctype}"/>"#);
+        }
+        ct += "</Types>";
+        add("[Content_Types].xml", ct);
+        add("_rels/.rels", r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.into());
+        let mut wb = String::from(
+            r#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>"#,
+        );
+        let mut rels = String::from(
+            r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        );
+        for (i, (name, _, _)) in sheets.iter().enumerate() {
+            wb += &format!(r#"<sheet name="{name}" sheetId="{}" r:id="rId{}"/>"#, i + 1, i + 1);
+            rels += &format!(r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{}.xml"/>"#, i + 1, i + 1);
+        }
+        wb += "</sheets>";
+        if !defined.is_empty() {
+            wb += &format!("<definedNames>{defined}</definedNames>");
+        }
+        wb += "</workbook>";
+        rels += "</Relationships>";
+        add("xl/workbook.xml", wb);
+        add("xl/_rels/workbook.xml.rels", rels);
+        for (i, (_, data, extra)) in sheets.iter().enumerate() {
+            let mut srels = String::new();
+            let mut tparts = String::new();
+            for (j, (path, _, _, owner)) in parts.iter().enumerate() {
+                if *owner == i {
+                    let target = path.trim_start_matches("xl/");
+                    srels += &format!(r#"<Relationship Id="rT{j}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../{target}"/>"#);
+                    tparts += &format!(r#"<tablePart r:id="rT{j}"/>"#);
+                }
+            }
+            let tp = if tparts.is_empty() {
+                String::new()
+            } else {
+                format!("<tableParts>{tparts}</tableParts>")
+            };
+            add(
+                &format!("xl/worksheets/sheet{}.xml", i + 1),
+                format!(r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>{data}</sheetData>{extra}{tp}</worksheet>"#),
+            );
+            if !srels.is_empty() {
+                add(
+                    &format!("xl/worksheets/_rels/sheet{}.xml.rels", i + 1),
+                    format!(r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{srels}</Relationships>"#),
+                );
+            }
+        }
+        for (path, body, _, _) in parts {
+            add(path, body.to_string());
+        }
+        zip.finish().unwrap();
+    }
+    buf
+}
+
+fn num(r: u32, c: &str, v: f64) -> String {
+    format!(r#"<c r="{c}{r}"><v>{v}</v></c>"#)
+}
+
+fn fml(r: u32, c: &str, f: &str) -> String {
+    format!(r#"<c r="{c}{r}"><f>{f}</f></c>"#)
+}
+
+/// Defined names whose target is a CONSTANT, a FORMULA, a reference-valued
+/// formula (OFFSET), an array constant, and a sheet-scoped name shadowing a
+/// workbook one. Every one evaluated to `#NAME?` (4,268 corpus cells): only
+/// plain-reference names were resolved.
+#[test]
+fn defined_names_with_formula_and_constant_targets_evaluate__feat__sheet_names_define() {
+    let data = [
+        format!("<row r=\"1\">{}{}</row>", num(1, "A", 1.0), fml(1, "B", "Rate*2")),
+        format!("<row r=\"2\">{}{}</row>", num(2, "A", 2.0), fml(2, "B", "Total")),
+        format!("<row r=\"3\">{}{}</row>", num(3, "A", 3.0), fml(3, "B", "SUM(Dyn)")),
+        format!("<row r=\"4\">{}</row>", fml(4, "B", "SUM(Arr)")),
+        format!("<row r=\"5\">{}</row>", fml(5, "B", "Total+Rate+Local")),
+        format!("<row r=\"6\">{}</row>", fml(6, "B", "Chain")),
+    ]
+    .concat();
+    let names = r#"<definedName name="Rate">0.5</definedName><definedName name="Total">SUM(Sheet1!$A$1:$A$3)</definedName><definedName name="Dyn">OFFSET(Sheet1!$A$1,0,0,3,1)</definedName><definedName name="Arr">{1,2,3}</definedName><definedName name="Local">100</definedName><definedName name="Local" localSheetId="0">7</definedName><definedName name="Chain">Total*Rate</definedName>"#;
+    let bytes = pkg(names, &[("Sheet1", &data, "")], &[]);
+    let mut s = SheetSession::load_xlsx(&bytes).unwrap();
+    let col_b: Vec<String> = (0..6).map(|r| s.get_cell_display(0, r, 1)).collect();
+    assert_eq!(col_b, ["1", "6", "6", "6", "13.5", "3"], "names after load");
+    // A name's precedents are dependencies: editing A1 reaches Total, Dyn,
+    // and the name-of-a-name Chain.
+    s.set_cell(0, 0, 0, "10").unwrap();
+    let col_b: Vec<String> = (0..6).map(|r| s.get_cell_display(0, r, 1)).collect();
+    assert_eq!(col_b, ["1", "15", "15", "6", "22.5", "7.5"], "names after an edit");
+}
+
+/// A name defined in terms of itself must not overflow the stack.
+#[test]
+fn self_referencing_defined_name_terminates__feat__sheet_names_define() {
+    let data = format!("<row r=\"1\">{}</row>", fml(1, "A", "Loop+1"));
+    let names = r#"<definedName name="Loop">Loop+1</definedName>"#;
+    let s = SheetSession::load_xlsx(&pkg(names, &[("Sheet1", &data, "")], &[])).unwrap();
+    assert!(s.get_cell_display(0, 0, 0).starts_with('#'));
+}
+
+/// A relative reference in a stored name is relative to A1 and wraps around
+/// the grid: Excel writes "the cell above" as `$A1048576` (Office templates
+/// use it for running balances). Read from row 3 it is `$A2`.
+#[test]
+fn relative_defined_name_rebases_on_the_referring_cell__feat__sheet_names_define() {
+    let data = [
+        format!("<row r=\"1\">{}</row>", num(1, "A", 5.0)),
+        format!("<row r=\"2\">{}{}</row>", num(2, "A", 7.0), fml(2, "B", "Above*10")),
+        format!("<row r=\"3\">{}{}</row>", num(3, "A", 9.0), fml(3, "B", "Above+Same")),
+    ]
+    .concat();
+    let names = r#"<definedName name="Above">Sheet1!$A1048576</definedName><definedName name="Same">IF(TRUE,Sheet1!$A1)</definedName>"#;
+    let mut s = SheetSession::load_xlsx(&pkg(names, &[("Sheet1", &data, "")], &[])).unwrap();
+    assert_eq!(s.get_cell_display(0, 1, 1), "50");
+    assert_eq!(s.get_cell_display(0, 2, 1), "16");
+    s.set_cell(0, 1, 0, "1").unwrap(); // A2: B3 reads it through `Above`
+    assert_eq!(s.get_cell_display(0, 2, 1), "10");
+}
+
+/// ROWS/COLUMNS/ROW/COLUMN read only a reference's GEOMETRY, so a formula
+/// that measures a range containing its own cell is not circular in Excel
+/// (`=ROWS($B$1:B3)` in B3 is 3). The engine registered the range as a value
+/// dependency and stored the cycle ruling `#REF!` — through a defined name
+/// (`PlanYear = ROWS(Calc!$B$15:$B1)`) this voided 2,667 cells of one
+/// Office template.
+#[test]
+fn geometry_functions_over_their_own_cell_are_not_cycles__feat__sheet_calc_engine() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 2, 1, "=ROWS($B$1:B3)").unwrap();
+    s.set_cell(0, 2, 2, "=COLUMNS(A3:C3)+ROW(C3)+COLUMN(C1:C9)").unwrap();
+    assert_eq!(s.get_cell_display(0, 2, 1), "3");
+    assert_eq!(s.get_cell_display(0, 2, 2), "9");
+}

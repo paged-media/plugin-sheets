@@ -65,6 +65,7 @@
 
 use sheet_core::ast::{BinOp, Expr, FuncId, StructuredRef, UnOp};
 use sheet_core::names::NameTarget;
+use std::borrow::Cow;
 use sheet_core::{CellError, CellRef, CellValue, RangeRef, SheetId, SheetModel, Table};
 use sheet_fn::{coerce, Arg, EvalCtx, FnResult};
 
@@ -124,7 +125,7 @@ fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillState) -> Cel
         // A range (or array/union/intersection) in scalar position is #VALUE!
         // (T0 ruling: ranges are only meaningful as function arguments).
         Expr::Range(_) | Expr::Array(_) => CellValue::Error(CellError::Value),
-        Expr::Name(nid) => eval_name(model, *nid),
+        Expr::Name(nid) => eval_name(model, *nid, ctx, spills),
         Expr::Unary(op, inner) => eval_unary(model, *op, inner, ctx, spills),
         Expr::Binary(op, a, b) => eval_binary(model, *op, a, b, ctx, spills),
         Expr::Func(fid, args) => eval_func(model, *fid, args, ctx, spills),
@@ -360,15 +361,60 @@ fn lit_to_value(lit: &sheet_core::ast::LitValue) -> CellValue {
 }
 
 /// Resolve a defined name in scalar position. `Range` names collapse to their
-/// top-left cell (a value context); `Formula` names are T1 → `#NAME?`.
-fn eval_name(model: &SheetModel, nid: sheet_core::ast::NameId) -> CellValue {
+/// top-left cell (a value context); `Formula` names evaluate their compiled
+/// expression in the referring cell's context ([`crate::names`]).
+fn eval_name(
+    model: &SheetModel,
+    nid: sheet_core::ast::NameId,
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> CellValue {
     match model.names.get(nid) {
         Some(def) => match &def.target {
             NameTarget::Range(r) => argview::cell_value(model, r.normalized().start),
-            NameTarget::Formula(_) => CellValue::Error(CellError::Name),
+            NameTarget::Formula(_) => match crate::names::name_expr_at(model, nid, ctx.current) {
+                Some(e) => with_name_depth(CellValue::Error(CellError::Name), || {
+                    eval(model, &e, ctx, spills)
+                }),
+                None => CellValue::Error(CellError::Name),
+            },
         },
         None => CellValue::Error(CellError::Name),
     }
+}
+
+thread_local! {
+    static NAME_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `f` one name-level deeper; past [`crate::names::MAX_NAME_DEPTH`]
+/// (a name defined through itself) return `fallback` instead.
+fn with_name_depth<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+    let d = NAME_DEPTH.with(|c| c.get());
+    if d >= crate::names::MAX_NAME_DEPTH {
+        return fallback;
+    }
+    NAME_DEPTH.with(|c| c.set(d + 1));
+    let out = f();
+    NAME_DEPTH.with(|c| c.set(d));
+    out
+}
+
+/// Follow a formula-target name to its compiled expression as seen from the
+/// referring cell (through name-of-a-name chains); any other expression is
+/// returned as is.
+fn deref_name<'a>(model: &'a SheetModel, e: &'a Expr, at: CellRef) -> Cow<'a, Expr> {
+    let mut cur: Cow<'a, Expr> = Cow::Borrowed(e);
+    for _ in 0..crate::names::MAX_NAME_DEPTH {
+        let Expr::Name(nid) = &*cur else {
+            return cur;
+        };
+        match crate::names::name_expr_at(model, *nid, at) {
+            Some(inner) => cur = inner,
+            None => return cur,
+        }
+    }
+    cur
 }
 
 fn eval_unary(
@@ -591,6 +637,10 @@ fn plan_args<'m>(
     };
 
     for arg in args {
+        // A formula-target name stands for its expression (`SUM(Arr)` with
+        // `Arr = {1,2,3}`, `SUM(Dyn)` with `Dyn = OFFSET(…)`).
+        let arg_c = deref_name(model, arg, ctx.current);
+        let arg: &Expr = &arg_c;
         match arg {
             Expr::Range(r) => {
                 let resolved = resolve_range_for_arg(model, *r);
@@ -892,7 +942,13 @@ fn eval_as_ref(
     match expr {
         Expr::Ref(r) => Some(RangeRef { start: *r, end: *r }),
         Expr::Range(r) => Some(r.normalized()),
-        Expr::Name(nid) => name_range_target(model, *nid),
+        Expr::Name(nid) => name_range_target(model, *nid).or_else(|| {
+            let inner = deref_name(model, expr, ctx.current);
+            if matches!(&*inner, Expr::Name(_)) {
+                return None;
+            }
+            with_name_depth(None, || eval_as_ref(model, &inner, ctx, spills))
+        }),
         Expr::StructuredRef(s) => resolve_structured_ref(model, s, ctx).ok(),
         Expr::SpillRef(inner) => spill_ref_range(spills, inner).map(spill_rect_to_range),
         // A nested reference-returning special form (OFFSET / INDIRECT).
