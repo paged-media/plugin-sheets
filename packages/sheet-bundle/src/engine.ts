@@ -399,7 +399,68 @@ export interface SheetEngine {
   getChartGeometry(index: number, wPt: number, hPt: number): ChartGeometry;
   /** Release the wasm-held model. */
   dispose(): void;
+
+  // ── Wave 4 doors. Optional so test doubles written before them stay
+  // valid; `wrapEngine` always supplies every one. ──────────────────────
+
+  /** Lower a range for the PAGE: the workbook's real per-cell styles with
+   *  conditional formatting folded on top, grid rules on by default — the
+   *  placed table's door (`getRangeLowered` keeps its key-0 contract). */
+  getRangePage?(sheet: number, range: string, opts?: LowerOptions): LoweredContent;
+  /** Re-evaluate volatile cells (NOW/TODAY/RAND) against the host clock
+   *  (the facade reads the clock itself). */
+  recalcVolatile?(): { changed: CellChange[] };
+  /** The `<calcPr>` iteration knobs in effect. */
+  calcSettings?(): CalcSettingsInfo;
+  /** Toggle iterative calculation (written back to `<calcPr>` on save). */
+  setIterative?(on: boolean, maxIter: number, maxChange: number): { changed: CellChange[] };
+  /** Add a worksheet at the end (empty name = next free `SheetN`); its id. */
+  addSheet?(name: string): number;
+  /** Rename a worksheet (Excel's name rules; throws the reason). */
+  renameSheet?(sheet: number, name: string): void;
+  /** Delete a worksheet; references to it become `#REF!`. */
+  deleteSheet?(sheet: number): { changed: CellChange[] };
+  /** Insert/delete `n` rows or columns at 0-based `at`. Throws (model
+   *  untouched) when preserved content would be left addressing the wrong
+   *  cells — the message names what blocks it. */
+  structuralEdit?(
+    sheet: number,
+    kind: StructuralEditKind,
+    at: number,
+    n: number,
+  ): { changed: CellChange[] };
+  /** Replace the workbook with delimited text (CSV/TSV) as one sheet.
+   *  `delimiter` "" = sniff; `localeTag` reads numbers + dates. */
+  loadCsv?(text: string, delimiter: string, localeTag: string, sheetName: string): void;
 }
+
+/** The structural edits `structuralEdit` accepts. */
+export type StructuralEditKind =
+  | "insertRows"
+  | "deleteRows"
+  | "insertCols"
+  | "deleteCols";
+
+/** The `<calcPr>` iteration knobs. */
+export interface CalcSettingsInfo {
+  iterative: boolean;
+  maxIter: number;
+  maxChange: number;
+}
+
+/** The host clock the facade feeds `NOW`/`TODAY` from. Injected so tests
+ *  can pin it; the default reads `Date`. */
+export interface HostClock {
+  /** Milliseconds since the Unix epoch (UTC). */
+  nowMs(): number;
+  /** `Date#getTimezoneOffset()` — minutes, UTC minus local. */
+  tzOffsetMin(): number;
+}
+
+export const SYSTEM_CLOCK: HostClock = {
+  nowMs: () => Date.now(),
+  tzOffsetMin: () => new Date().getTimezoneOffset(),
+};
 
 // ---------------------------------------------------- wasm surface shape
 
@@ -484,6 +545,17 @@ export interface SheetWasmEngine {
   list_functions(): FunctionInfo[];
   get_chart_geometry(index: number, w_pt: number, h_pt: number): ChartGeometry;
   free(): void;
+  // Wave 4 (optional: older artifacts / fakes lack them).
+  get_range_page?(sheet: number, range: string, opts?: LowerOptions): LoweredContent;
+  set_clock?(unix_ms: number, tz_offset_min: number): number;
+  recalc_volatile?(): { changed: CellChange[] };
+  calc_settings?(): CalcSettingsInfo;
+  set_iterative?(on: boolean, max_iter: number, max_change: number): { changed: CellChange[] };
+  add_sheet?(name: string): number;
+  rename_sheet?(sheet: number, name: string): void;
+  delete_sheet?(sheet: number): { changed: CellChange[] };
+  structural_edit?(sheet: number, kind: string, at: number, n: number): { changed: CellChange[] };
+  load_csv?(text: string, delimiter: string, locale_tag: string, sheet_name: string): void;
 }
 
 /** The module shape the wasm-bindgen `--target web` glue exports. */
@@ -500,20 +572,46 @@ export interface SheetWasmModule {
 
 /** Wrap a booted wasm engine in the camelCase facade. Split out so the
  *  mapping is unit-testable over a fake wasm object (no real wasm). */
-export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
+export function wrapEngine(
+  wasm: SheetWasmEngine,
+  clock: HostClock = SYSTEM_CLOCK,
+): SheetEngine {
+  // Wave 4 — NOW/TODAY follow the host clock. Every write that recalcs
+  // (load, cell entry, sort, replace, structural edits) first hands the
+  // engine the current time; the serial conversion (date system, local
+  // time) is Rust's. Absent on an older artifact → a no-op.
+  const tick = () => {
+    wasm.set_clock?.(clock.nowMs(), clock.tzOffsetMin());
+  };
+  const need = <K extends keyof SheetWasmEngine>(k: K) => {
+    const f = wasm[k];
+    if (typeof f !== "function") {
+      throw new Error(`engine wasm predates ${String(k)} — rebuild it`);
+    }
+    return (f as (...a: unknown[]) => unknown).bind(wasm);
+  };
   return {
-    loadXlsx: (bytes) => wasm.load_xlsx(bytes),
+    loadXlsx: (bytes) => {
+      tick();
+      wasm.load_xlsx(bytes);
+    },
     saveXlsx: () => wasm.save_xlsx(),
-    setCell: (sheet, row, col, input) =>
-      wasm.set_cell(sheet, row, col, input),
+    setCell: (sheet, row, col, input) => {
+      tick();
+      return wasm.set_cell(sheet, row, col, input);
+    },
     getCellDisplay: (sheet, row, col) =>
       wasm.get_cell_display(sheet, row, col),
     getCellInput: (sheet, row, col) => wasm.get_cell_input(sheet, row, col),
-    sortRange: (sheet, range, keyCol, ascending, hasHeader) =>
-      wasm.sort_range(sheet, range, keyCol, ascending, hasHeader),
+    sortRange: (sheet, range, keyCol, ascending, hasHeader) => {
+      tick();
+      return wasm.sort_range(sheet, range, keyCol, ascending, hasHeader);
+    },
     findAll: (sheet, needle, opts) => wasm.find_all(sheet, needle, opts),
-    replaceAll: (sheet, needle, replacement, opts) =>
-      wasm.replace_all(sheet, needle, replacement, opts),
+    replaceAll: (sheet, needle, replacement, opts) => {
+      tick();
+      return wasm.replace_all(sheet, needle, replacement, opts);
+    },
     getRangeLowered: (sheet, range, opts) =>
       wasm.get_range_lowered(sheet, range, opts),
     getRangeStyled: (sheet, range, opts) =>
@@ -539,6 +637,33 @@ export function wrapEngine(wasm: SheetWasmEngine): SheetEngine {
     getChartGeometry: (index, wPt, hPt) =>
       wasm.get_chart_geometry(index, wPt, hPt),
     dispose: () => wasm.free(),
+    getRangePage: (sheet, range, opts) =>
+      need("get_range_page")(sheet, range, opts) as LoweredContent,
+    recalcVolatile: () => {
+      tick();
+      return need("recalc_volatile")() as { changed: CellChange[] };
+    },
+    calcSettings: () => need("calc_settings")() as CalcSettingsInfo,
+    setIterative: (on, maxIter, maxChange) =>
+      need("set_iterative")(on, maxIter, maxChange) as { changed: CellChange[] },
+    addSheet: (name) => need("add_sheet")(name) as number,
+    renameSheet: (sheet, name) => {
+      need("rename_sheet")(sheet, name);
+    },
+    deleteSheet: (sheet) => {
+      tick();
+      return need("delete_sheet")(sheet) as { changed: CellChange[] };
+    },
+    structuralEdit: (sheet, kind, at, n) => {
+      tick();
+      return need("structural_edit")(sheet, kind, at, n) as {
+        changed: CellChange[];
+      };
+    },
+    loadCsv: (text, delimiter, localeTag, sheetName) => {
+      tick();
+      need("load_csv")(text, delimiter, localeTag, sheetName);
+    },
   };
 }
 
@@ -608,9 +733,9 @@ async function loadModule(): Promise<SheetWasmModule> {
  *  and `initSync`s (mirroring plugin-sdk's wasm-loader.ts). Rejects with
  *  ENGINE_NOT_BUILT-flavoured detail when the artifact is missing so the
  *  panel can surface the honest "not built" state. */
-export async function bootEngine(): Promise<SheetEngine> {
+export async function bootEngine(clock?: HostClock): Promise<SheetEngine> {
   const mod = await loadModule();
-  return wrapEngine(new mod.SheetEngine());
+  return wrapEngine(new mod.SheetEngine(), clock);
 }
 
 /** Boot a FRESH, EMPTY workbook (S-15 — source-a-sheet-from-a-dataset).
@@ -619,7 +744,12 @@ export async function bootEngine(): Promise<SheetEngine> {
  *  path to `bootEngine` — the only difference is no `loadXlsx`, so the
  *  workbook starts blank rather than parsed from bytes. Same honest
  *  ENGINE_NOT_BUILT rejection when the artifact is absent. */
-export async function bootEmptyEngine(): Promise<SheetEngine> {
+export async function bootEmptyEngine(clock?: HostClock): Promise<SheetEngine> {
   const mod = await loadModule();
-  return wrapEngine(new mod.SheetEngine());
+  const engine = wrapEngine(new mod.SheetEngine(), clock);
+  // Wave 4 — the boot sets the clock too (a blank workbook has no volatile
+  // cell yet, so this is one cheap call; it makes the first TODAY() typed
+  // into it right without waiting for another write).
+  engine.recalcVolatile?.();
+  return engine;
 }
