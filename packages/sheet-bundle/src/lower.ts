@@ -329,9 +329,10 @@ async function styleCellText(
     cells: only,
     includeDefault: only !== undefined,
   });
-  for (const op of applies) {
-    const r = await host.document.mutate(op);
-    if (!r.applied) host.log.debug("cell text styles: applyStyle rejected", r);
+  // One batch (text-lane ops batch since core v0.61).
+  if (applies.length > 0) {
+    const r = await host.document.mutate({ op: "batch", args: { ops: applies } });
+    if (!r.applied) host.log.warn("cell text styles: applyStyle rejected", r);
   }
 }
 
@@ -378,6 +379,10 @@ export interface LowerLaneOptions {
   placement?: Placement;
   /** The workbook content version recorded in the binding (default 0). */
   contentVersion?: number;
+  /** The page lowering of the range when the caller already has it (the
+   *  session lowers once to size the placement) — saves a second engine
+   *  call. */
+  content?: LoweredContent;
 }
 
 /** The PAGE lowering of a range: real styles + conditional formatting
@@ -440,7 +445,7 @@ export async function lowerSelectionToFrame(
   // the workbook's real fills/borders with conditional formatting folded on
   // top (Wave 4; until then this read the frozen key-0 door and every
   // placed table came out unstyled).
-  const content = pageContent(engine, sheet, range);
+  const content = opts?.content ?? pageContent(engine, sheet, range);
   const sheetInfo = engine.listSheets().find((s) => s.id === sheet);
   const sheetName = sheetInfo ? sheetInfo.name : String(sheet);
 
@@ -708,6 +713,14 @@ async function applyTableRefresh(
   next: LoweredContent,
   nextWidths: readonly number[],
 ): Promise<number> {
+  // Nothing moved: no write at all (a re-pagination that lands on the same
+  // split, an edit outside this table's range).
+  if (
+    JSON.stringify(prev) === JSON.stringify(next) &&
+    JSON.stringify(prevWidths) === JSON.stringify(nextWidths)
+  ) {
+    return 0;
+  }
   const ops = tableRefreshOps(prev, next, storyId, tableId, prevWidths, nextWidths);
   let calls = 0;
   if (ops.structure.length > 0) {
@@ -718,9 +731,11 @@ async function applyTableRefresh(
     });
     if (!r.applied) host.log.warn("refresh: table reshape rejected", r);
   }
-  for (const op of ops.text) {
+  // The changed cells' text as ONE batch (core applies text ops inside a
+  // Mutation batch as one undo step since v0.61).
+  if (ops.text.length > 0) {
     calls += 1;
-    const r = await host.document.mutate(op);
+    const r = await host.document.mutate({ op: "batch", args: { ops: ops.text } });
     if (!r.applied) host.log.warn("refresh: cell text rejected", r);
   }
   const wanted = cellFillSwatchOps(next);
@@ -944,6 +959,8 @@ export interface ChainSubscription extends Disposable {
   refresh(): Promise<ChainLowerResult | null>;
   /** The latest pass (null before the first). */
   current(): ChainLowerResult | null;
+  /** Resolves when the pass in flight (if any) has finished. */
+  idle(): Promise<ChainLowerResult | null>;
 }
 
 /**
@@ -1010,6 +1027,7 @@ export function subscribeChainReflow(
   return {
     refresh: run,
     current: () => last,
+    idle: () => inflight,
     dispose() {
       disposed = true;
       if (timer !== null) clearTimeout(timer);

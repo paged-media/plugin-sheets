@@ -162,15 +162,19 @@ export function cellCharacterStyleApplies(
   return ops;
 }
 
-/** The cells whose text OR character style differs between two contents
- *  (the cells a refresh must re-style). */
+/** The cells a refresh must re-style: the character style changed, or the
+ *  text was re-poured into a cell where either the old or the new text is
+ *  formatted (re-poured text may inherit the old run's format). A table
+ *  with no cell formatting on either side needs none. */
 export function cellsNeedingRestyle(prev: LoweredContent, next: LoweredContent): Set<string> {
   const a = cellCharacterStyleMap(prev);
   const b = cellCharacterStyleMap(next);
   const out = new Set<string>();
   for (const [k, v] of b) {
     const old = a.get(k);
-    if (!old || old.style !== v.style || old.text !== v.text) out.add(k);
+    const oldStyle = old?.style ?? NO_CHARACTER_STYLE;
+    if (oldStyle !== v.style) out.add(k);
+    else if (old?.text !== v.text && v.style !== NO_CHARACTER_STYLE) out.add(k);
   }
   return out;
 }

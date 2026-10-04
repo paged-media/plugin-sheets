@@ -63,16 +63,16 @@ describe("native-table cell text formatting [sheet.lower.page]", () => {
     });
   });
 
-  it("a refresh restyles exactly the cells whose text or format changed, resetting lost formats", () => {
+  it("a refresh restyles the cells whose format changed (resetting lost formats), not plain re-pours", () => {
+    // Header lost its bold; the plain body cell's text changed.
     const changed = cellsNeedingRestyle(content(true), content(false, "4"));
-    expect([...changed].sort()).toEqual(["0:0", "1:0"]);
+    expect([...changed]).toEqual(["0:0"]);
     const ops = cellCharacterStyleApplies(content(false, "4"), "S", "T", {
       cells: changed,
       includeDefault: true,
     });
-    expect(ops.map((o) => (o.args as { style: string }).style)).toEqual([
-      NO_CHARACTER_STYLE,
-      NO_CHARACTER_STYLE,
-    ]);
+    expect(ops.map((o) => (o.args as { style: string }).style)).toEqual([NO_CHARACTER_STYLE]);
+    // A plain table re-poured needs no restyle at all.
+    expect(cellsNeedingRestyle(content(false, "3"), content(false, "4")).size).toBe(0);
   });
 });

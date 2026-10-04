@@ -49,6 +49,7 @@ import type { BundleHost } from "@paged-media/plugin-api";
 import type { HeadlessHost } from "@paged-media/plugin-sdk";
 
 import {
+  CHAIN_REFLOW_DEBOUNCE_MS,
   createWorkbookSession,
   lowerPaginatedToChain,
   subscribeChainReflow,
@@ -206,7 +207,11 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "text.measureString": 20,
       "document.mutate": 1003, // → 4 (frame batch, insertTable, ONE pour batch, decor)
       "selection.set": 1,
-      "engine.getRangeLowered": 1,
+      // Wave 4: the PAGE door (styles + conditional formatting) replaces the
+      // key-0 door one for one; the placement reads the selection (an
+      // in-memory read, no document round trip) to land the frame there.
+      "engine.getRangePage": 1,
+      "selection.get": 1,
       "engine.listSheets": 1,
       "=mutations": 1003,
       "=engineCalls": 2,
@@ -336,9 +341,11 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
   });
 
   // COVERS: live re-pagination (lower.ts subscribeChainReflow →
-  // lowerPaginatedToChain): every content-box reflow of a chain frame
-  // re-reads the chain, re-paginates and lowers EVERY page again as a new
-  // table — no debounce, and the previous tables are never removed.
+  // paginatePass). Wave 4: a burst of content-box reflows (a resize drag)
+  // settles into ONE re-pagination, and that pass REFRESHES the chain's own
+  // tables in place (rows realigned, only moved rows re-poured) — it used to
+  // re-paginate per event and lower EVERY page again as a new table, with
+  // the previous tables never removed (1291 mutations for 10 reflows).
   it("reflow a two-frame chain 10 times [sheet.lower.paginate]", async () => {
     const s = await open(
       await authorWorkbook(120, 3, (r, c) => `${r}:${c}`),
@@ -365,7 +372,9 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     const engine = engineOf(s);
     const first = await lowerPaginatedToChain(host, engine, 0, "A1:C120", storyId!);
     expect(first?.pages.length).toBe(2);
-    const sub = subscribeChainReflow(host, engine, 0, "A1:C120", storyId!);
+    const sub = subscribeChainReflow(host, engine, 0, "A1:C120", storyId!, {
+      from: first,
+    });
     await settle();
     resetWork();
 
@@ -373,37 +382,45 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     const seen = raw.document.onDidChange((e) => {
       if (e.reflow) reflows += 1;
     });
+    // A resize drag: ten content-box changes back to back.
     for (let i = 1; i <= 10; i++) {
       const o = await raw.document.mutate({
         op: "resizeFrame",
         args: { frameId: f1, bounds: [36, 36, 380 - i * 10, 576] },
       });
       expect(o.applied).toBe(true);
-      await settle();
     }
+    await new Promise((r) => setTimeout(r, CHAIN_REFLOW_DEBOUNCE_MS + 50));
+    await sub.idle(); // the debounced pass, awaited
     await settle();
     seen.dispose();
-    sub.dispose();
     const work = take("reflow x10", { reflows });
-    // Behaviour: core reported each resize as a reflow, and every one
-    // re-lowered BOTH frames of the chain (a new table per frame per pass).
+    // Behaviour: core reported each resize as a reflow; ONE re-pagination
+    // ran; no table was added (the two tables were refreshed in place) and
+    // the rows the shorter first frame lost moved into the second table.
     expect(reflows).toBe(10);
-    expect(work.mutations.filter((m) => m.op === "insertTable").length).toBe(20);
+    expect(work.mutations.filter((m) => m.op === "insertTable").length).toBe(0);
+    const pages = sub.current()!.pages;
+    expect(pages).toHaveLength(2);
+    expect(pages[0].content.rows.length).toBeLessThan(first!.pages[0].content.rows.length);
+    sub.dispose();
     expectBudget("reflow x10", work, {
-      "document.meta": 10,
-      "document.frameChain": 10,
-      "document.elementGeometry": 10,
-      "document.hitTest": 20,
-      "document.collection": 10,
-      "text.measureString": 60,
-      "engine.paginate": 10, // one full re-pagination per reflow event → debounced
-      "document.mutate": 1291, // 20 NEW tables + 1251 per-cell pours; old tables stay
-      "=mutations": 1291,
-      "=engineCalls": 10,
-      "=reads": 60,
+      // Wave 4: debounced to ONE pass; the pass refreshes the two tables in
+      // place (rows realigned: the rows the first frame lost are deleted
+      // there and inserted in the second, their text as one batch). Was
+      // 10 / 10 / 10 / 20 / 10 / 60 / 10 / 1291 — every reflow re-lowered
+      // every page as a NEW table and the old ones stayed.
+      "document.frameChain": 1,
+      "document.elementGeometry": 1,
+      "text.measureString": 6,
+      "engine.paginate": 1,
+      "document.mutate": 5,
+      "=mutations": 5,
+      "=engineCalls": 1,
+      "=reads": 2,
       "=bytesWritten": 0,
       "=sceneItems": 0,
-      "=rejected": 0,
+      "=rejected": 0, // against the real core engine: every reshape op applied
     });
   });
 });

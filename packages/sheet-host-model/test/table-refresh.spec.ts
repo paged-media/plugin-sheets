@@ -86,6 +86,22 @@ describe("placed-table refresh replaces in place [sheet.lower.page]", () => {
     expect(ops.structure.map((m) => m.op).sort()).toEqual(["setColumnWidth", "setRowHeight"]);
   });
 
+  it("a page split that moved rows is a row insert + delete, not a re-pour of every shifted cell [sheet.lower.paginate]", () => {
+    // Frame 2 of a chain: header H, then body rows a,b,c. The frame above
+    // got shorter, so row z moved down into this frame and c moved out.
+    const prev = content([["H"], ["a"], ["b"], ["c"]]);
+    const next = content([["H"], ["z"], ["a"], ["b"]]);
+    const ops = tableRefreshOps(prev, next, "S", "T", [50], [50]);
+    expect(ops.structure).toEqual([
+      { op: "deleteTableRow", args: { storyId: "S", tableId: "T", at: 3 } },
+      { op: "insertTableRow", args: { storyId: "S", tableId: "T", at: 1 } },
+      { op: "setRowHeight", args: { storyId: "S", tableId: "T", row: 1, height: 18 } },
+    ]);
+    expect(ops.text).toEqual([
+      { op: "insertText", args: { storyId: "S", offset: 0, text: "z", cell: { tableId: "T", row: 1, col: 0 } } },
+    ]);
+  });
+
   it("measures text offsets in UTF-8 bytes (core's story unit)", () => {
     expect(textOffsetLength("Süd")).toBe(4);
   });

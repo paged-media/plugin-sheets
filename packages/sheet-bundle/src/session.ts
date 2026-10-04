@@ -1159,11 +1159,10 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       }
       // Wave 4 — land at the current selection, not a fixed page inset.
       let placement;
+      let content: LoweredContent;
       try {
-        placement = await placementForContent(
-          host,
-          pageContent(state.engine, state.activeSheet, state.selectedRange),
-        );
+        content = pageContent(state.engine, state.activeSheet, state.selectedRange);
+        placement = await placementForContent(host, content);
       } catch (err) {
         host.log.warn("lowerSelection: could not lower the range", err);
         return null;
@@ -1176,6 +1175,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         {
           placement: placement ?? undefined,
           contentVersion: revision,
+          content,
           // S-04 — record the resolved native table so "new style from cell"
           // can address its cells.
           onLowered: (info) => {

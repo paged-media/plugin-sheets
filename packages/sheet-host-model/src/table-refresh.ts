@@ -80,6 +80,82 @@ function decorKey(op: Mutation): string | null {
   return null;
 }
 
+/** A row's identity for alignment: its cells' text + style keys + height. */
+function rowSignature(content: LoweredContent, r: number, colPos: Map<number, number>): string {
+  const row = content.rows[r];
+  const cells = row.cells
+    .filter((c) => c.text.length > 0 || (c.styleKey ?? 0) !== 0)
+    .map((c) => `${colPos.get(c.col)}=${c.styleKey ?? 0}:${c.text}`)
+    .join("\u0001");
+  return `${row.heightPt}|${cells}`;
+}
+
+/** Rows beyond which the O(n·m) alignment falls back to tail reshaping. */
+const ALIGN_LIMIT = 2000;
+
+/** Match next rows to prev rows (longest common subsequence of row
+ *  signatures): `match[j]` is the prev row next row `j` keeps, or -1 when
+ *  `j` is a new row. A page split that moved rows between frames is then a
+ *  few row inserts/deletes, not a re-pour of every shifted cell. */
+function alignRows(prev: LoweredContent, next: LoweredContent): number[] {
+  const n = prev.rows.length;
+  const m = next.rows.length;
+  const match = new Array<number>(m).fill(-1);
+  if (n === 0 || m === 0) return match;
+  if (n * m > ALIGN_LIMIT * ALIGN_LIMIT / 4) {
+    // Too big to align: keep positions (tail reshape).
+    for (let j = 0; j < Math.min(n, m); j++) match[j] = j;
+    return match;
+  }
+  const pc = new Map<number, number>();
+  columnOrder(prev).forEach((c, i) => pc.set(c, i));
+  const nc = new Map<number, number>();
+  columnOrder(next).forEach((c, i) => nc.set(c, i));
+  const a = prev.rows.map((_, i) => rowSignature(prev, i, pc));
+  const b = next.rows.map((_, j) => rowSignature(next, j, nc));
+  // lcs[i][j] = LCS length of a[i..], b[j..].
+  const lcs: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] =
+        a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      match[j] = i;
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  // Rows that did not match but sit at the same place pair up positionally
+  // (a changed cell in a kept row re-pours that cell, not the row).
+  const used = new Set(match.filter((x) => x >= 0));
+  const free: number[] = [];
+  for (let k = 0; k < n; k++) if (!used.has(k)) free.push(k);
+  let lastPrev = -1;
+  for (let jj = 0; jj < m; jj++) {
+    if (match[jj] >= 0) {
+      lastPrev = match[jj];
+      continue;
+    }
+    const nextMatched = match.slice(jj + 1).find((x) => x >= 0) ?? n;
+    const cand = free.find((k) => k > lastPrev && k < nextMatched);
+    if (cand !== undefined) {
+      match[jj] = cand;
+      free.splice(free.indexOf(cand), 1);
+      lastPrev = cand;
+    }
+  }
+  return match;
+}
+
 /** Compute the in-place refresh of a placed table from `prev` to `next`. */
 export function tableRefreshOps(
   prev: LoweredContent,
@@ -96,6 +172,22 @@ export function tableRefreshOps(
   const nextRows = next.rows.length;
   const prevCols = prev.cols.length;
   const nextCols = next.cols.length;
+  const match = alignRows(prev, next);
+
+  // The table as it will stand after the row edits, seen as PREV content:
+  // kept rows carry their old cells, new rows are empty. Text and decor diff
+  // against this, so only what really changed is re-poured.
+  const kept = new Set(match.filter((x) => x >= 0));
+  const virtualPrev: LoweredContent = {
+    ...prev,
+    rows: next.rows.map((row, j) =>
+      match[j] >= 0
+        ? { ...prev.rows[match[j]], index: row.index }
+        : { index: row.index, heightPt: row.heightPt, cells: [] },
+    ),
+    merges: [],
+    rules: { h: [], v: [] },
+  };
 
   // Spans that go away are reset first, while their anchors still exist.
   const prevDecor = tableDecorOps(prev, storyId, tableId).ops;
@@ -103,7 +195,7 @@ export function tableRefreshOps(
   const nextKeys = new Set(nextDecor.map(decorKey));
   for (const op of prevDecor) {
     if (op.op !== "setCellSpan" || nextKeys.has(decorKey(op))) continue;
-    if (op.args.row < nextRows && op.args.col < nextCols) {
+    if (op.args.row < prevRows && op.args.col < prevCols) {
       structure.push({
         op: "setCellSpan",
         args: { ...op.args, rowSpan: 1, columnSpan: 1 },
@@ -111,14 +203,20 @@ export function tableRefreshOps(
     }
   }
 
-  // Rows / columns: append or drop at the END (the table's tail is where a
-  // range grows or a page split moves).
-  for (let r = prevRows; r < nextRows; r++) {
-    structure.push({ op: "insertTableRow", args: { storyId, tableId, at: r } });
+  // Rows: delete the prev rows nothing keeps (bottom-up, so indices stay
+  // valid), then insert each new row at its final index (top-down: when row
+  // j is inserted, rows 0..j-1 already stand).
+  for (let i = prevRows - 1; i >= 0; i--) {
+    if (!kept.has(i)) {
+      structure.push({ op: "deleteTableRow", args: { storyId, tableId, at: i } });
+    }
   }
-  for (let r = prevRows; r > nextRows; r--) {
-    structure.push({ op: "deleteTableRow", args: { storyId, tableId, at: r - 1 } });
+  for (let j = 0; j < nextRows; j++) {
+    if (match[j] < 0) {
+      structure.push({ op: "insertTableRow", args: { storyId, tableId, at: j } });
+    }
   }
+  // Columns: append or drop at the END.
   for (let c = prevCols; c < nextCols; c++) {
     structure.push({ op: "insertTableColumn", args: { storyId, tableId, at: c } });
   }
@@ -128,11 +226,12 @@ export function tableRefreshOps(
       args: { storyId, tableId, at: c - 1 },
     });
   }
-  next.rows.forEach((row, r) => {
-    if (r >= prevRows || prev.rows[r].heightPt !== row.heightPt) {
+  next.rows.forEach((row, j) => {
+    const was = match[j] >= 0 ? prev.rows[match[j]].heightPt : null;
+    if (was !== row.heightPt) {
       structure.push({
         op: "setRowHeight",
-        args: { storyId, tableId, row: r, height: row.heightPt },
+        args: { storyId, tableId, row: j, height: row.heightPt },
       });
     }
   });
@@ -143,14 +242,13 @@ export function tableRefreshOps(
     }
   }
 
-  // Text: only the cells that changed. Cells in removed rows/cols went with
-  // them; cells in added rows/cols start empty.
-  const before = cellTexts(prev);
+  // Text: only the cells that changed against the realigned table.
+  const before = cellTexts(virtualPrev);
   const after = cellTexts(next);
   for (let r = 0; r < nextRows; r++) {
     for (let c = 0; c < nextCols; c++) {
       const key = `${r}:${c}`;
-      const old = r < prevRows && c < prevCols ? (before.get(key) ?? "") : "";
+      const old = c < prevCols ? (before.get(key) ?? "") : "";
       const now = after.get(key) ?? "";
       if (old === now) continue;
       const cell = { tableId, row: r, col: c };
@@ -166,9 +264,14 @@ export function tableRefreshOps(
     }
   }
 
-  // Decor: resets for what disappeared (inside the new grid), then the new.
+  // Decor: resets for fills/edges the realigned table had (its styles) and
+  // the new content lacks, then the new decor in full.
   const decor: Mutation[] = [];
-  for (const op of prevDecor) {
+  const virtualDecor = tableDecorOps(virtualPrev, storyId, tableId).ops;
+  const prevRuleDecor = prevDecor.filter(
+    (op) => op.op === "setElementProperty" && op.args.path !== "cellFillColor",
+  );
+  for (const op of [...virtualDecor, ...prevRuleDecor]) {
     if (op.op !== "setElementProperty" || nextKeys.has(decorKey(op))) continue;
     if (op.args.elementId.kind !== "tableCell") continue;
     const { row, col } = op.args.elementId.id;
@@ -185,7 +288,9 @@ export function tableRefreshOps(
       },
     });
   }
-  decor.push(...nextDecor);
-
-  return { structure, text, decor };
+  const resets = decor.filter(
+    (op, i) => decor.findIndex((o) => decorKey(o) === decorKey(op)) === i,
+  );
+  return { structure, text, decor: [...resets, ...nextDecor] };
 }
+

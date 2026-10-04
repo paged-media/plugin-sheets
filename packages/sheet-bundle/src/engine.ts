@@ -580,8 +580,14 @@ export function wrapEngine(
   // (load, cell entry, sort, replace, structural edits) first hands the
   // engine the current time; the serial conversion (date system, local
   // time) is Rust's. Absent on an older artifact → a no-op.
+  // Throttled to one call per second of host time: NOW's resolution is a
+  // second, and a 1000-cell paste must not cost 1000 extra wasm calls.
+  let lastTick = Number.NEGATIVE_INFINITY;
   const tick = () => {
-    wasm.set_clock?.(clock.nowMs(), clock.tzOffsetMin());
+    const now = clock.nowMs();
+    if (now - lastTick < 1000) return;
+    lastTick = now;
+    wasm.set_clock?.(now, clock.tzOffsetMin());
   };
   const need = <K extends keyof SheetWasmEngine>(k: K) => {
     const f = wasm[k];
