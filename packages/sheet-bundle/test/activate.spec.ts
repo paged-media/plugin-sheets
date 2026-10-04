@@ -144,6 +144,13 @@ describe("sheet_plugin_bundle_activate", () => {
       "media.paged.sheet.command.copySelection",
       "media.paged.sheet.command.pasteSelection",
       "media.paged.sheet.command.styleFromCell",
+      "media.paged.sheet.command.paginateToChain",
+      "media.paged.sheet.command.newWorkbook",
+      "media.paged.sheet.command.insertRows",
+      "media.paged.sheet.command.deleteRows",
+      "media.paged.sheet.command.insertColumns",
+      "media.paged.sheet.command.deleteColumns",
+      "media.paged.sheet.command.addSheet",
     ]);
   });
 
@@ -202,8 +209,11 @@ describe("sheet_plugin_bundle_activate", () => {
     sheetBundle.activate(fake.host);
     expect(fake.importers.map((i) => i.id)).toEqual([
       "media.paged.sheet.importer.xlsx",
+      "media.paged.sheet.importer.csv",
     ]);
     expect(fake.importers[0].extensions).toEqual([".xlsx"]);
+    // Wave 4 [sheet.import.csv] — CSV/TSV open through the same door.
+    expect(fake.importers[1].extensions).toEqual([".csv", ".tsv"]);
     expect(fake.exporters.map((e) => e.id)).toEqual([
       "media.paged.sheet.exporter.xlsx",
     ]);

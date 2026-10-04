@@ -40,7 +40,7 @@ import {
 import type { BundleHost } from "@paged-media/plugin-api";
 
 import type { FindMatch } from "../engine";
-import { XLSX_MIME } from "../import-xlsx";
+import { DELIMITED_MIMES, importBytes, XLSX_MIME } from "../import-xlsx";
 import { columnLabel, type WorkbookSession } from "../session";
 
 // ---------------------------------------------------------------- styles
@@ -79,6 +79,24 @@ const primaryButton: CSSProperties = {
 
 // ----------------------------------------------------------------- panel
 
+/** A quieter button for the structure verbs. */
+const secondaryButton: CSSProperties = {
+  font: "12px var(--font-sans, system-ui)",
+  padding: "3px 8px",
+  color: "var(--pg-fg)",
+  background: "var(--pg-subtle, var(--pg-bg))",
+  border: "1px solid var(--pg-border)",
+  borderRadius: "var(--radius-sm, 4px)",
+  cursor: "pointer",
+};
+
+const row: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "var(--space-1, 4px)",
+  marginTop: "var(--space-1, 4px)",
+};
+
 export function makeWorkbookPanel(
   host: BundleHost,
   session: WorkbookSession,
@@ -100,7 +118,7 @@ export function makeWorkbookPanel(
         if (!file) return;
         try {
           const bytes = new Uint8Array(await file.arrayBuffer());
-          await session.import(bytes, file.name);
+          await importBytes(session, bytes, file.name);
         } catch (err) {
           host.log.error("workbook file read failed", err);
         }
@@ -114,12 +132,12 @@ export function makeWorkbookPanel(
     const onPick = useCallback(async () => {
       try {
         const files = await host.shell.pickFile({
-          accept: [".xlsx", XLSX_MIME],
+          accept: [".xlsx", XLSX_MIME, ".csv", ".tsv", ...DELIMITED_MIMES],
           multiple: false,
         });
         const file = files[0];
         if (!file) return; // cancelled
-        await session.import(file.bytes, file.name);
+        await importBytes(session, file.bytes, file.name);
       } catch (err) {
         host.log.error("workbook pick failed", err);
       }
@@ -127,6 +145,18 @@ export function makeWorkbookPanel(
 
     const onLower = useCallback(() => {
       void session.lowerSelection();
+    }, []);
+
+    // Wave 4 — workbook structure + pagination. Every verb answers
+    // {ok} / {ok:false, message}; the message shows verbatim (the engine's
+    // own reason, e.g. what preserved content blocks a row insert).
+    const [structMsg, setStructMsg] = useState<string | null>(null);
+    const [renameTo, setRenameTo] = useState("");
+    const report = (r: { ok: true } | { ok: false; message: string }, done: string) =>
+      setStructMsg(r.ok ? done : r.message);
+    const onPaginate = useCallback(async () => {
+      const r = await session.paginateSelection();
+      setStructMsg(r.ok ? "Paginated into the frame chain (live)." : r.message);
     }, []);
 
     // Sort-range controls (thin glue — the engine owns the sort semantics;
@@ -273,18 +303,27 @@ export function makeWorkbookPanel(
               marginBottom: "var(--space-2, 8px)",
             }}
           >
-            Choose .xlsx…
+            Choose .xlsx / .csv…
           </button>
         ) : (
           <input
             ref={fileRef}
             data-sheet-file
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.csv,.tsv"
             onChange={onFile}
             style={{ ...body, marginBottom: "var(--space-2, 8px)" }}
           />
         )}
+
+        <button
+          data-sheet-new
+          type="button"
+          onClick={() => void session.newWorkbook()}
+          style={{ ...secondaryButton, alignSelf: "flex-start", marginBottom: "var(--space-2, 8px)" }}
+        >
+          New blank workbook
+        </button>
 
         {/* S-10: engine-boot failure (the wasm isn't built) — say so. */}
         {st.bootError && (
@@ -326,6 +365,89 @@ export function makeWorkbookPanel(
               ))}
             </select>
 
+            <div style={row}>
+              <button
+                type="button"
+                data-sheet-add
+                style={secondaryButton}
+                onClick={() => report(session.addSheet(), "Sheet added.")}
+              >
+                Add sheet
+              </button>
+              <input
+                data-sheet-rename-to
+                type="text"
+                value={renameTo}
+                onChange={(e) => setRenameTo(e.target.value)}
+                placeholder="New name"
+                style={{ ...input, width: 110, marginTop: 0 }}
+              />
+              <button
+                type="button"
+                data-sheet-rename
+                style={secondaryButton}
+                disabled={renameTo.trim().length === 0}
+                onClick={() =>
+                  report(
+                    session.renameSheet(st.activeSheet ?? 0, renameTo.trim()),
+                    "Sheet renamed.",
+                  )
+                }
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                data-sheet-delete
+                style={secondaryButton}
+                disabled={sheets.length <= 1}
+                onClick={() =>
+                  report(session.deleteSheet(st.activeSheet ?? 0), "Sheet deleted.")
+                }
+              >
+                Delete sheet
+              </button>
+            </div>
+
+            <div style={kicker}>Rows and columns (at the grid selection)</div>
+            <div style={row}>
+              <button type="button" data-sheet-insert-rows style={secondaryButton}
+                onClick={() => report(session.structuralEdit("insertRows"), "Rows inserted.")}>
+                Insert rows
+              </button>
+              <button type="button" data-sheet-delete-rows style={secondaryButton}
+                onClick={() => report(session.structuralEdit("deleteRows"), "Rows deleted.")}>
+                Delete rows
+              </button>
+              <button type="button" data-sheet-insert-cols style={secondaryButton}
+                onClick={() => report(session.structuralEdit("insertCols"), "Columns inserted.")}>
+                Insert columns
+              </button>
+              <button type="button" data-sheet-delete-cols style={secondaryButton}
+                onClick={() => report(session.structuralEdit("deleteCols"), "Columns deleted.")}>
+                Delete columns
+              </button>
+            </div>
+            <label style={{ ...body, display: "flex", gap: 6, alignItems: "center", marginTop: "var(--space-1, 4px)" }}>
+              <input
+                data-sheet-iterative
+                type="checkbox"
+                checked={session.calcSettings()?.iterative ?? false}
+                onChange={(e) =>
+                  report(
+                    session.setIterative(e.target.checked),
+                    e.target.checked ? "Iterative calculation on." : "Iterative calculation off.",
+                  )
+                }
+              />
+              Iterative calculation (circular references converge)
+            </label>
+            {structMsg && (
+              <div data-sheet-struct-msg role="status" style={{ ...body, marginTop: 4 }}>
+                {structMsg}
+              </div>
+            )}
+
             <div style={kicker}>Range</div>
             <input
               data-sheet-range
@@ -349,6 +471,16 @@ export function makeWorkbookPanel(
                 }}
               >
                 Lower to frame
+              </button>
+              <button
+                type="button"
+                data-sheet-paginate
+                onClick={() => void onPaginate()}
+                disabled={!st.selectedRange}
+                style={{ ...secondaryButton, marginLeft: "var(--space-1, 4px)" }}
+                title="Select a text frame of a threaded chain first"
+              >
+                Paginate into threaded frames
               </button>
             </div>
 

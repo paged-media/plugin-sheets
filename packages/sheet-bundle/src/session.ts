@@ -49,20 +49,45 @@ import {
   bootEmptyEngine,
   bootEngine,
   ENGINE_NOT_BUILT,
+  type CalcSettingsInfo,
   type CellEditRecord,
   type ChartInfo,
   type FindMatch,
   type FindOptions,
   type SheetEngine,
+  type StructuralEditKind,
 } from "./engine";
-import { lowerSelectionToFrame, type LoweredTableInfo } from "./lower";
-import { lowerChartToFrame } from "./lower-chart";
+import {
+  lowerPaginatedToChain,
+  lowerSelectionToFrame,
+  pageContent,
+  placementForContent,
+  refreshLoweredTable,
+  selectionAnchor,
+  storyOfFrame,
+  subscribeChainReflow,
+  type ChainSubscription,
+  type LoweredTableInfo,
+} from "./lower";
+import {
+  CHART_SIZE_PT,
+  lowerChartToFrame,
+  removePlacedChart,
+  type PlacedChart,
+} from "./lower-chart";
 import { readWorkbookPart, writeWorkbookPart } from "./workbook-part";
 import {
   planCellStyleFromEntries,
   tableCellPositionOf,
   type ReadEntry,
 } from "../../sheet-host-model/src";
+
+/** How long a burst of committed edits settles before the placed tables,
+ *  charts and paginated chains are refreshed ONCE (Wave 4). */
+export const REFRESH_DEBOUNCE_MS = 300;
+
+/** A session verb's outcome: done, or the reason it was not. */
+export type SessionResult = { ok: true } | { ok: false; message: string };
 
 /** S-08 persistence keys: the workbook bytes live in `host.blob` (binary),
  *  its display name in the KV `host.storage`. Per-plugin — the last
@@ -399,6 +424,39 @@ export interface WorkbookSession {
    *  the write completes in the background), free the engine, drop
    *  listeners. */
   dispose(): void;
+
+  // ── Wave 4 ──────────────────────────────────────────────────────────
+
+  /** Paginate the active range across the threaded frames of the selected
+   *  text frame (or, with none selected, the frame last placed into), live:
+   *  a resize of a chain frame re-paginates (debounced) and REPLACES the
+   *  tables; workbook edits refresh them too. */
+  paginateSelection(): Promise<SessionResult>;
+  /** Bring every placed table, chart and paginated chain up to date with
+   *  the workbook now (edits schedule this on their own, debounced). */
+  refreshPlacements(): Promise<void>;
+  /** Replace the workbook with a new blank one (one sheet, "Book1"). */
+  newWorkbook(): Promise<void>;
+  /** Import delimited text (CSV/TSV) as a one-sheet workbook. The host
+   *  language types numbers and dates; `name`'s extension picks the
+   *  delimiter (.tsv → tab), otherwise it is sniffed. */
+  importCsv(text: string, name: string): Promise<void>;
+  /** Add a worksheet (empty name = next free `SheetN`) and make it active. */
+  addSheet(name?: string): SessionResult;
+  /** Rename a worksheet. */
+  renameSheet(id: number, name: string): SessionResult;
+  /** Delete a worksheet (references to it become #REF!). */
+  deleteSheet(id: number): SessionResult;
+  /** Insert/delete rows or columns at the grid selection (its rows / cols
+   *  are the count). Clears the cell-edit journal (its addresses moved). */
+  structuralEdit(kind: StructuralEditKind): SessionResult;
+  /** The workbook's iteration settings (`<calcPr>`), or null. */
+  calcSettings(): CalcSettingsInfo | null;
+  /** Toggle iterative calculation (persisted into `<calcPr>`). */
+  setIterative(on: boolean): SessionResult;
+  /** The workbook content version (bumps on every committed edit) — the
+   *  number placed frames' bindings carry. */
+  contentVersion(): number;
 }
 
 /** S-15 — coerce one provider cell value to the string the engine's
@@ -505,6 +563,18 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // S-04 and the WRONG one for a panel retargeting on the frame you just
   // entered: with two sheet frames on the page they disagree.
   const loweredTables = new Map<string, LoweredTableInfo>();
+  // Wave 4 — the charts this session placed (their elements, so a refresh
+  // can replace them) and the live paginated chains (storyId → handle).
+  let placedCharts: PlacedChart[] = [];
+  const chains = new Map<
+    string,
+    { sub: ChainSubscription; sheet: number; range: string }
+  >();
+  // The workbook content version: +1 per committed edit. Placed frames'
+  // bindings carry the version they show (it was always 0 before).
+  let revision = 0;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshChain: Promise<void> = Promise.resolve();
   // S-04 — a per-session counter so minted cell-style ids are unique within
   // one session (paired with a timestamp so they are unique across sessions).
   let nextCellStyleSeq = 1;
@@ -812,6 +882,8 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
 
   function markEdited(): void {
     if (!state.engine) return;
+    revision += 1;
+    scheduleRefresh();
     persistDirty = true;
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
@@ -840,6 +912,142 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     return enqueueWrite(bytes, state.fileName ?? "workbook.xlsx");
   }
 
+  /** Wave 4 — after a burst of edits, refresh what this session placed. */
+  function scheduleRefresh(): void {
+    if (loweredTables.size === 0 && placedCharts.length === 0 && chains.size === 0) {
+      return;
+    }
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void refreshPlacements();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
+  /** The name of sheet `id` (bindings carry names), or null if it is gone. */
+  function sheetNameOf(id: number): string | null {
+    return state.engine?.listSheets().find((s) => s.id === id)?.name ?? null;
+  }
+
+  /** Refresh every placed table (in place), chart (replaced) and chain
+   *  (re-paginated over its own tables). Serialised: a refresh requested
+   *  while one runs queues behind it. Never rejects. */
+  function refreshPlacements(): Promise<void> {
+    refreshChain = refreshChain.then(async () => {
+      const engine = state.engine;
+      if (!engine) return;
+      const version = revision;
+      for (const [frameId, info] of [...loweredTables]) {
+        const name = sheetNameOf(info.sheet);
+        if (name === null || !info.content) continue;
+        let next: LoweredContent;
+        try {
+          next = pageContent(engine, info.sheet, info.range);
+        } catch (err) {
+          host.log.warn(`refresh: could not lower ${info.range}`, err);
+          continue;
+        }
+        if (
+          info.contentVersion === version ||
+          JSON.stringify(next) === JSON.stringify(info.content)
+        ) {
+          continue;
+        }
+        const updated = await refreshLoweredTable(host, info, next, version, name);
+        loweredTables.set(frameId, updated);
+        if (lastLoweredTable?.frameId === frameId) lastLoweredTable = updated;
+      }
+      const charts: PlacedChart[] = [];
+      for (const placed of placedCharts) {
+        if (placed.contentVersion === version || placed.elementIds.length === 0) {
+          charts.push(placed);
+          continue;
+        }
+        let key: string;
+        try {
+          key = JSON.stringify(
+            engine.getChartGeometry(placed.chartIndex, ...CHART_SIZE_PT),
+          );
+        } catch {
+          charts.push(placed);
+          continue;
+        }
+        if (key === placed.geometryKey) {
+          // The edit did not touch this chart's data: nothing to redraw.
+          charts.push({ ...placed, contentVersion: version });
+          continue;
+        }
+        await removePlacedChart(host, placed);
+        let replaced: PlacedChart | null = null;
+        await lowerChartToFrame(host, engine, placed.chartIndex, {
+          placement: { pageId: placed.pageId, bounds: placed.bounds },
+          contentVersion: version,
+          onLowered: (p) => {
+            replaced = p;
+          },
+        });
+        charts.push(replaced ?? { ...placed, elementIds: [] });
+      }
+      placedCharts = charts;
+      for (const chain of chains.values()) {
+        await chain.sub.refresh();
+      }
+    }).catch((err) => {
+      host.log.warn("refresh of placed content failed", err);
+    });
+    return refreshChain;
+  }
+
+  /** The placements belong to the workbook they were lowered from: a new
+   *  workbook (import, blank, CSV, dataset) forgets them. */
+  function forgetPlacements(): void {
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = null;
+    lastLoweredTable = null;
+    loweredTables.clear();
+    placedCharts = [];
+    for (const c of chains.values()) c.sub.dispose();
+    chains.clear();
+  }
+
+  /** Make `engine` the session's workbook (a blank or CSV one): the old
+   *  one is freed, placements and journal forgotten, persisted as an edit. */
+  function adoptWorkbook(engine: SheetEngine, name: string): void {
+    if (state.engine && state.engine !== engine) {
+      try {
+        state.engine.dispose();
+      } catch (err) {
+        host.log.warn("prior engine dispose failed", err);
+      }
+    }
+    cancelPendingPersist();
+    forgetPlacements();
+    state.engine = engine;
+    state.fileName = name;
+    state.gridSelection = null;
+    state.dataSource = null;
+    editJournal = [];
+    journalCursor = 0;
+    const sheets = engine.listSheets();
+    state.activeSheet = sheets.length > 0 ? sheets[0].id : null;
+    defaultRangeForActive();
+    markEdited();
+    emitter.emit();
+  }
+
+  /** Run a workbook-structure verb; a throw becomes `{ok:false}`. */
+  function structureVerb(fn: (engine: SheetEngine) => void): SessionResult {
+    if (!state.engine) return { ok: false, message: "no workbook open" };
+    try {
+      fn(state.engine);
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+    markEdited();
+    emitter.emit();
+    return { ok: true };
+  }
+
   /** Boot (if needed) + load bytes into the engine + default sheet/range.
    *  Shared by import (persist) and restore (no re-persist). Returns true
    *  on a successful load. */
@@ -864,8 +1072,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       state.engine.loadXlsx(bytes);
       state.fileName = name;
       state.gridSelection = null;
-      lastLoweredTable = null; // the prior table belonged to the old workbook
-      loweredTables.clear();
+      forgetPlacements(); // the prior placements belonged to the old workbook
       editJournal = [];
       journalCursor = 0;
       const sheets = state.engine.listSheets();
@@ -950,12 +1157,25 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("lowerSelection: no workbook / sheet / range");
         return null;
       }
+      // Wave 4 — land at the current selection, not a fixed page inset.
+      let placement;
+      try {
+        placement = await placementForContent(
+          host,
+          pageContent(state.engine, state.activeSheet, state.selectedRange),
+        );
+      } catch (err) {
+        host.log.warn("lowerSelection: could not lower the range", err);
+        return null;
+      }
       const id = await lowerSelectionToFrame(
         host,
         state.engine,
         state.activeSheet,
         state.selectedRange,
         {
+          placement: placement ?? undefined,
+          contentVersion: revision,
           // S-04 — record the resolved native table so "new style from cell"
           // can address its cells.
           onLowered: (info) => {
@@ -1173,7 +1393,16 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("lowerChart: no workbook");
         return false;
       }
-      return lowerChartToFrame(host, state.engine, chartIndex);
+      const at = await selectionAnchor(host);
+      return lowerChartToFrame(host, state.engine, chartIndex, {
+        placement: at
+          ? { pageId: at.pageId, bounds: [at.top, at.left, at.top, at.left] }
+          : undefined,
+        contentVersion: revision,
+        onLowered: (placed) => {
+          placedCharts.push(placed);
+        },
+      });
     },
 
     gridScene(firstRow, firstCol, wPt, hPt) {
@@ -1686,6 +1915,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       seedSheetFromRecords(engine, snapshot.records);
 
       cancelPendingPersist(); // the prior workbook is replaced
+      forgetPlacements();
       state.engine = engine;
       state.activeSheet = 0;
       state.fileName = providerId;
@@ -1762,7 +1992,181 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       });
     },
 
+    async paginateSelection() {
+      const engine = state.engine;
+      if (!engine || state.activeSheet === null || !state.selectedRange) {
+        return { ok: false as const, message: "no workbook / sheet / range" };
+      }
+      const selected = host.selection
+        .get()
+        .find((id) => id.kind === "textFrame");
+      const frameId = selected ? (selected.id as string) : lastFrameId;
+      if (!frameId) {
+        return {
+          ok: false as const,
+          message: "select a text frame of the chain to paginate into",
+        };
+      }
+      const storyId = await storyOfFrame(host, frameId);
+      if (!storyId) {
+        return { ok: false as const, message: "the selected frame has no story" };
+      }
+      const sheet = state.activeSheet;
+      const range = state.selectedRange;
+      // Re-paginating the same chain replaces the old placement's handle
+      // (its tables are refreshed by the new pass, not duplicated).
+      const prior = chains.get(storyId);
+      const from = prior?.sub.current() ?? null;
+      prior?.sub.dispose();
+      const first = from
+        ? null
+        : await lowerPaginatedToChain(host, engine, sheet, range, storyId);
+      if (!from && !first) {
+        return { ok: false as const, message: "the frame threads no chain" };
+      }
+      const sub = subscribeChainReflow(host, engine, sheet, range, storyId, {
+        from: from ?? first,
+      });
+      chains.set(storyId, { sub, sheet, range });
+      if (from) await sub.refresh();
+      return { ok: true as const };
+    },
+
+    refreshPlacements() {
+      return refreshPlacements();
+    },
+
+    async newWorkbook() {
+      let engine: SheetEngine;
+      try {
+        engine = await bootEmptyEngine();
+        state.bootError = null;
+      } catch (err) {
+        state.bootError = err instanceof Error ? err.message : ENGINE_NOT_BUILT;
+        host.log.warn("newWorkbook: engine boot failed", err);
+        emitter.emit();
+        return;
+      }
+      adoptWorkbook(engine, "Book1.xlsx");
+    },
+
+    async importCsv(text, name) {
+      let engine: SheetEngine;
+      try {
+        engine = await bootEmptyEngine();
+        state.bootError = null;
+      } catch (err) {
+        state.bootError = err instanceof Error ? err.message : ENGINE_NOT_BUILT;
+        host.log.warn("importCsv: engine boot failed", err);
+        emitter.emit();
+        return;
+      }
+      const base = name.replace(/\.[^.]*$/, "");
+      const delimiter = /\.tsv$/i.test(name) ? "\t" : "";
+      const locale =
+        (typeof navigator !== "undefined" && navigator.language) || "en-US";
+      try {
+        if (!engine.loadCsv) throw new Error("engine wasm predates load_csv");
+        engine.loadCsv(text, delimiter, locale, base);
+      } catch (err) {
+        host.log.error("CSV import failed", err);
+        engine.dispose();
+        return;
+      }
+      adoptWorkbook(engine, `${base}.xlsx`);
+    },
+
+    addSheet(name) {
+      let id = -1;
+      const r = structureVerb((e) => {
+        if (!e.addSheet) throw new Error("engine wasm predates add_sheet");
+        id = e.addSheet(name ?? "");
+      });
+      if (r.ok) {
+        state.activeSheet = id;
+        state.gridSelection = null;
+        defaultRangeForActive();
+        emitter.emit();
+      }
+      return r;
+    },
+
+    renameSheet(id, name) {
+      return structureVerb((e) => {
+        if (!e.renameSheet) throw new Error("engine wasm predates rename_sheet");
+        e.renameSheet(id, name);
+      });
+    },
+
+    deleteSheet(id) {
+      const r = structureVerb((e) => {
+        if (!e.deleteSheet) throw new Error("engine wasm predates delete_sheet");
+        e.deleteSheet(id);
+      });
+      if (r.ok) {
+        // Sheet ids shifted; the journal and placements on that sheet are moot.
+        editJournal = [];
+        journalCursor = 0;
+        for (const [k, info] of [...loweredTables]) {
+          if (info.sheet === id) loweredTables.delete(k);
+          else if (info.sheet > id) loweredTables.set(k, { ...info, sheet: info.sheet - 1 });
+        }
+        state.activeSheet = 0;
+        state.gridSelection = null;
+        defaultRangeForActive();
+        emitter.emit();
+      }
+      return r;
+    },
+
+    structuralEdit(kind) {
+      const sel = state.gridSelection;
+      if (state.activeSheet === null) {
+        return { ok: false as const, message: "no sheet" };
+      }
+      if (!sel) {
+        return { ok: false as const, message: "select the rows or columns first" };
+      }
+      const rows = kind === "insertRows" || kind === "deleteRows";
+      const at = rows ? sel.anchorRow : sel.anchorCol;
+      const n = Math.max(1, rows ? sel.rows : sel.cols);
+      const sheet = state.activeSheet;
+      const r = structureVerb((e) => {
+        if (!e.structuralEdit) throw new Error("engine wasm predates structural_edit");
+        e.structuralEdit(sheet, kind, at, n);
+      });
+      if (r.ok) {
+        // The undo journal addresses cells by position — they moved.
+        editJournal = [];
+        journalCursor = 0;
+        defaultRangeForActive();
+        emitter.emit();
+      }
+      return r;
+    },
+
+    calcSettings() {
+      try {
+        return state.engine?.calcSettings?.() ?? null;
+      } catch {
+        return null;
+      }
+    },
+
+    setIterative(on) {
+      return structureVerb((e) => {
+        const cur = e.calcSettings?.();
+        if (!e.setIterative || !cur) throw new Error("engine wasm predates set_iterative");
+        e.setIterative(on, cur.maxIter, cur.maxChange);
+      });
+    },
+
+    contentVersion() {
+      return revision;
+    },
+
     dispose() {
+      forgetPlacements();
       // Flush unsaved edits BEFORE the engine is freed: the bytes are
       // taken synchronously here; the write finishes in the background.
       void flushPersist().catch((err) => {

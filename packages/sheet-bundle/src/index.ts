@@ -61,6 +61,10 @@ export {
   type SortResult,
   type SheetWasmEngine,
   type SheetWasmModule,
+  type CalcSettingsInfo,
+  type HostClock,
+  type StructuralEditKind,
+  SYSTEM_CLOCK,
 } from "./engine";
 
 // The in-memory workbook session (S-08), exported for the flow spec.
@@ -71,6 +75,8 @@ export {
   usedRangeA1,
   selectionRangeA1,
   tsvToRows,
+  REFRESH_DEBOUNCE_MS,
+  type SessionResult,
   type SessionState,
   type WorkbookSession,
 } from "./session";
@@ -87,9 +93,17 @@ export {
 // Live multi-frame pagination across the host frame chain (Wave 2D, S-05).
 export {
   lowerPaginatedToChain,
+  pageContent,
+  placementForContent,
+  refreshLoweredTable,
   resolveChain,
+  selectionAnchor,
+  storyOfFrame,
   subscribeChainReflow,
+  CHAIN_REFLOW_DEBOUNCE_MS,
   type ChainLowerResult,
+  type ChainSubscription,
+  type ChainTable,
 } from "./lower";
 // The chart → paged.draw vector lower (M2 charts track, spec §8.4).
 export { lowerChartToFrame } from "./lower-chart";

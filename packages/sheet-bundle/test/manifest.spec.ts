@@ -66,6 +66,13 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.copySelection",
       "media.paged.sheet.command.pasteSelection",
       "media.paged.sheet.command.styleFromCell",
+      "media.paged.sheet.command.paginateToChain",
+      "media.paged.sheet.command.newWorkbook",
+      "media.paged.sheet.command.insertRows",
+      "media.paged.sheet.command.deleteRows",
+      "media.paged.sheet.command.insertColumns",
+      "media.paged.sheet.command.deleteColumns",
+      "media.paged.sheet.command.addSheet",
     ]);
   });
 

@@ -32,6 +32,28 @@ import type { WorkbookSession } from "./session";
 export const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+/** Delimited-text spreadsheets (Wave 4): extension → MIME. */
+export const DELIMITED_MIMES = ["text/csv", "text/tab-separated-values"];
+
+/** Is `name` a CSV/TSV file (by extension)? */
+export function isDelimited(name: string): boolean {
+  return /\.(csv|tsv|tab)$/i.test(name);
+}
+
+/** Import picked/dropped bytes by kind: CSV/TSV text (decoded as UTF-8,
+ *  typed in Rust) or an XLSX package. */
+export async function importBytes(
+  session: WorkbookSession,
+  bytes: Uint8Array,
+  name: string,
+): Promise<void> {
+  if (isDelimited(name)) {
+    await session.importCsv(new TextDecoder("utf-8").decode(bytes), name);
+  } else {
+    await session.import(bytes, name);
+  }
+}
+
 /** Open the workbook panel (the "show me the workbook" affordance + the
  *  no-picker fallback target). */
 export function importXlsx(host: BundleHost, panelId: string): void {
@@ -51,11 +73,11 @@ export async function pickAndImport(
     return;
   }
   const files = await host.shell.pickFile({
-    accept: [".xlsx", XLSX_MIME],
+    accept: [".xlsx", XLSX_MIME, ".csv", ".tsv", ...DELIMITED_MIMES],
     multiple: false,
   });
   const file = files[0];
   if (!file) return; // cancelled
-  await session.import(file.bytes, file.name);
+  await importBytes(session, file.bytes, file.name);
   host.shell.openPanel(panelId);
 }

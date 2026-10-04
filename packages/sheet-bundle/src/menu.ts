@@ -28,11 +28,18 @@ const C = "media.paged.sheet.command";
 /** `[path, command suffix, group]`. */
 const ENTRIES: [path: string, suffix: string, group: string][] = [
   ["Object/Insert spreadsheet…", "importXlsx", "insert-plugin"],
+  ["Sheet/New blank workbook", "newWorkbook", "workbook"],
+  ["Sheet/Add sheet", "addSheet", "workbook"],
   ["Sheet/Open sheet grid", "openGrid", "grid"],
   ["Sheet/Show grid in frame", "showGridInFrame", "grid-frame"],
   ["Sheet/Hide grid in frame", "hideGridInFrame", "grid-frame"],
   ["Sheet/Place selection on page", "lowerToFrame", "place"],
   ["Sheet/Place chart on page", "lowerChartToFrame", "place"],
+  ["Sheet/Paginate into threaded frames", "paginateToChain", "place"],
+  ["Sheet/Insert rows", "insertRows", "structure"],
+  ["Sheet/Delete rows", "deleteRows", "structure"],
+  ["Sheet/Insert columns", "insertColumns", "structure"],
+  ["Sheet/Delete columns", "deleteColumns", "structure"],
   ["Sheet/Sort range…", "sortRange", "edit"],
   ["Sheet/Find & replace…", "findReplace", "edit"],
   ["Sheet/Copy cells", "copySelection", "clipboard"],

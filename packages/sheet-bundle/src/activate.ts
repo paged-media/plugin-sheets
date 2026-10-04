@@ -37,7 +37,12 @@ import { parseBinding } from "../../sheet-host-model/src";
 
 import manifest from "../manifest.json";
 
-import { pickAndImport, XLSX_MIME } from "./import-xlsx";
+import {
+  DELIMITED_MIMES,
+  importBytes,
+  pickAndImport,
+  XLSX_MIME,
+} from "./import-xlsx";
 import {
   registerBindingProvider,
   type BindingProviderHandle,
@@ -268,6 +273,61 @@ export function activate(host: BundleHost): BundleHandle {
     },
   });
 
+  // Wave 4 — "Paginate into threaded frames": the active range split
+  // across the selected frame's thread, live (a resize re-paginates and
+  // REPLACES the tables; edits refresh them). Built since Wave 2D, never
+  // reachable until now.
+  host.contribute.command({
+    id: "media.paged.sheet.command.paginateToChain",
+    title: "Paginate into threaded frames",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: async () => {
+      const r = await session.paginateSelection();
+      if (!r.ok) host.log.warn(`paginateToChain: ${r.message}`);
+    },
+  });
+  // Wave 4 — a blank workbook to type into, without importing a file.
+  host.contribute.command({
+    id: "media.paged.sheet.command.newWorkbook",
+    title: "New blank workbook",
+    category: "Sheet",
+    handler: async () => {
+      await session.newWorkbook();
+      host.shell.openPanel(PANEL_ID);
+    },
+  });
+  // Wave 4 — insert/delete rows or columns at the grid selection (the
+  // engine rewrites every reference; it refuses, with the reason, when
+  // preserved content would be left addressing the wrong cells).
+  for (const [suffix, title, kind] of [
+    ["insertRows", "Insert rows", "insertRows"],
+    ["deleteRows", "Delete rows", "deleteRows"],
+    ["insertColumns", "Insert columns", "insertCols"],
+    ["deleteColumns", "Delete columns", "deleteCols"],
+  ] as const) {
+    host.contribute.command({
+      id: `media.paged.sheet.command.${suffix}`,
+      title,
+      category: "Sheet",
+      when: workbookIsOpen,
+      handler: () => {
+        const r = session.structuralEdit(kind);
+        if (!r.ok) host.log.warn(`${suffix}: ${r.message}`);
+      },
+    });
+  }
+  host.contribute.command({
+    id: "media.paged.sheet.command.addSheet",
+    title: "Add sheet",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: () => {
+      const r = session.addSheet();
+      if (!r.ok) host.log.warn(`addSheet: ${r.message}`);
+    },
+  });
+
   // K-1 entry — double-click a lowered sheet frame to ENTER "sheet" mode:
   // the live in-frame grid renders (C-1 sceneLayer); Esc / exit clears it.
   // The objectType marks a frame as a sheet by its OWN binding metadata
@@ -408,6 +468,18 @@ export function activate(host: BundleHost): BundleHandle {
       mimeTypes: [XLSX_MIME],
       import: async ({ name, bytes }) => {
         await session.import(bytes, name);
+        host.shell.openPanel(PANEL_ID);
+      },
+    });
+    // Wave 4 — CSV / TSV open through the same door: the text becomes a
+    // one-sheet workbook (typed in Rust by the host language's locale).
+    host.contribute.importer({
+      id: "media.paged.sheet.importer.csv",
+      title: "Delimited text (CSV/TSV)",
+      extensions: [".csv", ".tsv"],
+      mimeTypes: DELIMITED_MIMES,
+      import: async ({ name, bytes }) => {
+        await importBytes(session, bytes, name);
         host.shell.openPanel(PANEL_ID);
       },
     });
