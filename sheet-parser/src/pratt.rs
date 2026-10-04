@@ -69,6 +69,7 @@ pub fn parse_tokens(
         ctx,
         src_len,
         in_paren: false,
+        locals: Vec::new(),
     };
     let e = p.parse_bp(0)?;
     if p.pos != tokens.len() {
@@ -88,6 +89,11 @@ struct Parser<'a> {
     /// list, where `,` separates arguments. Saved/restored on entry to each
     /// `(...)` group and each argument list (ruling, spec §6.1).
     in_paren: bool,
+    /// The `LET`/`LAMBDA` names in lexical scope at the current position
+    /// (innermost last). An identifier matching one (case-insensitively)
+    /// parses as [`Expr::Local`] (or a [`Expr::Call`] when followed by `(`)
+    /// instead of a defined name / function (Wave-7 amendment).
+    locals: Vec<String>,
 }
 
 // ---- Binding powers. Higher = binds tighter. Pairs are (left, right);
@@ -319,19 +325,122 @@ impl Parser<'_> {
         let is_call = matches!(self.peek().map(|t| &t.kind), Some(TokKind::LParen))
             && self.peek().is_some_and(|t| !t.ws_before);
         if is_call {
+            // A LET/LAMBDA-bound name called as a function: `f(2)`.
+            if self.is_local(name) {
+                self.bump(); // '('
+                let args = self.parse_args()?;
+                self.expect(TokKind::RParen, "expected ')' after arguments")?;
+                let call = Expr::Call(Box::new(Expr::Local(name.into())), args);
+                return self.parse_postfix_calls(call);
+            }
             let fid = sheet_core::funcs::lookup_func(name).ok_or_else(|| {
                 ParseError::new(format!("unknown function {name:?}"), ident_span.clone())
             })?;
             self.bump(); // '('
-            let args = self.parse_args()?;
+            let fname = sheet_core::funcs::meta(fid).name;
+            let args = match fname {
+                "LET" => self.parse_let_args()?,
+                "LAMBDA" => self.parse_lambda_args()?,
+                _ => self.parse_args()?,
+            };
             self.expect(TokKind::RParen, "expected ')' after arguments")?;
-            Ok(Expr::Func(fid, args))
+            let call = Expr::Func(fid, args);
+            if fname == "LAMBDA" {
+                // `LAMBDA(x, x+1)(2)` — an immediately invoked lambda.
+                return self.parse_postfix_calls(call);
+            }
+            Ok(call)
+        } else if self.is_local(name) {
+            Ok(Expr::Local(name.into()))
         } else {
             let nid = self.ctx.name_id(name).ok_or_else(|| {
                 ParseError::new(format!("unknown name {name:?}"), ident_span.clone())
             })?;
             Ok(Expr::Name(nid))
         }
+    }
+
+    /// Whether `name` is a LET/LAMBDA local in scope.
+    fn is_local(&self, name: &str) -> bool {
+        self.locals.iter().any(|l| l.eq_ignore_ascii_case(name))
+    }
+
+    /// Whether the next two tokens are `<identifier> ,` — a LET name / LAMBDA
+    /// parameter declaration slot (the final body argument is followed by
+    /// `)` instead).
+    fn at_declaration(&self) -> Option<String> {
+        let t0 = self.tokens.get(self.pos)?;
+        let t1 = self.tokens.get(self.pos + 1)?;
+        match (&t0.kind, &t1.kind) {
+            (TokKind::Ident(n), TokKind::Comma) if !n.contains('.') => Some(n.to_string()),
+            _ => None,
+        }
+    }
+
+    /// `(args)` suffixes after a lambda-valued expression: `f(1)(2)`.
+    fn parse_postfix_calls(&mut self, mut callee: Expr) -> Result<Expr, ParseError> {
+        while matches!(self.peek().map(|t| &t.kind), Some(TokKind::LParen))
+            && self.peek().is_some_and(|t| !t.ws_before)
+        {
+            self.bump(); // '('
+            let args = self.parse_args()?;
+            self.expect(TokKind::RParen, "expected ')' after arguments")?;
+            callee = Expr::Call(Box::new(callee), args);
+        }
+        Ok(callee)
+    }
+
+    /// `LET(name1, value1, [name2, value2, …], calculation)`: each name enters
+    /// scope for the values after it and for the calculation (Microsoft LET
+    /// docs). The declaration slots become [`Expr::Local`].
+    fn parse_let_args(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let saved = self.in_paren;
+        self.in_paren = false;
+        let scope_mark = self.locals.len();
+        let mut args = Vec::new();
+        let result = (|| {
+            while let Some(name) = self.at_declaration() {
+                self.bump(); // name
+                self.bump(); // ','
+                let value = self.parse_bp(0)?;
+                self.expect(TokKind::Comma, "LET: expected ',' after a value")?;
+                args.push(Expr::Local(name.as_str().into()));
+                args.push(value);
+                self.locals.push(name);
+            }
+            if args.is_empty() {
+                let span = self
+                    .peek()
+                    .map(|t| t.span.clone())
+                    .unwrap_or_else(|| self.eof_span());
+                return Err(ParseError::new("LET: expected a name", span));
+            }
+            args.push(self.parse_bp(0)?);
+            Ok(())
+        })();
+        self.locals.truncate(scope_mark);
+        self.in_paren = saved;
+        result.map(|_| args)
+    }
+
+    /// `LAMBDA([parameter1, …,] calculation)`: the parameters are in scope
+    /// for the calculation only.
+    fn parse_lambda_args(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let saved = self.in_paren;
+        self.in_paren = false;
+        let scope_mark = self.locals.len();
+        let mut args = Vec::new();
+        while let Some(name) = self.at_declaration() {
+            self.bump(); // name
+            self.bump(); // ','
+            args.push(Expr::Local(name.as_str().into()));
+            self.locals.push(name);
+        }
+        let body = self.parse_bp(0);
+        self.locals.truncate(scope_mark);
+        self.in_paren = saved;
+        args.push(body?);
+        Ok(args)
     }
 
     /// Function-argument list: comma-separated expressions. A `,` here is an

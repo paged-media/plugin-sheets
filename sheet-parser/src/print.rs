@@ -56,13 +56,38 @@ use crate::SheetNames;
 /// refs on `home` print without a sheet prefix; refs elsewhere are prefixed.
 pub fn print(f: &Formula, home: SheetId, sheets: &dyn SheetNames) -> String {
     let mut out = String::new();
-    Printer { home, sheets }.expr(&f.root, &mut out, Prec::TOP, Side::Whole);
+    Printer {
+        home,
+        sheets,
+        ooxml: false,
+    }
+    .expr(&f.root, &mut out, Prec::TOP, Side::Whole);
+    out
+}
+
+/// Print `f` in the OOXML STORAGE dialect (the `<f>` text of an xlsx cell):
+/// identical to [`print`] except that every function Excel introduced after
+/// the ECMA-376 base set carries its future-function prefix (`_xlfn.`, or
+/// `_xlfn._xlws.` for `FILTER`/`SORT`), and every `LET`/`LAMBDA` local carries
+/// `_xlpm.` ([MS-XLSX] §2.2.2 "Formulas"; see [`crate::future`]). Without the
+/// prefix Excel opens the cell as `#NAME?`. [`crate::strip_storage_prefixes`]
+/// is the inverse on load.
+pub fn print_ooxml(f: &Formula, home: SheetId, sheets: &dyn SheetNames) -> String {
+    let mut out = String::new();
+    Printer {
+        home,
+        sheets,
+        ooxml: true,
+    }
+    .expr(&f.root, &mut out, Prec::TOP, Side::Whole);
     out
 }
 
 struct Printer<'a> {
     home: SheetId,
     sheets: &'a dyn SheetNames,
+    /// Emit the OOXML storage prefixes (`_xlfn.` / `_xlpm.`).
+    ooxml: bool,
 }
 
 /// Precedence level for the printer. Higher = tighter (mirrors the parser's
@@ -137,8 +162,37 @@ impl Printer<'_> {
             Expr::StructuredRef(s) => self.structured_ref(s, out),
             // A spill ref prints as `<inner>#` (M1 spill track).
             Expr::SpillRef(inner) => {
-                self.expr(inner, out, Prec::ATOM, Side::Whole);
-                out.push('#');
+                if self.ooxml {
+                    // Storage form of `A1#` ([MS-XLSX] §2.2.2).
+                    out.push_str("_xlfn.ANCHORARRAY(");
+                    self.expr(inner, out, Prec::TOP, Side::Whole);
+                    out.push(')');
+                } else {
+                    self.expr(inner, out, Prec::ATOM, Side::Whole);
+                    out.push('#');
+                }
+            }
+            Expr::Local(name) => {
+                if self.ooxml {
+                    out.push_str("_xlpm.");
+                }
+                out.push_str(name);
+            }
+            Expr::Call(callee, args) => {
+                // The callee is an atom-shaped LAMBDA call or a local name;
+                // anything else is parenthesized so `(...)(args)` re-parses.
+                let atomic = matches!(
+                    **callee,
+                    Expr::Func(_, _) | Expr::Local(_) | Expr::Call(_, _)
+                );
+                if !atomic {
+                    out.push('(');
+                }
+                self.expr_inner(callee, out);
+                if !atomic {
+                    out.push(')');
+                }
+                self.call_args(args, out);
             }
         }
     }
@@ -325,7 +379,16 @@ impl Printer<'_> {
     }
 
     fn func(&self, fid: sheet_core::ast::FuncId, args: &[Expr], out: &mut String) {
-        out.push_str(sheet_core::funcs::meta(fid).name);
+        let name = sheet_core::funcs::meta(fid).name;
+        if self.ooxml {
+            out.push_str(crate::future::storage_prefix(name));
+        }
+        out.push_str(name);
+        self.call_args(args, out);
+    }
+
+    /// `(a, b, …)` — a parenthesized argument list.
+    fn call_args(&self, args: &[Expr], out: &mut String) {
         out.push('(');
         for (i, a) in args.iter().enumerate() {
             if i > 0 {
@@ -421,6 +484,7 @@ fn expr_prec(e: &Expr) -> Prec {
         // Structured/spill refs are atoms (a `#` postfix on an atom is still
         // atomic for re-parse purposes).
         Expr::Array(_) | Expr::StructuredRef(_) | Expr::SpillRef(_) => Prec::ATOM,
+        Expr::Local(_) | Expr::Call(_, _) => Prec::ATOM,
         Expr::Unary(UnOp::Percent, _) => Prec::PERCENT,
         Expr::Unary(_, _) => Prec::UNARY,
         Expr::Binary(op, _, _) => binop_prec(*op),

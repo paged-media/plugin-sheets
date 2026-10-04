@@ -56,6 +56,7 @@
 
 mod error;
 mod extract;
+mod future;
 mod lexer;
 mod pratt;
 mod print;
@@ -65,7 +66,8 @@ mod structured;
 
 pub use error::ParseError;
 pub use extract::{extract_refs, RefSet};
-pub use print::print;
+pub use future::{storage_prefix, strip_storage_prefixes};
+pub use print::{print, print_ooxml};
 pub use rewrite::{rewrite, Edit};
 
 use sheet_core::ast::{Formula, NameId};

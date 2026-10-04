@@ -1,0 +1,8 @@
+# sheet.fn.lambda.byrow golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# BYROW(array, lambda(row)).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+row-sums	=INDEX(BYROW(A1:B2,LAMBDA(r,SUM(r))),2,1)	A1=1;B1=2;A2=3;B2=4	7
+range-max	=BYROW(A1:B2,LAMBDA(r,MAX(r)))	A1=1;B1=2;A2=3;B2=4	2

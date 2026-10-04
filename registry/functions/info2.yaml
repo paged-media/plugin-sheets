@@ -117,3 +117,21 @@
   tests:
     rust: ["sheet-conformance/tests/special_forms.rs::sheet_fn_info_isformula"]
     corpus: []
+
+# ISREF — EVALUATOR SPECIAL FORM (Wave 7). Whether the argument IS a reference
+# is a property of the expression, not of its value (a nested array or an
+# array literal reaches a kernel as a range view too), so it is answered in
+# sheet-calc/eval.rs through the same reference resolution OFFSET/INDIRECT use.
+- id: sheet.fn.info.isref
+  name: ISREF
+  family: info
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: true
+  ref_args: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft ISREF (public docs) — TRUE if value refers to a reference (cell, range, range name, OFFSET/INDIRECT result); FALSE for a value, an array or an unresolvable INDIRECT"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_info_isref"]
+    corpus: ["corpus/fn-corpus/info2/isref.golden.tsv"]

@@ -1,0 +1,11 @@
+# sheet.fn.lambda.let golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# LET(name1, value1, …, calculation).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-sum	=LET(x,1,x+1)	-	2
+two-names	=LET(x,2,y,x*3,x+y)	-	8
+range-binding	=LET(r,A1:A3,SUM(r))	A1=1;A2=2;A3=3	6
+shadow	=LET(x,1,LET(x,2,x)+x)	-	3
+once	=LET(x,RAND(),x-x)	-	0

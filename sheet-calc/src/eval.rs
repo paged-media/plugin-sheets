@@ -71,6 +71,8 @@ use sheet_fn::{coerce, Arg, EvalCtx, FnResult};
 use crate::argview::{self, RangeBuf};
 use crate::spill::SpillState;
 
+mod lambda;
+
 /// Evaluate a formula root `expr` for the cell at `current`, with the given
 /// clock/seed context. Reads dependency values straight out of `model` (fresh
 /// by topo order). Spill references resolve against `spills` (a `SpillRef` in
@@ -95,6 +97,7 @@ pub fn eval_expr_rich(
     match expr {
         Expr::Func(fid, args) => eval_func_rich(model, *fid, args, ctx, spills),
         Expr::Array(rows) => eval_array_literal(model, rows, ctx, spills),
+        Expr::Call(callee, args) => lambda::eval_call(model, callee, args, ctx, spills),
         // Not a spilling root — fall back to the scalar evaluation.
         other => FnResult::Scalar(eval(model, other, ctx, spills)),
     }
@@ -108,6 +111,8 @@ pub fn expr_spills(expr: &Expr) -> bool {
     match expr {
         Expr::Func(fid, _) => sheet_core::funcs::meta(*fid).returns_array,
         Expr::Array(_) => true,
+        // A lambda call may return a block (`LAMBDA(n, SEQUENCE(n))(3)`).
+        Expr::Call(_, _) => true,
         _ => false,
     }
 }
@@ -133,6 +138,12 @@ fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillState) -> Cel
         // (`sheet.calc.spill.ref-operator`); its real use is as a range
         // argument, materialized in `eval_func`.
         Expr::SpillRef(inner) => eval_spill_ref_scalar(model, inner, ctx, spills),
+        // A LET/LAMBDA local still present at evaluation is unbound (its
+        // binding substitutes it away first) — Excel's `#NAME?`.
+        Expr::Local(_) => CellValue::Error(CellError::Name),
+        Expr::Call(callee, args) => {
+            lambda::collapse(lambda::eval_call(model, callee, args, ctx, spills))
+        }
     }
 }
 
@@ -636,6 +647,36 @@ fn plan_args(
                 };
                 plans.push(ArgPlan::Scalar(v));
             }
+            // A NESTED dynamic-array result (`SUM(SEQUENCE(3))`,
+            // `INDEX(VSTACK(…),2,1)`), an array literal (`SUM({1,2,3})`) or a
+            // lambda call materializes its evaluated block as a range argument
+            // (Wave 7): the kernel reads it through the same `RangeView` door
+            // as a sheet range. Before this, a nested array reached the kernel
+            // as the scalar door's `#VALUE!`.
+            Expr::Func(ffid, fargs) if sheet_core::funcs::meta(*ffid).returns_array => {
+                match eval_func_rich(model, *ffid, fargs, ctx, spills) {
+                    FnResult::Array(grid) => {
+                        bufs.push(RangeBuf::from_grid(ctx.current, grid));
+                        plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                    }
+                    FnResult::Scalar(v) => plans.push(ArgPlan::Scalar(v)),
+                }
+            }
+            Expr::Array(rows) => match eval_array_literal(model, rows, ctx, spills) {
+                FnResult::Array(grid) => {
+                    bufs.push(RangeBuf::from_grid(ctx.current, grid));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                }
+                FnResult::Scalar(v) => plans.push(ArgPlan::Scalar(v)),
+            },
+            Expr::Call(callee, cargs) => match lambda::eval_call(model, callee, cargs, ctx, spills)
+            {
+                FnResult::Array(grid) => {
+                    bufs.push(RangeBuf::from_grid(ctx.current, grid));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                }
+                FnResult::Scalar(v) => plans.push(ArgPlan::Scalar(v)),
+            },
             // A reference-returning special form (OFFSET/INDIRECT) as an
             // argument materializes its RESOLVED range, so a range-aware outer
             // function (`SUM(OFFSET(A1,0,0,3,1))`) sees the whole area, not just
@@ -706,6 +747,11 @@ fn eval_func_rich(
     // Special forms (M2 Phase A) intercept here too — they always ground to a
     // scalar (a single value, never a 2-D block in T1/T2).
     if sheet_core::funcs::meta(fid).special_form {
+        // LET / LAMBDA and the lambda helpers (MAP, REDUCE, …) can yield a
+        // block; the reference forms ground to a scalar.
+        if let Some(r) = lambda::special_rich(model, fid, args, ctx, spills) {
+            return r;
+        }
         return FnResult::Scalar(eval_special_form(model, fid, args, ctx, spills));
     }
     let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
@@ -812,11 +858,21 @@ fn eval_special_form(
     {
         return CellValue::Error(CellError::Value);
     }
+    // LET / LAMBDA / MAP / … in a scalar slot: a 1×1 block is its value, a
+    // larger block is `#VALUE!` (the range-in-scalar ruling).
+    if let Some(r) = lambda::special_rich(model, fid, args, ctx, spills) {
+        return lambda::collapse(r);
+    }
     match meta.name {
         "OFFSET" => eval_offset(model, args, ctx, spills),
         "INDIRECT" => eval_indirect(model, args, ctx, spills),
         "FORMULATEXT" => eval_formulatext(model, args, ctx),
         "ISFORMULA" => eval_isformula(model, args, ctx),
+        // ISREF(value): TRUE iff the argument denotes a reference (a cell, a
+        // range, a range-valued name, a structured or spill reference, or a
+        // resolvable OFFSET/INDIRECT) — the same resolution special forms
+        // use. A value, an array or an unresolvable INDIRECT is FALSE.
+        "ISREF" => CellValue::Bool(eval_as_ref(model, &args[0], ctx, spills).is_some()),
         // A registered special form with no handler is an internal invariant
         // break (a new `special_form: true` row landed without wiring eval).
         _ => CellValue::Error(CellError::Name),

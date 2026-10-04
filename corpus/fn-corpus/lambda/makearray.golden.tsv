@@ -1,0 +1,8 @@
+# sheet.fn.lambda.makearray golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# MAKEARRAY(rows, cols, lambda(row, col)).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+product-table	=INDEX(MAKEARRAY(2,3,LAMBDA(r,c,r*c)),2,3)	-	6
+zero-rows	=MAKEARRAY(0,3,LAMBDA(r,c,r))	-	#VALUE!

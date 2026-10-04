@@ -1,0 +1,8 @@
+# sheet.fn.lambda.reduce golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# REDUCE(initial_value, array, lambda(accumulator, value)).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+sum	=REDUCE(0,A1:A3,LAMBDA(a,v,a+v))	A1=1;A2=2;A3=3	6
+product	=REDUCE(1,{1,2,3,4},LAMBDA(a,v,a*v))	-	24

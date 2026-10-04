@@ -162,6 +162,11 @@ fn rewrite_expr(e: &Expr, plan: &Plan) -> Expr {
         // A spill ref's geometry is its anchor's; rewrite the inner anchor and
         // keep the `#` (spill) wrapper.
         Expr::SpillRef(inner) => Expr::SpillRef(Box::new(rewrite_expr(inner, plan))),
+        Expr::Local(_) => e.clone(),
+        Expr::Call(callee, args) => Expr::Call(
+            Box::new(rewrite_expr(callee, plan)),
+            args.iter().map(|a| rewrite_expr(a, plan)).collect(),
+        ),
     }
 }
 

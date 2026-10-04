@@ -1,0 +1,120 @@
+# sheet.fn.lambda.* — LET, LAMBDA and the lambda helper functions (Wave 7).
+# All rows are EVALUATOR SPECIAL FORMS (`special_form: true`): they bind names
+# and call lambdas, which a pure fn(&[Arg], &EvalCtx) kernel cannot do. They
+# are handled in sheet-calc/src/eval/lambda.rs by substitution (see its module
+# docs for the rulings); the pure dispatch door returns #NAME? for these rows.
+# The parser scopes LET names / LAMBDA parameters (Expr::Local) and parses
+# lambda calls (Expr::Call) — the Wave-7 AST amendment. `returns_array: true`
+# marks the forms whose result may be a block so a formula rooted at one
+# spills. Provenance: the public Microsoft documentation for each function.
+
+- id: sheet.fn.lambda.let
+  name: LET
+  family: lambda
+  arity: { min: 3, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft LET (public docs) — name1, value1, [name2, value2, …], calculation; names scoped to later values and the calculation"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_let"]
+    corpus: ["corpus/fn-corpus/lambda/let.golden.tsv"]
+
+- id: sheet.fn.lambda.lambda
+  name: LAMBDA
+  family: lambda
+  arity: { min: 1, max: 254 }
+  volatility: none
+  range_aware: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft LAMBDA (public docs) — [parameter1, …,] calculation; invoked as LAMBDA(...)(args) or through a LET name; a lambda as a cell value is #CALC! (grounded #VALUE!)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_lambda"]
+    corpus: ["corpus/fn-corpus/lambda/lambda.golden.tsv"]
+
+- id: sheet.fn.lambda.map
+  name: MAP
+  family: lambda
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft MAP (public docs) — array1, [array2, …], lambda; element-wise"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_map"]
+    corpus: ["corpus/fn-corpus/lambda/map.golden.tsv"]
+
+- id: sheet.fn.lambda.reduce
+  name: REDUCE
+  family: lambda
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft REDUCE (public docs) — initial_value, array, lambda(accumulator, value)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_reduce"]
+    corpus: ["corpus/fn-corpus/lambda/reduce.golden.tsv"]
+
+- id: sheet.fn.lambda.scan
+  name: SCAN
+  family: lambda
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft SCAN (public docs) — initial_value, array, lambda(accumulator, value); every intermediate value"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_scan"]
+    corpus: ["corpus/fn-corpus/lambda/scan.golden.tsv"]
+
+- id: sheet.fn.lambda.byrow
+  name: BYROW
+  family: lambda
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft BYROW (public docs) — array, lambda(row); one result per row"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_byrow"]
+    corpus: ["corpus/fn-corpus/lambda/byrow.golden.tsv"]
+
+- id: sheet.fn.lambda.bycol
+  name: BYCOL
+  family: lambda
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft BYCOL (public docs) — array, lambda(column); one result per column"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_bycol"]
+    corpus: ["corpus/fn-corpus/lambda/bycol.golden.tsv"]
+
+- id: sheet.fn.lambda.makearray
+  name: MAKEARRAY
+  family: lambda
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  special_form: true
+  status: implemented
+  provenance: ["Microsoft MAKEARRAY (public docs) — rows, cols, lambda(row, col); 1-based indices"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_lambda.rs::sheet_fn_lambda_makearray"]
+    corpus: ["corpus/fn-corpus/lambda/makearray.golden.tsv"]

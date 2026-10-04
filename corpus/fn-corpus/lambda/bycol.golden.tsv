@@ -1,0 +1,7 @@
+# sheet.fn.lambda.bycol golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# BYCOL(array, lambda(column)).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+col-sums	=INDEX(BYCOL(A1:B2,LAMBDA(c,SUM(c))),1,2)	A1=1;B1=2;A2=3;B2=4	6

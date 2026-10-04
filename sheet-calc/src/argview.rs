@@ -80,6 +80,26 @@ impl RangeBuf {
     pub fn origin(&self) -> CellRef {
         self.origin
     }
+
+    /// Own an evaluated 2-D block (a nested dynamic-array result or an array
+    /// literal used as an argument) so a kernel reads it through the same
+    /// [`sheet_fn::RangeView`] door as a sheet range. Ragged rows pad with
+    /// `Empty`; `origin` is only an anchor (the block has no sheet address).
+    pub fn from_grid(origin: CellRef, grid: Vec<Vec<CellValue>>) -> RangeBuf {
+        let rows = grid.len() as u32;
+        let cols = grid.iter().map(|r| r.len()).max().unwrap_or(0) as u32;
+        let mut cells = Vec::with_capacity(rows as usize * cols as usize);
+        for mut row in grid {
+            row.resize(cols as usize, CellValue::Empty);
+            cells.extend(row);
+        }
+        RangeBuf {
+            origin,
+            rows,
+            cols,
+            cells,
+        }
+    }
 }
 
 /// Read a single cell's current value out of the model (`Empty` if blank or

@@ -1,0 +1,11 @@
+# sheet.fn.lambda.lambda golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# LAMBDA([parameter1, …,] calculation) — invoked inline or through LET.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+inline	=LAMBDA(x,x+1)(2)	-	3
+via-let	=LET(f,LAMBDA(x,y,x*y),f(3,4))	-	12
+closure	=LET(a,10,f,LAMBDA(x,x+a),f(1))	-	11
+as-value-calc	=LAMBDA(x,x)	-	#VALUE!
+arg-count	=LAMBDA(x,x)(1,2)	-	#VALUE!

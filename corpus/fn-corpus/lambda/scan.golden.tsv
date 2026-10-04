@@ -1,0 +1,8 @@
+# sheet.fn.lambda.scan golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# SCAN(initial_value, array, lambda(accumulator, value)).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+running-sum	=INDEX(SCAN(0,{1,2,3},LAMBDA(a,v,a+v)),1,3)	-	6
+anchor	=SCAN(0,{1,2,3},LAMBDA(a,v,a+v))	-	1

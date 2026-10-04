@@ -84,6 +84,18 @@ pub enum Expr {
     /// the anchor expression. The boxed inner [`Expr`] is the anchor (e.g. an
     /// `Expr::Ref`). M1 Phase B (spill track) wires materialization.
     SpillRef(Box<Expr>),
+    /// A name bound by `LET` or a `LAMBDA` parameter (Wave-7 versioned
+    /// amendment, spec §6.1). Lexically scoped: the parser emits it only for
+    /// an identifier declared by an enclosing `LET`/`LAMBDA`; inside those
+    /// calls the declaration slots themselves are `Local` too
+    /// (`LET(x, 1, x + 1)` is `Func(LET, [Local x, 1, x + 1])`). The spelling is
+    /// kept as typed and matched case-insensitively. Evaluation substitutes the
+    /// bound value (sheet-calc `eval/lambda.rs`); an unbound `Local` is `#NAME?`.
+    Local(CompactString),
+    /// Calling a lambda value (Wave-7 amendment): `LAMBDA(x, x+1)(2)` or a
+    /// LET-bound `f(2)`. The callee is any expression that reduces to a
+    /// `LAMBDA`; anything else is `#VALUE!`.
+    Call(Box<Expr>, Vec<Expr>),
 }
 
 /// An Excel structured (table) reference (spec §6.4 / ECMA-376 §18.17.2.4).

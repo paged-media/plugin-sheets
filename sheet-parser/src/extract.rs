@@ -113,5 +113,14 @@ fn walk(e: &Expr, set: &mut RefSet) {
         }
         // A spill ref's dependency is its anchor expression.
         Expr::SpillRef(inner) => walk(inner, set),
+        // A LET/LAMBDA local carries no reference of its own (its binding's
+        // refs are walked where the binding is written).
+        Expr::Local(_) => {}
+        Expr::Call(callee, args) => {
+            walk(callee, set);
+            for a in args {
+                walk(a, set);
+            }
+        }
     }
 }
