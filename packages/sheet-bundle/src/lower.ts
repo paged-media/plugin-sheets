@@ -323,44 +323,6 @@ async function readKnownCharacterStyleIds(
   }
 }
 
-/** Style the cells' TEXT (Wave 4): mint the character styles the content's
- *  cell formats need (+ the text-colour swatches they name), then apply one
- *  per cell (`only` = just these `row:col` cells, reset-to-none included —
- *  a refresh). Costs no read when no cell carries a character facet. */
-async function styleCellText(
-  host: BundleHost,
-  content: LoweredContent,
-  storyId: string,
-  tableId: string,
-  only?: ReadonlySet<string>,
-): Promise<void> {
-  if (cellCharacterStyles(content).size > 0) {
-    const [styles, swatches] = await Promise.all([
-      readKnownCharacterStyleIds(host),
-      readKnownSwatchIds(host),
-    ]);
-    const mints = [
-      ...cellTextSwatchOps(content, swatches),
-      ...cellCharacterStyleMints(content, styles),
-    ];
-    if (mints.length > 0) {
-      const r = await host.document.mutate({ op: "batch", args: { ops: mints } });
-      if (!r.applied) host.log.warn("cell text styles: style mint rejected", r);
-    }
-  } else if (!only) {
-    return;
-  }
-  const applies = cellCharacterStyleApplies(content, storyId, tableId, {
-    cells: only,
-    includeDefault: only !== undefined,
-  });
-  // One batch (text-lane ops batch since core v0.61).
-  if (applies.length > 0) {
-    const r = await host.document.mutate({ op: "batch", args: { ops: applies } });
-    if (!r.applied) host.log.warn("cell text styles: applyStyle rejected", r);
-  }
-}
-
 /** Which translation lane the page lower drives. `native-table` (the
  *  default) emits a real Paged `<Table>`; `tab-text` is the retained
  *  spec §2.2 degradation (tab-aligned text + drawn rules). */
@@ -819,10 +781,62 @@ export async function storyOfFrame(
   return null;
 }
 
-/** Apply a placed table's in-place refresh (`tableRefreshOps`) in the
- *  engine's apply lanes: the structure ops as one batch, the changed cells'
- *  text one op each (the text lane), then the decor batch led by the fill
- *  swatches it names. Returns the number of `mutate` calls. */
+/** The ops of a placed table's in-place refresh (`tableRefreshOps`), by
+ *  apply lane: the structure, the changed cells' text, the decor led by the
+ *  fill/stroke swatch mints it names, and the cell text styles (their
+ *  swatch + character-style mints, then the per-cell applies). Null when
+ *  nothing moved — a re-pagination that lands on the same split, an edit
+ *  outside this table's range. One swatch read serves every lane (fill and
+ *  text swatch ids never collide: their palette ids carry the facet). */
+async function tableRefreshLanes(
+  host: BundleHost,
+  storyId: string,
+  tableId: string,
+  prev: LoweredContent,
+  prevWidths: readonly number[],
+  next: LoweredContent,
+  nextWidths: readonly number[],
+): Promise<Mutation[][] | null> {
+  if (
+    JSON.stringify(prev) === JSON.stringify(next) &&
+    JSON.stringify(prevWidths) === JSON.stringify(nextWidths)
+  ) {
+    return null;
+  }
+  const ops = tableRefreshOps(prev, next, storyId, tableId, prevWidths, nextWidths);
+  const restyle = cellsNeedingRestyle(prev, next);
+  const wantsFills = cellFillSwatchOps(next).length > 0;
+  const wantsText = restyle.size > 0 && cellCharacterStyles(next).size > 0;
+  const [swatches, styles] = await Promise.all([
+    wantsFills || wantsText ? readKnownSwatchIds(host) : Promise.resolve(undefined),
+    wantsText ? readKnownCharacterStyleIds(host) : Promise.resolve(null),
+  ]);
+  const decor = [...(wantsFills ? cellFillSwatchOps(next, swatches) : []), ...ops.decor];
+  const style =
+    restyle.size === 0
+      ? []
+      : [
+          ...(wantsText
+            ? [
+                ...cellTextSwatchOps(next, swatches),
+                ...cellCharacterStyleMints(next, styles),
+              ]
+            : []),
+          ...cellCharacterStyleApplies(next, storyId, tableId, {
+            cells: restyle,
+            includeDefault: true,
+          }),
+        ];
+  return [ops.structure, ops.text, decor, style].filter((l) => l.length > 0);
+}
+
+/** Apply a placed table's in-place refresh as ONE `mutate` — the lanes of
+ *  {@link tableRefreshLanes} plus the caller's `tail` (the binding re-stamp)
+ *  in one batch, so the page text and the version it shows are ONE document
+ *  undo step (Wave 9: they were four-plus mutates, and a host Cmd-Z took the
+ *  binding — and with it the workbook — back a step before the text). A
+ *  refused batch rolls back whole; then each lane goes alone, so a style
+ *  refusal never costs the cell text. Returns the `mutate` count. */
 async function applyTableRefresh(
   host: BundleHost,
   storyId: string,
@@ -831,45 +845,22 @@ async function applyTableRefresh(
   prevWidths: readonly number[],
   next: LoweredContent,
   nextWidths: readonly number[],
+  tail: readonly Mutation[] = [],
 ): Promise<number> {
-  // Nothing moved: no write at all (a re-pagination that lands on the same
-  // split, an edit outside this table's range).
-  if (
-    JSON.stringify(prev) === JSON.stringify(next) &&
-    JSON.stringify(prevWidths) === JSON.stringify(nextWidths)
-  ) {
-    return 0;
-  }
-  const ops = tableRefreshOps(prev, next, storyId, tableId, prevWidths, nextWidths);
-  let calls = 0;
-  if (ops.structure.length > 0) {
+  const lanes =
+    (await tableRefreshLanes(host, storyId, tableId, prev, prevWidths, next, nextWidths)) ?? [];
+  const all = [...lanes.flat(), ...tail];
+  if (all.length === 0) return 0;
+  const r = await host.document.mutate({ op: "batch", args: { ops: all } });
+  if (r.applied) return 1;
+  host.log.warn("refresh: one-batch refresh rejected — retrying per lane", r);
+  let calls = 1;
+  for (const lane of [...lanes, [...tail]]) {
+    if (lane.length === 0) continue;
     calls += 1;
-    const r = await host.document.mutate({
-      op: "batch",
-      args: { ops: ops.structure },
-    });
-    if (!r.applied) host.log.warn("refresh: table reshape rejected", r);
+    const l = await host.document.mutate({ op: "batch", args: { ops: lane } });
+    if (!l.applied) host.log.warn("refresh: lane rejected", l);
   }
-  // The changed cells' text as ONE batch (core applies text ops inside a
-  // Mutation batch as one undo step since v0.61).
-  if (ops.text.length > 0) {
-    calls += 1;
-    const r = await host.document.mutate({ op: "batch", args: { ops: ops.text } });
-    if (!r.applied) host.log.warn("refresh: cell text rejected", r);
-  }
-  const wanted = cellFillSwatchOps(next);
-  const mints =
-    wanted.length === 0
-      ? []
-      : cellFillSwatchOps(next, await readKnownSwatchIds(host));
-  const decor = [...mints, ...ops.decor];
-  if (decor.length > 0) {
-    calls += 1;
-    const r = await host.document.mutate({ op: "batch", args: { ops: decor } });
-    if (!r.applied) host.log.warn("refresh: cell decor rejected", r);
-  }
-  const restyle = cellsNeedingRestyle(prev, next);
-  if (restyle.size > 0) await styleCellText(host, next, storyId, tableId, restyle);
   return calls;
 }
 
@@ -890,26 +881,25 @@ export async function refreshLoweredTable(
   const prev = info.content;
   const prevWidths = info.columnWidths ?? [];
   const nextWidths = await measureColumnWidths(host, next);
-  if (prev) {
-    await applyTableRefresh(
-      host,
-      info.storyId,
-      info.tableId,
-      prev,
-      prevWidths,
-      next,
-      nextWidths,
-    );
-  }
-  const r = await host.document.mutate({
+  // The binding re-stamp rides the refresh batch: one undo step.
+  const stamp: Mutation = {
     op: "setPluginMetadata",
     args: {
       elementId: { kind: "textFrame", id: info.frameId },
       key: BINDING_KEY,
       value: JSON.stringify(makeBinding(sheetName, info.range, contentVersion)),
     },
-  });
-  if (!r.applied) host.log.warn("refresh: binding re-stamp rejected", r);
+  };
+  await applyTableRefresh(
+    host,
+    info.storyId,
+    info.tableId,
+    prev ?? next,
+    prev ? prevWidths : nextWidths,
+    next,
+    nextWidths,
+    [stamp],
+  );
   return { ...info, content: next, columnWidths: nextWidths, contentVersion };
 }
 

@@ -253,6 +253,43 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     expect(await exportedTableCells(h)).toHaveLength(0);
   });
 
+  // COVERS: refreshing a placed table after an edit (lower.ts
+  // refreshLoweredTable → applyTableRefresh). Wave 9: the changed cell's
+  // text, the decor and the binding re-stamp are ONE batch — one mutate and
+  // one document undo step (they were a text batch, then the stamp: a host
+  // Cmd-Z took the binding back, and the workbook with it, before the text).
+  it("refresh a placed 10×3 table after one edit [sheet.lower.page]", async () => {
+    const s = await open(
+      await authorWorkbook(10, 3, (r, c) => `r${r}c${c}`),
+      "A1:C10",
+    );
+    expect(await s.lowerSelection()).not.toBeNull();
+    await settle();
+    resetWork();
+    expect(s.editCell(0, 4, 1, "changed")).toBe(true);
+    await s.refreshPlacements();
+    await settle();
+    const work = take("refresh 10x3");
+    expect((await exportedTableCells(h))[0].get("4:1")).toBe("changed");
+    const childOps = (op: string) =>
+      work.mutations.reduce((n, m) => n + (m.kinds[op] ?? 0), 0);
+    expect(childOps("insertText")).toBe(1);
+    expect(childOps("setPluginMetadata")).toBe(1);
+    expectBudget("refresh 10x3", work, {
+      "engine.setCells": 1,
+      "engine.listSheets": 1,
+      "engine.getRangePage": 1,
+      "text.measureString": 3,
+      "document.mutate": 1,
+      "=mutations": 1,
+      "=engineCalls": 3,
+      "=reads": 0,
+      "=bytesWritten": 0,
+      "=sceneItems": 0,
+      "=rejected": 0,
+    });
+  });
+
   // COVERS: the K-1 in-frame edit session (session.ts typeCellChar /
   // commitCellEdit / submitInFrameGrid). Wave 2: the asks for a submit
   // inside one animation frame (one microtask turn here — no rAF in the
@@ -572,13 +609,14 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       // place (rows realigned: the rows the first frame lost are deleted
       // there and inserted in the second, their text as one batch). Was
       // 10 / 10 / 10 / 20 / 10 / 60 / 10 / 1291 — every reflow re-lowered
-      // every page as a NEW table and the old ones stayed.
+      // every page as a NEW table and the old ones stayed. Wave 9: each
+      // table's refresh (reshape + text + decor) is ONE batch — 5 → 2.
       "document.frameChain": 1,
       "document.elementGeometry": 1,
       "text.measureString": 6,
       "engine.paginate": 1,
-      "document.mutate": 5,
-      "=mutations": 5,
+      "document.mutate": 2,
+      "=mutations": 2,
       "=engineCalls": 1,
       "=reads": 2,
       "=bytesWritten": 0,
