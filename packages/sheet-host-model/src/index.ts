@@ -29,6 +29,8 @@ export {
   type LoweredRow,
   type LoweredContent,
   type LoweredStyle,
+  type BorderLine,
+  type BorderLines,
   type Merge,
   type Page,
   type Rule,
@@ -125,6 +127,7 @@ export {
 // does not mint would hand the host swatch ids core cannot resolve.
 export {
   distinctCellFillHexes,
+  distinctCellStrokeHexes,
   distinctCellTextHexes,
   distinctChartHexes,
   distinctDataBarHexes,

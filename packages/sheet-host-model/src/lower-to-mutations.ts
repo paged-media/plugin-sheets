@@ -205,6 +205,9 @@ export function styleProps(style: LoweredStyle): StyleProp[] {
       value: { type: "length", value: style.fontSizePt },
     });
 
+  if (style.underline)
+    props.push({ path: "characterUnderline", value: { type: "bool", value: true } });
+
   // Cell TEXT colour → character fill (the glyph colour). Fill BACKGROUND is
   // a cell facet, handled separately (and blocked in this fallback lane).
   //

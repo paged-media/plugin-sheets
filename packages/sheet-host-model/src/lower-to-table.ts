@@ -58,6 +58,7 @@ import type {
 import type { LoweredContent, Page } from "./lowered";
 import {
   distinctCellFillHexes,
+  distinctCellStrokeHexes,
   normalizePaletteHex,
   paletteSwatchId,
   swatchMintOps,
@@ -172,23 +173,39 @@ function cellId(
   };
 }
 
-/** One tableCell-scoped edge-stroke-weight override. */
+/** One tableCell-scoped edge-stroke-weight override (`weight` defaults to
+ *  the grid hairline; a styled border carries its own line weight). */
 function edgeOp(
   storyId: string,
   tableId: string,
   row: number,
   col: number,
   path: PropertyPath,
+  weight: number = CELL_EDGE_STROKE_PT,
 ): Mutation {
   return {
     op: "setElementProperty",
     args: {
       elementId: cellId(storyId, tableId, row, col),
       path,
-      value: { type: "length", value: CELL_EDGE_STROKE_PT },
+      value: { type: "length", value: weight },
     },
   };
 }
+
+/** The xlsx vertical alignment → core's `cellVerticalJustification`. */
+const V_JUSTIFICATION: Record<string, string> = {
+  top: "TopAlign",
+  center: "CenterAlign",
+};
+
+/** Per edge: the weight path, the colour path, the `borderLines` key. */
+const EDGES = [
+  ["cellTopEdgeStrokeWeight", "cellTopEdgeStrokeColor", "top"],
+  ["cellBottomEdgeStrokeWeight", "cellBottomEdgeStrokeColor", "bottom"],
+  ["cellLeftEdgeStrokeWeight", "cellLeftEdgeStrokeColor", "left"],
+  ["cellRightEdgeStrokeWeight", "cellRightEdgeStrokeColor", "right"],
+] as const;
 
 /** Cumulative boundaries from a width/height list: `[0, w0, w0+w1, …]`. */
 function boundaries(sizes: number[]): number[] {
@@ -254,11 +271,12 @@ export function cellFillSwatchOps(
   content: LoweredContent,
   knownSwatchIds?: KnownSwatchIds,
 ): Mutation[] {
-  return swatchMintOps(
-    "cellFill",
-    distinctCellFillHexes(content),
-    knownSwatchIds,
-  );
+  // Wave 6: border colours are cell decor too — their swatches mint in the
+  // same pass (a `cell*EdgeStrokeColor` names one).
+  return [
+    ...swatchMintOps("cellFill", distinctCellFillHexes(content), knownSwatchIds),
+    ...swatchMintOps("cellStroke", distinctCellStrokeHexes(content), knownSwatchIds),
+  ];
 }
 
 /** Build the decor ops (merges + fills + edge strokes) for a resolved
@@ -310,9 +328,10 @@ export function tableDecorOps(
   // (2 + 3) Fills and edges. Edge ops dedupe per (row, col, edge): grid
   // rules first, style borders overwrite (same weight — pure dedupe).
   const edges = new Map<string, Mutation>();
-  const putEdge = (row: number, col: number, path: PropertyPath) => {
-    edges.set(`${row}:${col}:${path}`, edgeOp(storyId, tableId, row, col, path));
+  const putEdge = (row: number, col: number, path: PropertyPath, weight?: number) => {
+    edges.set(`${row}:${col}:${path}`, edgeOp(storyId, tableId, row, col, path, weight));
   };
+  const cellProps: Mutation[] = [];
 
   const yBounds = boundaries(content.rows.map((r) => r.heightPt));
   const xBounds = boundaries(content.cols.map((c) => c.widthPt));
@@ -374,14 +393,44 @@ export function tableDecorOps(
           },
         });
       }
-      if (style.borderTop) putEdge(r, c, "cellTopEdgeStrokeWeight");
-      if (style.borderBottom) putEdge(r, c, "cellBottomEdgeStrokeWeight");
-      if (style.borderLeft) putEdge(r, c, "cellLeftEdgeStrokeWeight");
-      if (style.borderRight) putEdge(r, c, "cellRightEdgeStrokeWeight");
+      const present = {
+        top: style.borderTop,
+        bottom: style.borderBottom,
+        left: style.borderLeft,
+        right: style.borderRight,
+      };
+      for (const [weightPath, colorPath, edge] of EDGES) {
+        if (!present[edge]) continue;
+        // Wave 6: the line's own weight (thin / medium / thick …) and colour.
+        const line = style.borderLines?.[edge];
+        putEdge(r, c, weightPath, line?.weightPt);
+        const hex = line?.rgb == null ? null : normalizePaletteHex(line.rgb);
+        if (hex != null) {
+          cellProps.push({
+            op: "setElementProperty",
+            args: {
+              elementId: cellId(storyId, tableId, r, c),
+              path: colorPath,
+              value: { type: "colorRef", value: paletteSwatchId("cellStroke", hex) },
+            },
+          });
+        }
+      }
+      const vj = style.vAlign ? V_JUSTIFICATION[style.vAlign] : undefined;
+      if (vj) {
+        cellProps.push({
+          op: "setElementProperty",
+          args: {
+            elementId: cellId(storyId, tableId, r, c),
+            path: "cellVerticalJustification",
+            value: { type: "text", value: vj },
+          },
+        });
+      }
     }
   });
 
-  ops.push(...fills, ...edges.values());
+  ops.push(...fills, ...edges.values(), ...cellProps);
   return { ops, unmappedRules };
 }
 

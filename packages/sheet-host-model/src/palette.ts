@@ -56,7 +56,7 @@ import type { LoweredContent, LoweredStyle } from "./lowered";
  *  part of the swatch ID, not decoration: a chart blue and a data-bar
  *  blue are different document swatches on purpose, so recolouring the
  *  chart palette does not silently move every conditional-format bar. */
-export type PaletteFacet = "chart" | "dataBar" | "cellFill" | "cellText";
+export type PaletteFacet = "chart" | "dataBar" | "cellFill" | "cellText" | "cellStroke";
 
 /** One entry of the workbook palette: a colour paged.sheet mints (or
  *  would mint) as a document swatch.
@@ -108,6 +108,7 @@ const FACET_PREFIX: Record<PaletteFacet, string> = {
   dataBar: "Color/uPagedSheetDataBar",
   cellFill: "Color/uPagedSheetCellFill",
   cellText: "Color/uPagedSheetCellText",
+  cellStroke: "Color/uPagedSheetCellStroke",
 };
 
 const FACET_LABEL: Record<PaletteFacet, string> = {
@@ -115,6 +116,7 @@ const FACET_LABEL: Record<PaletteFacet, string> = {
   dataBar: "paged.sheet data bar",
   cellFill: "paged.sheet cell fill",
   cellText: "paged.sheet cell text",
+  cellStroke: "paged.sheet cell border",
 };
 
 /** THE deterministic document-swatch id for a workbook colour. The one
@@ -226,6 +228,24 @@ export function distinctCellFillHexes(content: LoweredContent): string[] {
   return distinctStyleHexes(content, (s) => s.fillRgb);
 }
 
+/** The distinct cell BORDER colours across a lowered region (every edge of
+ *  `LoweredStyle.borderLines`), in styles-table order (Wave 6). */
+export function distinctCellStrokeHexes(content: LoweredContent): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const style of content.styles ?? []) {
+    if (style.key === 0) continue;
+    const l = style.borderLines;
+    for (const line of [l?.top, l?.right, l?.bottom, l?.left]) {
+      const h = line?.rgb == null ? null : normalizePaletteHex(line.rgb);
+      if (h == null || seen.has(h)) continue;
+      seen.add(h);
+      out.push(h);
+    }
+  }
+  return out;
+}
+
 /** The distinct CELL TEXT colours across a lowered region
  *  (`LoweredStyle.textRgb`), in styles-table order. These are the
  *  colours `lower-to-mutations.ts` mints swatches for before
@@ -280,6 +300,7 @@ export function workbookPalette(sources: PaletteSources): PaletteEntry[] {
   for (const region of sources.regions ?? []) {
     for (const hex of distinctDataBarHexes(region)) push("dataBar", hex);
     for (const hex of distinctCellFillHexes(region)) push("cellFill", hex);
+    for (const hex of distinctCellStrokeHexes(region)) push("cellStroke", hex);
   }
   return [...byId.values()];
 }

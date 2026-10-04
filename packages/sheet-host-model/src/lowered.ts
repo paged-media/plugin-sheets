@@ -79,6 +79,31 @@ export interface LoweredStyle {
   borderRight: boolean;
   borderBottom: boolean;
   borderLeft: boolean;
+  /** Wave 6 (additive; omitted on the wire when default): underlined text. */
+  underline?: boolean;
+  /** Vertical alignment in the cell: `"top"` / `"center"` (absent = the
+   *  sheet default, bottom). */
+  vAlign?: string | null;
+  /** Wrap text inside the cell. */
+  wrap?: boolean;
+  /** The per-edge border lines behind the `border*` presence flags: the
+   *  xlsx line style, its weight (pt) and colour (`#RRGGBB`, absent = auto). */
+  borderLines?: BorderLines;
+}
+
+/** One border edge's line (Wave 6). */
+export interface BorderLine {
+  style: string;
+  weightPt: number;
+  rgb?: string | null;
+}
+
+/** The four edges' lines (an absent edge has none). */
+export interface BorderLines {
+  top?: BorderLine;
+  right?: BorderLine;
+  bottom?: BorderLine;
+  left?: BorderLine;
 }
 
 /** One row's geometry + its populated cells (sparse — empty cells are

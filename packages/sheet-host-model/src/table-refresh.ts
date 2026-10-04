@@ -284,7 +284,11 @@ export function tableRefreshOps(
         value:
           op.args.path === "cellFillColor"
             ? { type: "colorRef", value: NO_FILL_SWATCH }
-            : { type: "length", value: 0 },
+            : op.args.path.endsWith("StrokeColor")
+              ? { type: "colorRef", value: null }
+              : op.args.path === "cellVerticalJustification"
+                ? { type: "text", value: "" }
+                : { type: "length", value: 0 },
       },
     });
   }
