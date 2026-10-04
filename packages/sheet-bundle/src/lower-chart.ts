@@ -38,7 +38,6 @@ import type {
   ElementId,
   Mutation,
   PageId,
-  SceneTreeNode,
 } from "@paged-media/plugin-api";
 import {
   chartGeometryToMutations,
@@ -48,7 +47,7 @@ import {
 
 import type { SheetEngine } from "./engine";
 import { storyIdsSnapshot } from "./lower";
-import { doors66, noteMinted } from "./protocol66";
+import { doors66, noteMinted, readTreeIds } from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
 
 /** The default chart-frame content box, pt (a sensible publishing size; the
@@ -101,25 +100,6 @@ export interface ChartLowerOptions {
   /** A chart this one REPLACES (a refresh): its elements are deleted in the
    *  same batch, so the replacement is one undo step. */
   replaces?: PlacedChart;
-}
-
-/** Every addressable element id in a scene tree, keyed by kind:id. */
-function treeIds(nodes: readonly SceneTreeNode[], out = new Map<string, ElementId>()) {
-  for (const n of nodes) {
-    if (n.id && typeof n.id.id === "string") out.set(`${n.id.kind}:${n.id.id}`, n.id);
-    if (n.children) treeIds(n.children, out);
-  }
-  return out;
-}
-
-/** The scene tree's element ids, or null when the host cannot answer. */
-async function readTreeIds(host: BundleHost): Promise<Map<string, ElementId> | null> {
-  if (typeof host.document.tree !== "function") return null;
-  try {
-    return treeIds(await host.document.tree());
-  } catch {
-    return null;
-  }
 }
 
 /** Remove a placed chart's elements (one undoable batch of deleteFrame —

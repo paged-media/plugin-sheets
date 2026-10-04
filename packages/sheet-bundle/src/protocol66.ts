@@ -23,6 +23,7 @@ import type {
   ElementId,
   Mutation,
   MutationOutcome,
+  SceneTreeNode,
 } from "@paged-media/plugin-api";
 
 /** One element a mutation minted (plugin-api 66 `MintedElement`). */
@@ -88,4 +89,48 @@ export function isUnknownVariant(outcome: MutationOutcome, op: string): boolean 
 export function geometryStoryId(item: unknown): string | undefined {
   const s = (item as { storyId?: unknown } | null)?.storyId;
   return typeof s === "string" && s.length > 0 ? s : undefined;
+}
+
+// ── The fallback half of `minted`: what a batch made, by scene-tree diff.
+
+/** Every addressable element id in a scene tree, keyed by kind:id. */
+function treeIds(nodes: readonly SceneTreeNode[], out = new Map<string, ElementId>()) {
+  for (const n of nodes) {
+    if (n.id && typeof n.id.id === "string") out.set(`${n.id.kind}:${n.id.id}`, n.id);
+    if (n.children) treeIds(n.children, out);
+  }
+  return out;
+}
+
+/** The scene tree's element ids, or null when the host cannot answer. */
+export async function readTreeIds(host: BundleHost): Promise<Map<string, ElementId> | null> {
+  if (typeof host.document.tree !== "function") return null;
+  try {
+    return treeIds(await host.document.tree());
+  } catch {
+    return null;
+  }
+}
+
+/** A batch that will mint elements whose ids the caller needs: read the tree
+ *  BEFORE it unless the host is known to send `minted` (`null` = no read). */
+export async function beforeMint(host: BundleHost): Promise<Map<string, ElementId> | null> {
+  return doors66(host).minted === true ? null : readTreeIds(host);
+}
+
+/** The elements `outcome`'s batch minted, filtered by `keep`: the 66
+ *  `minted` list, else the scene-tree diff against `before` (one more read).
+ *  Empty when neither answers. */
+export async function mintedElements(
+  host: BundleHost,
+  outcome: MutationOutcome,
+  before: Map<string, ElementId> | null,
+  keep: (id: ElementId) => boolean,
+): Promise<ElementId[]> {
+  const minted = noteMinted(host, outcome);
+  if (minted) return minted.map((m) => m.element).filter(keep);
+  if (!before || !outcome.applied) return [];
+  const after = await readTreeIds(host);
+  if (!after) return [];
+  return [...after].filter(([k]) => !before.has(k)).map(([, id]) => id).filter(keep);
 }

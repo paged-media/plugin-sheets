@@ -318,7 +318,7 @@ function barSwatchId(canonHex: string): string {
  *  re-lowering the same region asked core to re-create swatches it already
  *  had, and that refusal fails the whole batch — the frame, the rules and
  *  the binding with it. See [`swatchMintOps`]. */
-function barSwatchOps(
+export function barSwatchOps(
   content: LoweredContent,
   knownSwatchIds?: KnownSwatchIds,
 ): Mutation[] {
@@ -332,7 +332,7 @@ function barSwatchOps(
 /** The insertPath (closed rect ring) + frameFillColor ops for ONE data bar,
  *  offset by the frame origin `[top, left]` into page-local pt. A zero-width
  *  bar (value at domain min) is skipped (nothing to draw). */
-function dataBarOps(
+export function dataBarOps(
   bar: DataBarRect,
   pageId: PageId,
   top: number,

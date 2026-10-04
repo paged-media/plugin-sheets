@@ -56,6 +56,7 @@ import type {
   Disposable,
   ElementId,
   Mutation,
+  MutationOutcome,
   PageId,
 } from "@paged-media/plugin-api";
 import {
@@ -71,6 +72,7 @@ import {
   tableDecorOps,
   tableInsertOp,
   tableRefreshOps,
+  tableDataBarOps,
   cellAlignApplies,
   cellAlignStyleMints,
   cellsNeedingRealign,
@@ -87,10 +89,12 @@ import {
 
 import type { FrameBox, SheetEngine } from "./engine";
 import {
+  beforeMint,
   deleteTableOp,
   doors66,
   geometryStoryId,
   isUnknownVariant,
+  mintedElements,
   noteMinted,
 } from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
@@ -306,34 +310,68 @@ async function tableContentOps(
   return { ops: [...fillMints, ...pourOps, ...decor.ops], styleOps };
 }
 
+/** Where a native table's data bars are drawn (Wave 9): the page and the
+ *  frame's page-local top-left, and the table's column widths. */
+export interface BarPlacement {
+  pageId: PageId;
+  origin: [number, number];
+  widths: readonly number[];
+}
+
+/** The ops that draw `content`'s data bars at `at` (their colour mints read
+ *  first), or none. */
+async function barOps(
+  host: BundleHost,
+  content: LoweredContent,
+  at: BarPlacement | undefined,
+): Promise<Mutation[]> {
+  if (!at || (content.databars ?? []).length === 0) return [];
+  return tableDataBarOps(content, at.widths, at.pageId, at.origin, await readKnownSwatchIds(host));
+}
+
+const isPolygon = (id: ElementId) => id.kind === "polygon";
+
 /** Pour a native table's content (see {@link tableContentOps}) as ONE
- *  `mutate`. Should core refuse the combined batch, the content is retried
- *  in its two lanes — text + decor, then the cell text styles — so a style
- *  refusal never costs the cell text. Returns the `mutate` count. */
+ *  `mutate`, with its data bars (Wave 9: drawn under the frame, their ids
+ *  read back from `minted` or a scene-tree diff) and the caller's `tail`.
+ *  Should core refuse the combined batch, the content is retried in its two
+ *  lanes — text + decor + bars, then the cell text styles — so a style
+ *  refusal never costs the cell text. */
 async function pourCellContent(
   host: BundleHost,
   content: LoweredContent,
   storyId: string,
   tableId: string,
   tail: readonly Mutation[] = [],
-): Promise<number> {
+  bars?: BarPlacement,
+): Promise<{ calls: number; barIds: ElementId[] }> {
   const { ops, styleOps } = await tableContentOps(host, content, storyId, tableId);
-  const all = [...ops, ...styleOps, ...tail];
-  if (all.length === 0) return 0;
+  const drawn = await barOps(host, content, bars);
+  const before = drawn.length > 0 ? await beforeMint(host) : null;
+  const lane1 = [...ops, ...drawn, ...tail];
+  const all = [...lane1, ...styleOps];
+  if (all.length === 0) return { calls: 0, barIds: [] };
   const r = await host.document.mutate({ op: "batch", args: { ops: all } });
-  if (r.applied) return 1;
+  if (r.applied) {
+    const barIds = drawn.length > 0 ? await mintedElements(host, r, before, isPolygon) : [];
+    return { calls: 1, barIds };
+  }
   host.log.warn("lower: table content batch rejected — retrying per lane", r);
   let calls = 1;
+  let barIds: ElementId[] = [];
   for (const [lane, what] of [
-    [[...ops, ...tail], "cell text + decor"],
+    [lane1, "cell text + decor"],
     [styleOps, "cell text styles"],
   ] as const) {
     if (lane.length === 0) continue;
     calls += 1;
     const t = await host.document.mutate({ op: "batch", args: { ops: [...lane] } });
     if (!t.applied) host.log.warn(`lower: ${what} rejected`, t);
+    else if (lane === lane1 && drawn.length > 0) {
+      barIds = await mintedElements(host, t, before, isPolygon);
+    }
   }
-  return calls;
+  return { calls, barIds };
 }
 
 /** The binding a placed native table's frame carries (Wave 9): the sheet,
@@ -422,6 +460,9 @@ export interface LoweredTableInfo {
   /** The workbook content version this table reflects (also in its
    *  binding metadata). */
   contentVersion?: number;
+  /** The data-bar paths drawn under the table (Wave 9) — a refresh deletes
+   *  and redraws them. */
+  barIds?: ElementId[];
 }
 
 /** Lane options for [`lowerSelectionToFrame`]. */
@@ -590,7 +631,7 @@ export async function lowerSelectionToFrame(
   // with the binding re-stamped to carry the table record. (Core 0eff96b
   // resolves a table handle in a `tableId` position, which folds this into
   // the placement batch: one mutate, one undo step.)
-  await pourCellContent(
+  const { barIds } = await pourCellContent(
     host,
     content,
     storyId,
@@ -598,6 +639,8 @@ export async function lowerSelectionToFrame(
     frameId
       ? [tableBindingStamp(frameId, sheetName, range, contentVersion, storyId, tableId, content, columnWidths)]
       : [],
+    // Data bars (Wave 9), under the frame at its page position.
+    { pageId, origin: [placement.bounds[0], placement.bounds[1]], widths: columnWidths },
   );
 
   if (!frameId) {
@@ -614,6 +657,7 @@ export async function lowerSelectionToFrame(
     content,
     columnWidths,
     contentVersion,
+    barIds,
   });
   if (opts?.select !== false) await host.selection.set([{ kind: "textFrame", id: frameId }]);
   return frameId;
@@ -718,6 +762,17 @@ async function lowerPhased(
   }
   const tableId = tableIdOf(tableOutcome.createdId);
 
+  // Phase 3 — the content, one batch (see pourCellContent), its data bars,
+  // the binding re-stamped with the table record.
+  const { barIds } = await pourCellContent(
+    host,
+    content,
+    storyId,
+    tableId,
+    [tableBindingStamp(frameId, sheetName, range, contentVersion, storyId, tableId, content, columnWidths)],
+    { pageId, origin: [placement.bounds[0], placement.bounds[1]], widths: columnWidths },
+  );
+
   // S-04 — report the resolved native table so the session can address its
   // cells for "new style from cell". Only the native-table lane reports
   // (the tab-text fallback has no table to address).
@@ -731,13 +786,8 @@ async function lowerPhased(
     content,
     columnWidths,
     contentVersion,
+    barIds,
   });
-
-  // Phase 3 — the content, one batch (see pourCellContent), the binding
-  // re-stamped with the table record.
-  await pourCellContent(host, content, storyId, tableId, [
-    tableBindingStamp(frameId, sheetName, range, contentVersion, storyId, tableId, content, columnWidths),
-  ]);
 
   await host.selection.set([outcome.createdId]);
   return frameId;
@@ -980,30 +1030,52 @@ async function applyTableRefresh(
   next: LoweredContent,
   nextWidths: readonly number[],
   tail: readonly Mutation[] = [],
-): Promise<number> {
+): Promise<{ calls: number; tailOutcome: MutationOutcome | null }> {
   const lanes =
     (await tableRefreshLanes(host, storyId, tableId, prev, prevWidths, next, nextWidths)) ?? [];
   const all = [...lanes.flat(), ...tail];
-  if (all.length === 0) return 0;
+  if (all.length === 0) return { calls: 0, tailOutcome: null };
   const r = await host.document.mutate({ op: "batch", args: { ops: all } });
-  if (r.applied) return 1;
+  if (r.applied) return { calls: 1, tailOutcome: r };
   host.log.warn("refresh: one-batch refresh rejected — retrying per lane", r);
   let calls = 1;
+  let tailOutcome: MutationOutcome | null = null;
   for (const lane of [...lanes, [...tail]]) {
     if (lane.length === 0) continue;
     calls += 1;
     const l = await host.document.mutate({ op: "batch", args: { ops: lane } });
     if (!l.applied) host.log.warn("refresh: lane rejected", l);
+    if (lane.length === tail.length && lane.every((op, i) => op === tail[i])) tailOutcome = l;
   }
-  return calls;
+  return { calls, tailOutcome };
+}
+
+/** A frame's page and page-local top-left (its content box carried through
+ *  its item transform), or null when the geometry read cannot say. */
+async function frameOrigin(
+  host: BundleHost,
+  frameId: string,
+): Promise<{ pageId: PageId; origin: [number, number] } | null> {
+  try {
+    const [g] = await host.document.elementGeometry([{ kind: "textFrame", id: frameId }]);
+    if (!g?.pageId) return null;
+    const [top, left] = g.bounds;
+    const [a, b, c, d, tx, ty] = g.itemTransform ?? [1, 0, 0, 1, 0, 0];
+    return { pageId: g.pageId, origin: [b * left + d * top + ty, a * left + c * top + tx] };
+  } catch (err) {
+    host.log.warn("refresh: frame geometry read failed", err);
+    return null;
+  }
 }
 
 /**
  * Refresh a placed native table IN PLACE to `next` (Wave 4 — placed tables
  * follow edits). Diffs against the table's recorded content: only changed
  * cells are re-poured, rows/columns reshaped at the tail, removed fills and
- * edges reset — the table is never duplicated. Re-stamps the frame's binding
- * with `contentVersion`. Returns the updated record (the new baseline).
+ * edges reset — the table is never duplicated. Its data bars (Wave 9) are
+ * redrawn where the frame stands now, the old ones deleted in the same
+ * batch. Re-stamps the frame's binding with `contentVersion`. One batch,
+ * one undo step. Returns the updated record (the new baseline).
  */
 export async function refreshLoweredTable(
   host: BundleHost,
@@ -1026,7 +1098,18 @@ export async function refreshLoweredTable(
     next,
     nextWidths,
   );
-  await applyTableRefresh(
+  const oldBars = info.barIds ?? [];
+  let drawn: Mutation[] = [];
+  if (oldBars.length > 0 || (next.databars ?? []).length > 0) {
+    const at = await frameOrigin(host, info.frameId);
+    if (at) drawn = await barOps(host, next, { ...at, widths: nextWidths });
+  }
+  const removals: Mutation[] = oldBars.map((id) => ({
+    op: "deleteFrame",
+    args: { frameId: id.id as string },
+  }));
+  const before = drawn.length > 0 ? await beforeMint(host) : null;
+  const { tailOutcome } = await applyTableRefresh(
     host,
     info.storyId,
     info.tableId,
@@ -1034,9 +1117,15 @@ export async function refreshLoweredTable(
     prev ? prevWidths : nextWidths,
     next,
     nextWidths,
-    [stamp],
+    [...removals, ...drawn, stamp],
   );
-  return { ...info, content: next, columnWidths: nextWidths, contentVersion };
+  // A refused tail left the old bars standing; an applied one replaced them.
+  const barIds = !tailOutcome?.applied
+    ? oldBars
+    : drawn.length > 0
+      ? await mintedElements(host, tailOutcome, before, isPolygon)
+      : [];
+  return { ...info, content: next, columnWidths: nextWidths, contentVersion, barIds };
 }
 
 /**
@@ -1058,20 +1147,34 @@ export async function replaceLoweredTable(
 ): Promise<LoweredTableInfo | null> {
   const widths = await measureColumnWidths(host, next);
   const doors = doors66(host);
+  const oldBars = (info.barIds ?? []).map((id) => ({
+    op: "deleteFrame" as const,
+    args: { frameId: id.id as string },
+  }));
   if (doors.deleteTable !== false) {
     const r = await host.document.mutate({
       op: "batch",
       args: {
-        ops: [deleteTableOp(info.storyId, info.tableId), tableInsertOp(next, info.storyId, widths)],
+        ops: [
+          ...oldBars,
+          deleteTableOp(info.storyId, info.tableId),
+          tableInsertOp(next, info.storyId, widths),
+        ],
       },
     });
     if (r.applied && r.createdId?.kind === "table") {
       doors.deleteTable = true;
       const tableId = tableIdOf(r.createdId);
-      await pourCellContent(host, next, info.storyId, tableId, [
-        tableBindingStamp(info.frameId, sheetName, info.range, contentVersion, info.storyId, tableId, next, widths),
-      ]);
-      return { ...info, tableId, content: next, columnWidths: widths, contentVersion };
+      const at = await frameOrigin(host, info.frameId);
+      const { barIds } = await pourCellContent(
+        host,
+        next,
+        info.storyId,
+        tableId,
+        [tableBindingStamp(info.frameId, sheetName, info.range, contentVersion, info.storyId, tableId, next, widths)],
+        at ? { ...at, widths } : undefined,
+      );
+      return { ...info, tableId, content: next, columnWidths: widths, contentVersion, barIds };
     }
     if (isUnknownVariant(r, "deleteTable")) doors.deleteTable = false;
     else host.log.warn("replace: deleteTable + insertTable rejected", r);
@@ -1089,7 +1192,10 @@ export async function replaceLoweredTable(
   const [top, left, bottom, right] = g.bounds;
   const [a, b, c, d, tx, ty] = g.itemTransform ?? [1, 0, 0, 1, 0, 0];
   const at = { left: a * left + c * top + tx, top: b * left + d * top + ty };
-  const del = await host.document.mutate({ op: "deleteFrame", args: { frameId: info.frameId } });
+  const del = await host.document.mutate({
+    op: "batch",
+    args: { ops: [...oldBars, { op: "deleteFrame", args: { frameId: info.frameId } }] },
+  });
   if (!del.applied) {
     host.log.warn("replace: removing the stale frame was rejected", del);
     return null;

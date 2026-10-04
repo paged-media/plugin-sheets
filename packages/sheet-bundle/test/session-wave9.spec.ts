@@ -457,3 +457,79 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — format changes are undo steps [sheet.
     expect(e.getStyle!(0, 1, 1).bold).toBe(true); // the source keeps its own
   });
 });
+
+describe.skipIf(!ENGINE_BUILT)("wave 9 — data bars on the native table [sheet.xlsx.condfmt]", () => {
+  vi.setConfig({ testTimeout: 60_000 });
+  let h: HeadlessHost;
+  let raw: BundleHost;
+  let s: WorkbookSession | null = null;
+
+  beforeEach(async () => {
+    h = await openHost();
+    await h.load(blankPageIdml());
+    raw = withSceneChannel(sheetHost(h)).host;
+  });
+  afterEach(() => {
+    s?.dispose();
+    s = null;
+    h?.dispose();
+  });
+
+  /** The spread's page items in stacking order (back first). */
+  const stack = async () => {
+    for (const [n, x] of await exportedIdmlParts(h)) {
+      if (!n.startsWith("Spreads/")) continue;
+      return [...x.matchAll(/<(TextFrame|Polygon)\b[^>]*\bSelf="([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`);
+    }
+    return [];
+  };
+  const spread = async () =>
+    [...(await exportedIdmlParts(h))].filter(([n]) => n.startsWith("Spreads/")).map(([, x]) => x).join("");
+
+  async function placeBars(host: BundleHost) {
+    const session = createWorkbookSession(host);
+    s = session;
+    await session.import(corpus("08-condfmt.xlsx"), "08-condfmt.xlsx");
+    session.setRange("D1:D5");
+    expect(await session.lowerSelection()).not.toBeNull();
+    await settle();
+    return session;
+  }
+
+  it("bars are drawn under the table; a refresh redraws them in the same undo step", async () => {
+    const session = await placeBars(raw);
+    let order = await stack();
+    // D1 is the domain minimum (a zero-length bar); D2..D5 draw.
+    expect(order.filter((x) => x.startsWith("Polygon"))).toHaveLength(4);
+    expect(order[order.length - 1]).toMatch(/^TextFrame/); // the table's frame on top
+    expect(await spread()).toContain("Color/uPagedSheetDataBar638EC6");
+    const before = await spread();
+
+    session.editCell(0, 1, 3, "5"); // D2: 40 → 5, the new minimum
+    await session.refreshPlacements();
+    await settle();
+    order = await stack();
+    expect(order.filter((x) => x.startsWith("Polygon"))).toHaveLength(4); // D1 now draws, D2 does not
+    expect(order[order.length - 1]).toMatch(/^TextFrame/);
+    expect(await spread()).not.toBe(before);
+
+    await raw.document.undo(); // one step: text, bars and stamp
+    await settle();
+    expect(await spread()).toBe(before);
+    expect((await exportedTableCells(h))[0].get("1:0")).toBe("40");
+  });
+
+  it("with 66 `minted`, the bars' ids come back without a scene-tree read", async () => {
+    const tally = new Tally();
+    const { host } = countingHost(withDoors66(h, raw, { minted: true }), tally);
+    const session = await placeBars(host);
+    // The placement learned that the host sends `minted` from its first
+    // batch, so the content batch drew the bars without a tree read.
+    expect(tally.work.count("document.tree")).toBe(0);
+    session.editCell(0, 1, 3, "5");
+    await session.refreshPlacements();
+    await settle();
+    expect(tally.work.count("document.tree")).toBe(0);
+    expect((await stack()).filter((x) => x.startsWith("Polygon"))).toHaveLength(4);
+  });
+});

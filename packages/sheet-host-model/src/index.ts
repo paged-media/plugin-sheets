@@ -192,3 +192,6 @@ export {
   cellsNeedingRealign,
   needsAlignStyles,
 } from "./cell-paragraph-align";
+
+// Wave 9 — conditional-format data bars on the native placed table.
+export { tableDataBarOps, tableDataBars } from "./table-databars";
