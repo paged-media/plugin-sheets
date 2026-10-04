@@ -74,6 +74,8 @@ pub struct ParsedWorksheet {
     pub col_widths: BTreeMap<u32, f64>,
     /// Row heights in points (only rows with `customHeight="1"`).
     pub row_heights: BTreeMap<u32, f64>,
+    /// Rows saved hidden (`<row hidden="1">`), 0-based (Wave 7).
+    pub hidden_rows: std::collections::BTreeSet<u32>,
     /// Unknown `<worksheet>` children, re-emitted on dirty re-encode.
     pub captured: CapturedSubtrees,
 }
@@ -146,6 +148,9 @@ pub fn parse(xml: &[u8], shared: &[CompactString]) -> Result<ParsedWorksheet, Xl
                             } else {
                                 None
                             };
+                            if attr(&e, b"hidden")?.is_some_and(|v| v == "1" || v == "true") {
+                                out.hidden_rows.insert(cur_row_idx);
+                            }
                         }
                         b"c" => {
                             cur_cell = Some(CellAccum::start(&e)?);
@@ -203,6 +208,11 @@ pub fn parse(xml: &[u8], shared: &[CompactString]) -> Result<ParsedWorksheet, Xl
                             let custom = attr(&e, b"customHeight")?
                                 .map(|v| v == "1" || v == "true")
                                 .unwrap_or(false);
+                            if let Some(idx) = idx {
+                                if attr(&e, b"hidden")?.is_some_and(|v| v == "1" || v == "true") {
+                                    out.hidden_rows.insert(idx);
+                                }
+                            }
                             if custom {
                                 if let (Some(idx), Some(ht)) =
                                     (idx, attr(&e, b"ht")?.and_then(|s| s.parse::<f64>().ok()))

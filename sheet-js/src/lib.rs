@@ -124,10 +124,10 @@ mod wasm {
         }
 
         /// Stable publishing-grade sort of a range's rows by `key_col`
-        /// (0-based, RELATIVE to the range). VALUES-ONLY ranges sort fully;
-        /// a range containing formula cells (or spill output) REFUSES with a
-        /// boundary error (the honest subset — no silent reference
-        /// corruption; semantics documented on the session method). Returns
+        /// (0-based, RELATIVE to the range). Formula cells move with their
+        /// row (relative references re-addressed, Excel's rule); a range
+        /// holding spilled array output REFUSES with a boundary error
+        /// (semantics documented on the session method). Returns
         /// `{changed,circular,edits}` — `edits` carries the per-cell
         /// prev/next inputs for the bundle's ADR-012 journal.
         pub fn sort_range(
@@ -142,6 +142,33 @@ mod wasm {
                 .session
                 .sort_range(sheet, range, key_col, ascending, has_header)
                 .map_err(map_err)?;
+            to_js(&result)
+        }
+
+        /// Set one column criterion of the sheet's filter VIEW over `range`
+        /// (header row first): `kind` is `"equals"`, `"contains"`, `"top"`
+        /// or `"bottom"`, `col` 0-based within the range. The page lowering
+        /// skips the hidden rows; nothing is written into the xlsx. Returns
+        /// `{hiddenRows}` (0-based sheet rows).
+        pub fn set_filter(
+            &mut self,
+            sheet: u16,
+            range: &str,
+            col: u32,
+            kind: &str,
+            value: &str,
+        ) -> Result<JsValue, JsValue> {
+            let result = self
+                .session
+                .set_filter(sheet, range, col, kind, value)
+                .map_err(map_err)?;
+            to_js(&result)
+        }
+
+        /// Remove the sheet's filter view; returns `{hiddenRows}` (the rows
+        /// still hidden by it — always empty).
+        pub fn clear_filter(&mut self, sheet: u16) -> Result<JsValue, JsValue> {
+            let result = self.session.clear_filter(sheet).map_err(map_err)?;
             to_js(&result)
         }
 

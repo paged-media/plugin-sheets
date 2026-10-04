@@ -151,6 +151,11 @@ export interface SortResult {
   edits: CellEditRecord[];
 }
 
+/** The rows a sheet's filter VIEW hides (0-based sheet rows, ascending). */
+export interface FilterResult {
+  hiddenRows: number[];
+}
+
 /** Options for find/replace (forwarded verbatim to wasm; matching/collation
  *  semantics are decided in Rust — documented on the registry rows). */
 export interface FindOptions {
@@ -245,6 +250,21 @@ export interface SheetEngine {
     ascending: boolean,
     hasHeader: boolean,
   ): SortResult;
+  /** Set one column criterion of the sheet's filter VIEW over `range`
+   *  (header row first): `kind` is "equals" | "contains" | "top" | "bottom",
+   *  `col` 0-based within the range. The page lowering skips the hidden rows;
+   *  nothing is written into the xlsx (sheet.edit.filter.view). Optional on
+   *  the interface: the door exists from the Wave-7 engine on, and test
+   *  fakes need not implement it. */
+  setFilter?(
+    sheet: number,
+    range: string,
+    col: number,
+    kind: string,
+    value: string,
+  ): FilterResult;
+  /** Remove the sheet's filter view (sheet.edit.filter.view). */
+  clearFilter?(sheet: number): FilterResult;
   /** Find every populated cell matching `needle`; `sheet` scopes to one
    *  sheet, `undefined` scans the whole workbook (sheet.edit.find.*). */
   findAll(

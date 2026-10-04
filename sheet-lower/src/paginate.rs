@@ -157,6 +157,10 @@ pub fn paginate(
     // 1) Lower the full range ONCE — one model read; text/styles/merges are
     //    computed exactly here and re-sliced per frame below.
     let full = lower_range(model, sheet, range, &ViewOptions::default());
+    // Hidden rows leave gaps in the range-relative row `index`; pagination
+    // works in row POSITIONS, so re-base rows, merges and keep-together
+    // blocks onto positions (identity when nothing is hidden).
+    let (full, keep_rows_together) = positional(full, &opts.keep_rows_together);
 
     let total_rows = full.rows.len() as u32;
     if total_rows == 0 || frames.is_empty() {
@@ -175,7 +179,7 @@ pub fn paginate(
     // membership: for each body row, the index of the block it belongs to
     // (None = standalone). Body-relative means range-relative MINUS the
     // header band (header rows are never body rows).
-    let blocks = normalized_blocks(&opts.keep_rows_together, header_rows, total_rows);
+    let blocks = normalized_blocks(&keep_rows_together, header_rows, total_rows);
 
     let mut pages: Vec<Page> = Vec::new();
     // The next BODY row (range-relative index) still to place. Body rows are
@@ -263,6 +267,42 @@ pub fn paginate(
     }
 
     pages
+}
+
+/// Re-base a lowering whose row `index`es may have gaps (hidden rows) onto
+/// row positions: each row's `index` becomes its position, a merge covers the
+/// positions of its visible rows, and each inclusive keep-together block maps
+/// to the positions of its visible rows (a fully hidden block is dropped).
+fn positional(mut full: LoweredContent, keep: &[(u32, u32)]) -> (LoweredContent, Vec<(u32, u32)>) {
+    let index: Vec<u32> = full.rows.iter().map(|r| r.index).collect();
+    if index.iter().enumerate().all(|(p, &i)| p as u32 == i) {
+        return (full, keep.to_vec());
+    }
+    let span = |lo: u32, hi: u32| -> Option<(u32, u32)> {
+        let first = index.iter().position(|&i| i >= lo && i <= hi)?;
+        let last = index.iter().rposition(|&i| i >= lo && i <= hi)?;
+        Some((first as u32, last as u32))
+    };
+    for (p, row) in full.rows.iter_mut().enumerate() {
+        row.index = p as u32;
+    }
+    full.merges = full
+        .merges
+        .iter()
+        .filter_map(|m| {
+            let (a, b) = span(m.row, m.row + m.row_span - 1)?;
+            Some(MergeSpan {
+                row: a,
+                row_span: b - a + 1,
+                ..m.clone()
+            })
+        })
+        .collect();
+    let keep = keep
+        .iter()
+        .filter_map(|&(a, b)| span(a.min(b), a.max(b)))
+        .collect();
+    (full, keep)
 }
 
 /// Build the [`LoweredContent`] for one frame: the (optionally repeated)

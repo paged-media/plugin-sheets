@@ -159,9 +159,22 @@ pub struct Worksheet {
     /// §6.4). Empty by default; populated by the XLSX `table` part (M1
     /// Phase B). See [`crate::table::Table`].
     pub tables: Vec<crate::table::Table>,
+    /// Rows the workbook saved as hidden (`<row hidden="1">`), whether hidden
+    /// by hand or by the workbook's own filter (Wave 7, additive).
+    pub hidden_rows: std::collections::BTreeSet<u32>,
+    /// Filter views over this sheet (see [`crate::filter`]).
+    pub filters: Vec<crate::filter::FilterView>,
+    /// Rows hidden by a Paged filter view, computed when the view is set.
+    pub filtered_rows: std::collections::BTreeSet<u32>,
 }
 
 impl Worksheet {
+    /// Whether row `row` is hidden — saved hidden in the workbook or hidden by
+    /// a filter view. The page lowering skips hidden rows.
+    pub fn row_hidden(&self, row: u32) -> bool {
+        self.hidden_rows.contains(&row) || self.filtered_rows.contains(&row)
+    }
+
     pub fn cell(&self, row: u32, col: u32) -> Option<&Cell> {
         self.cells.get(&(row, col))
     }

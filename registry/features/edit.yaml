@@ -59,6 +59,13 @@
   tests:
     rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_formulas"]
 
+- id: sheet.edit.filter.view
+  title: AutoFilter as a filter VIEW — set_filter/clear_filter (equals / contains / top / bottom on one column each, AND across columns) hide data rows; the page lowering and pagination skip hidden rows; the workbook's own autoFilter criteria are modelled (read-only, element re-emits verbatim) and rows it saved hidden stay hidden through a dirty re-encode; a Paged view is not written into the xlsx
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::set_filter", "sheet-core/src/filter.rs", "sheet-xlsx/src/parts/autofilter.rs", "sheet-lower/src/lib.rs (hidden-row skip)", "ECMA-376 §18.3.2 autoFilter"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_filter_view"]
+
 - id: sheet.edit.find.values
   title: find_all matches the formatted DISPLAY text by default (a formula cell is found by its computed display); row-major hits with excerpts; empty needle is a boundary error
   status: implemented

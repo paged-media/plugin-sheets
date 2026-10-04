@@ -125,6 +125,14 @@ pub struct SortResult {
     pub edits: Vec<CellEdit>,
 }
 
+/// The result of [`SheetSession::set_filter`] / [`SheetSession::clear_filter`]:
+/// the 0-based rows the sheet's filter views now hide (ascending).
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterResult {
+    pub hidden_rows: Vec<u32>,
+}
+
 /// Options shared by [`SheetSession::find_all`] / [`SheetSession::replace_all`]
 /// (serde defaults so an absent/partial object is accepted; all default
 /// `false` — case-insensitive substring match over displays).
@@ -853,6 +861,225 @@ impl SheetSession {
             circular,
             edits,
         })
+    }
+
+    /// Set (or replace) one column criterion of the sheet's Paged FILTER VIEW
+    /// over `range` (header row first) and return the rows it now hides
+    /// (Wave 7, `sheet.edit.filter.view`). `col` is 0-based relative to the
+    /// range; `kind` is:
+    /// - `"equals"` — keep rows whose DISPLAYED text equals `value`
+    ///   (case-insensitive; an empty `value` keeps blanks);
+    /// - `"contains"` — displayed text contains `value` (case-insensitive);
+    /// - `"top"` / `"bottom"` — the `value` largest / smallest numbers (ties
+    ///   kept; non-numbers hidden).
+    ///
+    /// Like Excel, a filter applies when it is set (an edit afterwards does
+    /// not re-filter). It is a VIEW: the page lowering skips the hidden rows,
+    /// but nothing is written into the xlsx and the workbook is not dirtied.
+    /// A view over a different range replaces the previous Paged view; the
+    /// workbook's own `<autoFilter>` (and the rows it saved hidden) are
+    /// untouched.
+    pub fn set_filter(
+        &mut self,
+        sheet: u16,
+        range: &str,
+        col: u32,
+        kind: &str,
+        value: &str,
+    ) -> Result<FilterResult, SessionError> {
+        self.validate_sheet(sheet)?;
+        let cr = parse_range(range)?;
+        let (top, bottom) = (cr.r0.min(cr.r1), cr.r0.max(cr.r1));
+        let (left, right) = (cr.c0.min(cr.c1), cr.c0.max(cr.c1));
+        if col > right - left {
+            return Err(SessionError(format!(
+                "filter column {col} out of range (the range has {} columns)",
+                right - left + 1
+            )));
+        }
+        let criterion = match kind {
+            "equals" => sheet_core::FilterCriterion::Values {
+                values: if value.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![value.into()]
+                },
+                blanks: value.is_empty(),
+            },
+            "contains" => sheet_core::FilterCriterion::Contains(value.into()),
+            "top" | "bottom" => {
+                let n: f64 = value.trim().parse().map_err(|_| {
+                    SessionError(format!("filter {kind}: {value:?} is not a number"))
+                })?;
+                if n < 1.0 {
+                    return Err(SessionError(format!("filter {kind}: n must be at least 1")));
+                }
+                sheet_core::FilterCriterion::Top {
+                    n: n.trunc(),
+                    percent: false,
+                    top: kind == "top",
+                }
+            }
+            other => {
+                return Err(SessionError(format!(
+                    "unknown filter kind {other:?} (equals, contains, top, bottom)"
+                )))
+            }
+        };
+        let frange = RangeRef {
+            start: CellRef {
+                sheet,
+                row: top,
+                col: left,
+                row_abs: false,
+                col_abs: false,
+            },
+            end: CellRef {
+                sheet,
+                row: bottom,
+                col: right,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+        let mut filters = self
+            .engine()
+            .model()
+            .sheet(sheet)
+            .map(|ws| ws.filters.clone())
+            .unwrap_or_default();
+        // One Paged view per sheet: keep the file's views, replace a Paged
+        // view over another range, extend the one over this range.
+        filters.retain(|f| f.from_file || f.range == frange);
+        match filters.iter_mut().find(|f| !f.from_file) {
+            Some(view) => {
+                view.columns.retain(|c| c.col != col);
+                view.columns
+                    .push(sheet_core::ColumnFilter { col, criterion });
+            }
+            None => filters.push(sheet_core::FilterView {
+                range: frange,
+                columns: vec![sheet_core::ColumnFilter { col, criterion }],
+                from_file: false,
+            }),
+        }
+        self.apply_filter_views(sheet, filters)
+    }
+
+    /// Remove the sheet's Paged filter view (every row it hid is shown
+    /// again). The workbook's own `<autoFilter>` and saved-hidden rows stay.
+    pub fn clear_filter(&mut self, sheet: u16) -> Result<FilterResult, SessionError> {
+        self.validate_sheet(sheet)?;
+        let mut filters = self
+            .engine()
+            .model()
+            .sheet(sheet)
+            .map(|ws| ws.filters.clone())
+            .unwrap_or_default();
+        filters.retain(|f| f.from_file);
+        self.apply_filter_views(sheet, filters)
+    }
+
+    /// Evaluate every Paged view's criteria over its data rows (the range
+    /// minus its header row) and store the views + the rows they hide.
+    fn apply_filter_views(
+        &mut self,
+        sheet: u16,
+        filters: Vec<sheet_core::FilterView>,
+    ) -> Result<FilterResult, SessionError> {
+        let mut hidden: BTreeSet<u32> = BTreeSet::new();
+        for view in filters.iter().filter(|f| !f.from_file) {
+            let r = view.range.normalized();
+            let first = r.start.row + 1;
+            for c in &view.columns {
+                let abs_col = r.start.col + c.col;
+                let rows: Vec<u32> = (first..=r.end.row).collect();
+                let keep = self.filter_keep(sheet, &rows, abs_col, &c.criterion);
+                for (row, k) in rows.iter().zip(keep) {
+                    if !k {
+                        hidden.insert(*row);
+                    }
+                }
+            }
+        }
+        let hidden_rows: Vec<u32> = hidden.iter().copied().collect();
+        if !self.engine_mut().set_filter_view(sheet, filters, hidden) {
+            return Err(SessionError(format!("unknown sheet {sheet}")));
+        }
+        Ok(FilterResult { hidden_rows })
+    }
+
+    /// Which of `rows` satisfy `criterion` in column `col`.
+    fn filter_keep(
+        &self,
+        sheet: u16,
+        rows: &[u32],
+        col: u32,
+        criterion: &sheet_core::FilterCriterion,
+    ) -> Vec<bool> {
+        use sheet_core::FilterCriterion as C;
+        match criterion {
+            C::Values { values, blanks } => rows
+                .iter()
+                .map(|&r| {
+                    let text = self.get_cell_display(sheet, r, col);
+                    if text.is_empty() {
+                        *blanks
+                    } else {
+                        let t = text.to_lowercase();
+                        values.iter().any(|v| v.to_lowercase() == t)
+                    }
+                })
+                .collect(),
+            C::Contains(needle) => {
+                let n = needle.to_lowercase();
+                rows.iter()
+                    .map(|&r| {
+                        self.get_cell_display(sheet, r, col)
+                            .to_lowercase()
+                            .contains(n.as_str())
+                    })
+                    .collect()
+            }
+            C::Top { n, percent, top } => {
+                let model = self.engine().model();
+                let nums: Vec<Option<f64>> = rows
+                    .iter()
+                    .map(
+                        |&r| match model.sheet(sheet).and_then(|ws| ws.cell(r, col)) {
+                            Some(c) => match c.value {
+                                CellValue::Number(x) => Some(x),
+                                _ => None,
+                            },
+                            None => None,
+                        },
+                    )
+                    .collect();
+                let mut sorted: Vec<f64> = nums.iter().flatten().copied().collect();
+                if sorted.is_empty() {
+                    return vec![false; rows.len()];
+                }
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+                if *top {
+                    sorted.reverse();
+                }
+                let count = if *percent {
+                    ((sorted.len() as f64) * n / 100.0).ceil().max(1.0) as usize
+                } else {
+                    *n as usize
+                };
+                let cut = sorted[count.clamp(1, sorted.len()) - 1];
+                nums.iter()
+                    .map(|v| match v {
+                        Some(x) if *top => *x >= cut,
+                        Some(x) => *x <= cut,
+                        None => false,
+                    })
+                    .collect()
+            }
+            // Not applied by a Paged view (see sheet_core::filter).
+            C::Unsupported => vec![true; rows.len()],
+        }
     }
 
     /// Find every populated cell matching `needle` (spec: the panel's

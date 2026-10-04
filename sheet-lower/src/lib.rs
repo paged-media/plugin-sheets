@@ -430,6 +430,12 @@ pub fn lower_range_styled(
     let mut row_y: Vec<f64> = Vec::with_capacity((bottom - top + 2) as usize);
     let mut y = 0.0_f64;
     for r in top..=bottom {
+        // Hidden rows (saved hidden, or hidden by a filter view) are not
+        // lowered; the surviving rows keep their range-relative `index`, so
+        // a consumer maps model rows exactly as before (Wave 7).
+        if ws.is_some_and(|w| w.row_hidden(r)) {
+            continue;
+        }
         row_y.push(y);
         let height_pt = ws
             .and_then(|w| w.row_heights.get(&r).copied())
@@ -577,6 +583,12 @@ pub fn lower_range_condfmt(
     let mut row_y: Vec<f64> = Vec::with_capacity((bottom - top + 2) as usize);
     let mut y = 0.0_f64;
     for r in top..=bottom {
+        // Hidden rows (saved hidden, or hidden by a filter view) are not
+        // lowered; the surviving rows keep their range-relative `index`, so
+        // a consumer maps model rows exactly as before (Wave 7).
+        if ws.is_some_and(|w| w.row_hidden(r)) {
+            continue;
+        }
         row_y.push(y);
         let height_pt = ws
             .and_then(|w| w.row_heights.get(&r).copied())
@@ -873,8 +885,12 @@ fn lower_merges(
             continue;
         }
         let (mr0, mc0, mr1, mc1) = (n.start.row, n.start.col, n.end.row, n.end.col);
-        // Intersect with the range box.
-        let ir0 = mr0.max(top);
+        // Intersect with the range box; a merge whose leading rows are hidden
+        // anchors at its first VISIBLE row (none visible → not lowered).
+        let mut ir0 = mr0.max(top);
+        while ir0 <= mr1.min(bottom) && ws.row_hidden(ir0) {
+            ir0 += 1;
+        }
         let ic0 = mc0.max(left);
         let ir1 = mr1.min(bottom);
         let ic1 = mc1.min(right);

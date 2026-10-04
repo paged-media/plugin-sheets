@@ -490,3 +490,186 @@ fn sheet_edit_replace_skip_spilled_cells_reported_not_shadowed() {
     );
     assert_eq!(s.get_cell_display(0, 1, 0), "2"); // intact
 }
+
+// ── sheet.edit.filter.view ───────────────────────────────────────────────────
+
+/// A region with a header row: Region / Units.
+fn sales() -> SheetSession {
+    session_with(&[
+        (0, 0, "Region"),
+        (0, 1, "Units"),
+        (1, 0, "East"),
+        (1, 1, "10"),
+        (2, 0, "West"),
+        (2, 1, "20"),
+        (3, 0, "East"),
+        (3, 1, "30"),
+        (4, 0, "North"),
+        (4, 1, "5"),
+    ])
+}
+
+fn lowered_rows(s: &SheetSession, range: &str) -> Vec<(u32, String)> {
+    s.get_range_lowered(0, range, sheet_js::core::LowerOptions::default())
+        .expect("lower")
+        .rows
+        .iter()
+        .map(|r| (r.index, r.cells[0].text.clone()))
+        .collect()
+}
+
+/// `equals` keeps the rows whose displayed text matches (case-insensitive);
+/// the page lowering skips the others but keeps each survivor's
+/// range-relative index; clearing the view shows every row again.
+#[test]
+fn sheet_edit_filter_view_equals_and_clear() {
+    let mut s = sales();
+    let res = s
+        .set_filter(0, "A1:B5", 0, "equals", "east")
+        .expect("filter");
+    assert_eq!(res.hidden_rows, vec![2, 4]);
+    assert_eq!(
+        lowered_rows(&s, "A1:B5"),
+        vec![
+            (0, "Region".to_string()),
+            (1, "East".to_string()),
+            (3, "East".to_string())
+        ]
+    );
+    // A view does not touch values.
+    assert_eq!(s.get_cell_display(0, 2, 1), "20");
+
+    let res = s.clear_filter(0).expect("clear");
+    assert!(res.hidden_rows.is_empty());
+    assert_eq!(lowered_rows(&s, "A1:B5").len(), 5);
+}
+
+/// `contains`, `top` and `bottom`; two column criteria combine with AND; a
+/// criterion on the same column replaces the previous one.
+#[test]
+fn sheet_edit_filter_view_contains_top_and_combined() {
+    let mut s = sales();
+    assert_eq!(
+        s.set_filter(0, "A1:B5", 0, "contains", "st")
+            .expect("contains")
+            .hidden_rows,
+        vec![4]
+    );
+    // AND with Units top 2 (30, 20): East/10 now hidden too.
+    assert_eq!(
+        s.set_filter(0, "A1:B5", 1, "top", "2")
+            .expect("top")
+            .hidden_rows,
+        vec![1, 4]
+    );
+    // Replace the Units criterion with bottom 1 (5 — but North is excluded by
+    // the contains criterion, so every data row is hidden).
+    assert_eq!(
+        s.set_filter(0, "A1:B5", 1, "bottom", "1")
+            .expect("bottom")
+            .hidden_rows,
+        vec![1, 2, 3, 4]
+    );
+    assert!(s.set_filter(0, "A1:B5", 0, "regex", "x").is_err());
+    assert!(s.set_filter(0, "A1:B5", 5, "equals", "x").is_err());
+}
+
+/// Pagination flows only the visible rows (merges/keep-together are re-based
+/// onto row positions).
+#[test]
+fn sheet_edit_filter_view_paginate_skips_hidden_rows() {
+    let mut s = sales();
+    s.set_filter(0, "A1:B5", 0, "equals", "East")
+        .expect("filter");
+    let pages = s
+        .paginate(
+            0,
+            "A1:B5",
+            vec![sheet_js::core::FrameBoxArg {
+                width_pt: 500.0,
+                height_pt: 500.0,
+            }],
+            sheet_js::core::PaginateOptionsArg::default(),
+        )
+        .expect("paginate");
+    assert_eq!(pages.len(), 1);
+    let texts: Vec<String> = pages[0]
+        .content
+        .rows
+        .iter()
+        .map(|r| r.cells[0].text.clone())
+        .collect();
+    assert_eq!(texts, ["Region", "East", "East"]);
+}
+
+/// A workbook's own `<autoFilter>` criteria are read into the model, the rows
+/// it saved hidden are skipped by the lowering, and a dirty re-encode of the
+/// sheet keeps them hidden (it used to drop `hidden="1"`) and keeps the
+/// `<autoFilter>` element.
+#[test]
+fn sheet_edit_filter_view_workbook_autofilter_round_trip() {
+    use std::io::{Read, Write};
+    let base = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../corpus/xlsx-corpus/01-minimal.xlsx"),
+    )
+    .expect("fixture 01");
+    let sheet_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:B4"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Region</t></is></c><c r="B1" t="inlineStr"><is><t>Units</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>East</t></is></c><c r="B2"><v>10</v></c></row><row r="3" hidden="1"><c r="A3" t="inlineStr"><is><t>West</t></is></c><c r="B3"><v>20</v></c></row><row r="4"><c r="A4" t="inlineStr"><is><t>East</t></is></c><c r="B4"><v>30</v></c></row></sheetData><autoFilter ref="A1:B4"><filterColumn colId="0"><filters><filter val="East"/></filters></filterColumn></autoFilter></worksheet>"#;
+    // Rebuild the fixture with the filtered sheet.
+    let mut zin = zip::ZipArchive::new(std::io::Cursor::new(&base)).expect("zip");
+    let mut out = std::io::Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut out);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default();
+        for i in 0..zin.len() {
+            let mut f = zin.by_index(i).unwrap();
+            let name = f.name().to_string();
+            let mut data = Vec::new();
+            f.read_to_end(&mut data).unwrap();
+            if name == "xl/worksheets/sheet1.xml" {
+                data = sheet_xml.as_bytes().to_vec();
+            }
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(&data).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+    // The criteria are modelled (the element itself stays verbatim).
+    let doc = sheet_xlsx::XlsxDocument::open(out.get_ref()).expect("open");
+    let ws = doc.model.sheet(0).unwrap();
+    assert_eq!(ws.filters.len(), 1);
+    assert!(ws.filters[0].from_file);
+    assert_eq!(
+        ws.filters[0].columns[0].criterion,
+        sheet_core::FilterCriterion::Values {
+            values: vec!["East".into()],
+            blanks: false
+        }
+    );
+    assert!(ws.hidden_rows.contains(&2));
+
+    let mut s = SheetSession::load_xlsx(out.get_ref()).expect("load filtered");
+
+    let rows = lowered_rows(&s, "A1:B4");
+    assert_eq!(
+        rows,
+        vec![
+            (0, "Region".to_string()),
+            (1, "East".to_string()),
+            (3, "East".to_string())
+        ]
+    );
+
+    // Edit a cell so the sheet re-encodes, save, and look at the XML.
+    s.set_cell(0, 1, 1, "11").expect("edit B2");
+    let saved = s.save_xlsx().expect("save");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&saved)).expect("zip");
+    let mut xml = String::new();
+    z.by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains(r#"<row r="3" hidden="1">"#), "{xml}");
+    assert!(xml.contains(r#"<autoFilter ref="A1:B4">"#), "{xml}");
+}

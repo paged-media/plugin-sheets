@@ -332,6 +332,16 @@ impl XlsxDocument {
                 ws.merges = parsed_ws.merges;
                 ws.col_widths = parsed_ws.col_widths;
                 ws.row_heights = parsed_ws.row_heights;
+                ws.hidden_rows = parsed_ws.hidden_rows;
+                // The sheet-level `<autoFilter>` is a captured (verbatim)
+                // worksheet child; read its criteria into the model too.
+                ws.filters = parsed_ws
+                    .captured
+                    .before()
+                    .chain(parsed_ws.captured.after())
+                    .filter_map(|c| parts::autofilter::parse(&c.bytes, sid))
+                    .take(1)
+                    .collect();
             }
 
             // Cells. Resolve style index -> StyleId; stash formula text in
@@ -378,6 +388,10 @@ impl XlsxDocument {
                         // its bytes still round-trip); the model just omits it.
                         if let Ok(table) = parts::tables::parse(&table_bytes, sid) {
                             tables.push(table);
+                            // The table's own `<autoFilter>` criteria.
+                            if let Some(f) = parts::autofilter::parse(&table_bytes, sid) {
+                                model.sheet_mut(sid).expect("just added").filters.push(f);
+                            }
                         }
                     }
                 }

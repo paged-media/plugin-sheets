@@ -266,15 +266,26 @@ fn encode_worksheet(
     for (&(r, c), cell) in ws.iter_cells() {
         rows.entry(r).or_default().push((c, cell));
     }
+    // A hidden row with no cells still needs its `<row hidden="1">`.
+    for &r in &ws.hidden_rows {
+        rows.entry(r).or_default();
+    }
     for (&r, cells) in &rows {
         let r1 = r + 1;
         let ht = ws.row_heights.get(&r);
+        // Rows the workbook saved hidden stay hidden (a Paged filter view's
+        // rows are a view, not written).
+        let hidden = if ws.hidden_rows.contains(&r) {
+            r#" hidden="1""#
+        } else {
+            ""
+        };
         match ht {
             Some(h) => s.push_str(&format!(
-                r#"<row r="{r1}" ht="{}" customHeight="1">"#,
+                r#"<row r="{r1}" ht="{}" customHeight="1"{hidden}>"#,
                 fmt_f64(*h)
             )),
-            None => s.push_str(&format!(r#"<row r="{r1}">"#)),
+            None => s.push_str(&format!(r#"<row r="{r1}"{hidden}>"#)),
         }
         for (c, cell) in cells {
             encode_cell(&mut s, sid, r, *c, cell, formula_texts);

@@ -50,6 +50,7 @@
 pub mod ast;
 pub mod calc_settings;
 pub mod cell;
+pub mod filter;
 pub mod funcs;
 pub mod intern;
 pub mod model;
@@ -79,6 +80,8 @@ pub use names::{NameDef, NameScope, NameTable, NameTarget};
 pub use style::{Align, CellStyle, NumFmtId, StyleTable};
 
 pub use table::Table;
+
+pub use filter::{ColumnFilter, FilterCriterion, FilterView};
 
 pub use calc_settings::{CalcSettings, DateSystem, Locale};
 

@@ -207,6 +207,25 @@ impl Engine {
         &self.model
     }
 
+    /// Replace a sheet's filter VIEW state (Wave 7): its filter views and the
+    /// rows they hide. View state only — no cell, value or dependency
+    /// changes, so nothing recalculates. `false` for an unknown sheet.
+    pub fn set_filter_view(
+        &mut self,
+        sheet: sheet_core::SheetId,
+        filters: Vec<sheet_core::FilterView>,
+        filtered_rows: std::collections::BTreeSet<u32>,
+    ) -> bool {
+        match self.model.sheet_mut(sheet) {
+            Some(ws) => {
+                ws.filters = filters;
+                ws.filtered_rows = filtered_rows;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Escape hatch for structural consumers (the `sheet-js` save path).
     ///
     /// MUTATING cells through the returned model WITHOUT going back through
