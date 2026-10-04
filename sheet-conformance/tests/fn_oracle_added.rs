@@ -54,7 +54,7 @@ fn eval(s: &mut SheetSession, f: &str) -> String {
 }
 
 #[test]
-fn sheet_fn_stat_percentrank() {
+fn sheet_fn_stat_percentrank__feat__sheet_fn_library() {
     let data = [13, 12, 11, 8, 4, 3, 2, 1, 1, 1];
     let cells: Vec<(u32, u32, String)> = data
         .iter()
@@ -85,7 +85,7 @@ fn sheet_fn_stat_percentrank() {
 }
 
 #[test]
-fn sheet_fn_stat_linest() {
+fn sheet_fn_stat_linest__feat__sheet_fn_library() {
     let mut s = session(&[
         (0, 0, "1"),
         (1, 0, "2"),

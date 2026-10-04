@@ -101,7 +101,9 @@ impl SheetModel {
 
     pub fn sheet(&self, id: SheetId) -> Option<&Worksheet> {
         if id >= EXTERNAL_SHEET_BASE {
-            return self.external_sheets.get((id - EXTERNAL_SHEET_BASE) as usize);
+            return self
+                .external_sheets
+                .get((id - EXTERNAL_SHEET_BASE) as usize);
         }
         self.sheets.get(id as usize)
     }

@@ -110,7 +110,11 @@ pub fn date(args: &[Arg], ctx: &crate::ctx::EvalCtx) -> CellValue {
     // Excel 16 holds the day in 16 bits and SATURATES an out-of-range day to
     // 32767 whatever its sign (recorded: DATE(1900,1,-1000000), (…,1000000)
     // and (…,-32769) are all serial 32767; (2000,1,-30000) is plain 6525).
-    let d = if (-32768..=32767).contains(&d) { d } else { 32767 };
+    let d = if (-32768..=32767).contains(&d) {
+        d
+    } else {
+        32767
+    };
 
     // Excel year shorthand: 0..=1899 means 1900+year.
     let year = if (0..=1899).contains(&y) { y + 1900 } else { y };

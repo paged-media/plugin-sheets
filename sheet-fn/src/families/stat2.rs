@@ -527,7 +527,6 @@ pub fn norm_s_inv(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     }
 }
 
-
 // ---- PERCENTRANK / .INC / .EXC ---------------------------------------------
 
 /// Shared PERCENTRANK core: the numeric cells of `array`, the value `x`, and
@@ -712,10 +711,10 @@ pub fn linest(args: &[Arg], _ctx: &EvalCtx) -> FnResult {
     };
     let mut xtx = vec![vec![0.0; p]; p];
     let mut xty = vec![0.0; p];
-    for i in 0..n {
+    for (i, y) in ys.iter().enumerate() {
         let r = row(i);
         for a in 0..p {
-            xty[a] += r[a] * ys[i];
+            xty[a] += r[a] * y;
             for b in 0..p {
                 xtx[a][b] += r[a] * r[b];
             }

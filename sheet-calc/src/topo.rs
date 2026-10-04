@@ -217,8 +217,8 @@ fn cycle_members(
             if *i < ws.len() {
                 let w = ws[*i];
                 *i += 1;
-                if !index.contains_key(&w) {
-                    index.insert(w, next);
+                if let std::collections::hash_map::Entry::Vacant(e) = index.entry(w) {
+                    e.insert(next);
                     low.insert(w, next);
                     next += 1;
                     stack.push(w);

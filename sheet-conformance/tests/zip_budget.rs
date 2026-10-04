@@ -118,8 +118,7 @@ fn zip_total_uncompressed_budget_is_enforced__feat__sheet_xlsx_roundtrip() {
     // runs here with a 1 MiB budget so the test does not inflate a GiB.
     LARGEST.store(0, Ordering::Relaxed);
     let err = sheet_xlsx::opc::OpcContainer::read_with_budget(&bytes, 1 << 20)
-        .err()
-        .expect("an over-budget package must be refused");
+        .expect_err("an over-budget package must be refused");
     assert!(
         err.to_string().contains("budget"),
         "typed budget error, got {err}"
@@ -128,5 +127,5 @@ fn zip_total_uncompressed_budget_is_enforced__feat__sheet_xlsx_roundtrip() {
         LARGEST.load(Ordering::Relaxed) < 2 << 20,
         "the over-budget entry was read past the budget"
     );
-    assert!(sheet_xlsx::MAX_UNCOMPRESSED_BYTES >= 256 << 20);
+    const { assert!(sheet_xlsx::MAX_UNCOMPRESSED_BYTES >= 256 << 20) };
 }
