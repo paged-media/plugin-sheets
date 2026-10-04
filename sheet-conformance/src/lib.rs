@@ -65,6 +65,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod recalc;
 pub mod runner;
 
 /// One golden-corpus case (spec §12.4). The runner seeds [`setup`] into a
