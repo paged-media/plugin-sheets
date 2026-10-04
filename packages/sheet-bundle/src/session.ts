@@ -274,6 +274,17 @@ export interface WorkbookSession {
    *  store is wired — the engine boots ONLY when there are bytes to load.
    *  Returns whether a workbook was restored. */
   restore(): Promise<boolean>;
+  /** A document opened (the host's `documentLoaded`): the workbook belongs
+   *  to the document, so the one in memory is dropped and the new
+   *  document's own is restored from its container part. The per-browser
+   *  blob is lifted only into a document that has a sheet frame (a
+   *  pre-container document); any other document starts with none.
+   *  Returns whether a workbook was restored. */
+  documentOpened(): Promise<boolean>;
+  /** Make sure the open document's workbook is loaded (entering a sheet
+   *  frame on a host that never announced the document): waits for a
+   *  restore in flight, else restores. Whether a workbook is loaded. */
+  ensureRestored(): Promise<boolean>;
   /** Set which sheet is active (and default its range to the used
    *  extent). */
   setActiveSheet(id: number): void;
@@ -1873,8 +1884,20 @@ export function createWorkbookSession(
   let persistDirty = false;
   let persistChain: Promise<void> = Promise.resolve();
 
+  // The workbook belongs to the DOCUMENT. `docEpoch` counts document opens:
+  // a write queued under one document never lands in the next one's
+  // container (the host's parts door writes to whichever document is
+  // open). `loadEpoch` also counts every workbook replacement (import,
+  // blank, CSV, dataset, restore), so a restore that was overtaken while
+  // it awaited does not clobber what replaced it.
+  let docEpoch = 0;
+  let loadEpoch = 0;
+
   function enqueueWrite(bytes: Uint8Array, name: string): Promise<void> {
-    persistChain = persistChain.then(() => writeWorkbook(bytes, name));
+    const epoch = docEpoch;
+    persistChain = persistChain.then(() =>
+      epoch === docEpoch ? writeWorkbook(bytes, name) : undefined,
+    );
     return persistChain;
   }
 
@@ -2130,6 +2153,7 @@ export function createWorkbookSession(
     }
     cancelPendingPersist();
     forgetPlacements();
+    loadEpoch += 1;
     state.engine = engine;
     state.fileName = name;
     state.gridSelection = null;
@@ -2184,9 +2208,21 @@ export function createWorkbookSession(
     bytes: Uint8Array,
     name: string,
     persist: boolean,
+    epoch?: number,
   ): Promise<boolean> {
     try {
-      if (!state.engine) state.engine = await bootEngine();
+      if (!state.engine) {
+        const booted = await bootEngine();
+        // A restore overtaken while the engine booted (another document
+        // opened, or a workbook was imported) loads nothing.
+        if (epoch !== undefined && epoch !== loadEpoch) {
+          booted.dispose();
+          return false;
+        }
+        if (state.engine) booted.dispose();
+        else state.engine = booted;
+      }
+      if (epoch !== undefined && epoch !== loadEpoch) return false;
       state.bootError = null;
     } catch (err) {
       // Boot failure (the artifact isn't built — S-10). Surface it; the
@@ -2199,6 +2235,7 @@ export function createWorkbookSession(
     }
     try {
       state.engine.loadXlsx(bytes);
+      loadEpoch += 1;
       state.fileName = name;
       state.gridSelection = null;
       forgetPlacements(); // the prior placements belonged to the old workbook
@@ -2223,6 +2260,133 @@ export function createWorkbookSession(
     return true;
   }
 
+  /** The restore in flight (if any) — `ensureRestored` waits for it
+   *  rather than racing it with a second read. */
+  let restoring: Promise<boolean> = Promise.resolve(false);
+  function track(p: Promise<boolean>): Promise<boolean> {
+    restoring = p.catch(() => false);
+    return p;
+  }
+
+  /** Whether the open document holds a frame bound to this plugin — the
+   *  test for lifting the per-browser blob into it (a pre-container
+   *  document). A document with no sheet frame gets no workbook from
+   *  another document's cache. */
+  async function documentHasSheetFrame(): Promise<boolean> {
+    if (!host.document?.getMetadata || typeof host.document.tree !== "function") return false;
+    let roots: Awaited<ReturnType<BundleHost["document"]["tree"]>>;
+    try {
+      roots = await host.document.tree();
+    } catch {
+      return false;
+    }
+    const frames: string[] = [];
+    const walk = (nodes: typeof roots) => {
+      for (const n of nodes) {
+        if (n.id?.kind === "textFrame" && typeof n.id.id === "string") frames.push(n.id.id);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(roots);
+    for (const id of frames) {
+      try {
+        const meta = await host.document.getMetadata({ kind: "textFrame", id } as ElementId);
+        if (parseBinding(meta)) return true;
+      } catch {
+        /* unreadable metadata is not a binding */
+      }
+    }
+    return false;
+  }
+
+  /** Restore the open document's workbook: its `.paged` container part
+   *  first (it travels WITH the document), else the per-browser blob —
+   *  `"always"` (the boot restore, S-08) or `"ifBound"` (a document open:
+   *  only into a document that has a sheet frame). Overtaken (another
+   *  document opened, a workbook imported) ⇒ loads nothing. */
+  async function restoreWorkbook(blobFallback: "always" | "ifBound"): Promise<boolean> {
+    const epoch = loadEpoch;
+    let fromPart: { bytes: Uint8Array; name: string } | null = null;
+    try {
+      fromPart = await readWorkbookPart(host);
+    } catch (err) {
+      host.log.warn("workbook container-part restore failed", err);
+    }
+    if (epoch !== loadEpoch) return false;
+    if (fromPart) {
+      const ok = await loadWorkbook(fromPart.bytes, fromPart.name, false, epoch);
+      if (ok) await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
+      return ok;
+    }
+
+    // Fall back to the per-browser blob (S-08 — pre-migration documents, or
+    // a host with no container writer).
+    if (!host.supports("storage.blob@1")) return false;
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await host.blob.read(BLOB_KEY);
+    } catch (err) {
+      host.log.warn("workbook restore read failed", err);
+      return false;
+    }
+    if (!bytes) return false; // nothing persisted — no engine boot
+    if (blobFallback === "ifBound" && !(await documentHasSheetFrame())) return false;
+    if (epoch !== loadEpoch) return false;
+    const name = host.storage.get<string>(BLOB_NAME_KEY) ?? "workbook.xlsx";
+    const ok = await loadWorkbook(bytes, name, false, epoch);
+    if (ok) await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
+    // One-time migration: lift the per-browser blob into the container so the
+    // workbook now travels with the document on the next save.
+    if (ok) {
+      try {
+        await writeWorkbookPart(host, bytes, name);
+      } catch (err) {
+        host.log.warn("workbook container-part migration failed", err);
+      }
+    }
+    return ok;
+  }
+
+  /** Forget the workbook entirely (its document closed): engine, sheet,
+   *  selection, placements, journal, dataset link, the in-frame grid. */
+  function unloadWorkbook(): void {
+    cancelPendingPersist();
+    forgetPlacements();
+    try {
+      dataSourceSub?.dispose();
+    } catch (err) {
+      host.log.warn("dataset subscription dispose failed", err);
+    }
+    dataSourceSub = null;
+    if (inFrameActive && lastFrameId) void sceneSurface?.clear(lastFrameId);
+    inFrameActive = false;
+    cellEdit = null;
+    drag = null;
+    fillPreview = null;
+    refreshDeferred = false;
+    lastFrameId = null;
+    lastGridWindow = null;
+    lastGridScene = null;
+    editJournal = [];
+    journalCursor = 0;
+    readCache.clear();
+    revision += 1;
+    if (state.engine) {
+      try {
+        state.engine.dispose();
+      } catch (err) {
+        host.log.warn("engine dispose failed", err);
+      }
+    }
+    state.engine = null;
+    state.fileName = null;
+    state.activeSheet = null;
+    state.selectedRange = null;
+    state.gridSelection = null;
+    state.dataSource = null;
+    emitter.emit();
+  }
+
   const api: WorkbookSession = {
     state: () => state,
     onDidChange: (l) => emitter.on(l),
@@ -2231,46 +2395,25 @@ export function createWorkbookSession(
       await loadWorkbook(bytes, name, true);
     },
 
-    async restore() {
-      // Prefer the portable `.paged` container part — it travels WITH the
-      // document, so a fresh browser profile / another machine restores it
-      // even though the per-browser blob is empty there.
-      let fromPart: { bytes: Uint8Array; name: string } | null = null;
-      try {
-        fromPart = await readWorkbookPart(host);
-      } catch (err) {
-        host.log.warn("workbook container-part restore failed", err);
-      }
-      if (fromPart) {
-        const ok = await loadWorkbook(fromPart.bytes, fromPart.name, false);
-        if (ok) await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
-        return ok;
-      }
+    restore() {
+      return track(restoreWorkbook("always"));
+    },
 
-      // Fall back to the per-browser blob (S-08 — pre-migration documents, or
-      // a host with no container writer).
-      if (!host.supports("storage.blob@1")) return false;
-      let bytes: Uint8Array | null;
-      try {
-        bytes = await host.blob.read(BLOB_KEY);
-      } catch (err) {
-        host.log.warn("workbook restore read failed", err);
-        return false;
-      }
-      if (!bytes) return false; // nothing persisted — no engine boot
-      const name = host.storage.get<string>(BLOB_NAME_KEY) ?? "workbook.xlsx";
-      const ok = await loadWorkbook(bytes, name, false);
-      if (ok) await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
-      // One-time migration: lift the per-browser blob into the container so the
-      // workbook now travels with the document on the next save.
-      if (ok) {
-        try {
-          await writeWorkbookPart(host, bytes, name);
-        } catch (err) {
-          host.log.warn("workbook container-part migration failed", err);
-        }
-      }
-      return ok;
+    documentOpened() {
+      // A different document is open: the workbook in memory belonged to
+      // the one that closed. Drop it (and anything still queued to persist
+      // it) before reading this document's own part.
+      docEpoch += 1;
+      loadEpoch += 1;
+      unloadWorkbook();
+      return track(restoreWorkbook("ifBound"));
+    },
+
+    async ensureRestored() {
+      if (state.engine && state.activeSheet !== null) return true;
+      await restoring;
+      if (state.engine && state.activeSheet !== null) return true;
+      return track(restoreWorkbook("ifBound"));
     },
 
     setActiveSheet(id) {

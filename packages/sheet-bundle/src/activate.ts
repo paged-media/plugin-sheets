@@ -118,6 +118,19 @@ export function activate(host: BundleHost): BundleHandle {
   // cheap no-op (one blob read) when nothing was persisted or no blob
   // store is wired — the engine boots only when there are bytes to load.
   void session.restore();
+  // The workbook belongs to the DOCUMENT, and activation runs at app boot —
+  // before any document is open. Every later open (File ▸ Open, File ▸ New,
+  // a reopened .paged) restores that document's own workbook from its
+  // container part. The client broadcasts `documentLoaded` on each load; a
+  // host with no raw client falls back to the lazy restore on frame entry.
+  let unsubscribeDocs: (() => void) | null = null;
+  try {
+    unsubscribeDocs = host.editor.client.subscribe((msg) => {
+      if (msg.kind === "documentLoaded") void session.documentOpened();
+    });
+  } catch {
+    /* no raw client: onEnter's ensureRestored covers it */
+  }
 
   contributePanel(host, {
     id: PANEL_ID,
@@ -452,7 +465,11 @@ export function activate(host: BundleHost): BundleHandle {
       panelIds: [PANEL_ID],
       onEnter: (ctx) => {
         const id = frameIdOf(ctx.id);
-        if (id) void session.showGridInFrame(id);
+        if (!id) return;
+        // A frame entered before its document's workbook is loaded (a host
+        // that never announced the open, or a restore still in flight)
+        // restores it first instead of reporting "no workbook".
+        void session.ensureRestored().then(() => session.showGridInFrame(id));
       },
       // K-1 — the editor delivers a pointer in FRAME-CONTENT coordinates
       // (it owns the page→content inversion via the frame's HitResult
@@ -612,6 +629,7 @@ export function activate(host: BundleHost): BundleHandle {
       textProviderHandle?.dispose();
       menuSub.dispose();
       textProviderHandle = null;
+      unsubscribeDocs?.();
       session.dispose();
     },
   };
