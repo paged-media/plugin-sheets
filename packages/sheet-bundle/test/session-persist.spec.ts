@@ -135,6 +135,28 @@ describe.skipIf(!built)("sheet edits persist [sheet.plugin.persistence]", () => 
     s2.dispose();
   });
 
+  it("leaving the frame flushes: a save right after the exit carries the edit", async () => {
+    // The host has no will-save hook yet, so a document saved inside the
+    // debounce window shipped the PRE-edit workbook part — and reopening it
+    // then re-lowered the placed table from the stale workbook (the editor
+    // journey sheet-edit-persist, saving right after Esc). Exiting the
+    // frame is where the session's edits reach the page; the part follows
+    // at the same moment.
+    const doc = fakeDocument();
+    const s1 = createWorkbookSession(doc.host);
+    await s1.import(new Uint8Array(readFileSync(FIXTURE)), "minimal.xlsx");
+    vi.useFakeTimers();
+    expect(s1.editCell(0, 9, 0, "on exit")).toBe(true);
+    s1.hideGridInFrame(); // the context exits (Esc) — no timer has run
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(doc.workbookWrites()).toBe(2));
+
+    const s2 = await reload(doc.host);
+    expect(s2.state().engine!.getCellInput(0, 9, 0)).toBe("on exit");
+    s1.dispose();
+    s2.dispose();
+  });
+
   it("an undo is an edit too: undone value is what reloads", async () => {
     const doc = fakeDocument();
     const s1 = createWorkbookSession(doc.host);

@@ -537,7 +537,7 @@ export interface WorkbookSession {
   /** Write any committed-but-unsaved edits to the container part + blob
    *  NOW (cancelling the pending debounce) and resolve when every queued
    *  write has landed. Edits persist on their own after
-   *  [`PERSIST_DEBOUNCE_MS`] and on `dispose`; this is the explicit door
+   *  [`PERSIST_DEBOUNCE_MS`], on leaving the frame and on `dispose`; this is the explicit door
    *  for a host save. (The plugin contract has no pre-save hook yet —
    *  RFI: a host `onWillSave` would call this.) Never rejects. */
   flushPersist(): Promise<void>;
@@ -2571,6 +2571,10 @@ export function createWorkbookSession(
         refreshDeferred = false;
         void refreshPlacements();
       }
+      // …and the workbook part with them, not a debounce later: the host
+      // has no will-save hook, so a save right after Esc otherwise ships
+      // the pre-edit workbook beside the post-edit page.
+      void flushPersist().catch((err) => host.log.warn("workbook persist on exit failed", err));
     },
 
     listCharts() {
