@@ -64,6 +64,8 @@ pub mod parts;
 pub mod preserve;
 pub mod rels;
 pub mod sheet_doc;
+pub mod splice;
+pub mod structure;
 pub mod write;
 
 pub use error::XlsxError;
@@ -179,6 +181,14 @@ pub struct XlsxDocument {
     container: OpcContainer,
     /// Worksheet bindings: model sheet -> part name + captured subtrees.
     bindings: Vec<SheetBinding>,
+    /// The workbook part name (`xl/workbook.xml`) — the structure writes
+    /// (`structure.rs`) splice it.
+    workbook_part: String,
+    /// The workbook `.rels` part name.
+    wb_rels_part: String,
+    /// The calc settings as LOADED: `save` re-emits `<calcPr>` only when the
+    /// model's iteration knobs differ from these.
+    loaded_calc: sheet_core::calc_settings::CalcSettings,
 }
 
 /// A name→id resolver over the workbook's sheet list, for chart `c:f` refs.
@@ -247,6 +257,10 @@ impl XlsxDocument {
 
         let mut model = SheetModel::new();
         model.calc.date_system = parsed_wb.date_system;
+        // Wave 4: the file's iterative-calculation knobs are honoured.
+        if let Some(cp) = &parsed_wb.calc_pr {
+            cp.apply(&mut model.calc);
+        }
         model.names = parsed_wb.names;
 
         // Intern shared strings into the model interner (the cells already
@@ -564,6 +578,7 @@ impl XlsxDocument {
             container.promote(name, ModeledKind::Worksheet);
         }
 
+        let loaded_calc = model.calc;
         Ok(XlsxDocument {
             model,
             formula_texts,
@@ -577,6 +592,9 @@ impl XlsxDocument {
             comments,
             container,
             bindings,
+            workbook_part,
+            wb_rels_part,
+            loaded_calc,
         })
     }
 
@@ -584,11 +602,19 @@ impl XlsxDocument {
     /// (per-part byte identity); `calcChain.xml` is always dropped; dirty
     /// worksheets re-encode from the model.
     pub fn save(&self) -> Result<Vec<u8>, XlsxError> {
+        // Wave 4: a changed `<calcPr>` (iterative calculation toggled) is the
+        // one workbook-part edit decided at save time; it rides as a byte
+        // splice of that element, the rest of the part stays verbatim.
+        let mut overrides: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        if let Some(wb) = self.calc_pr_override()? {
+            overrides.insert(self.workbook_part.clone(), wb);
+        }
         write::save(
             &self.container,
             &self.model,
             &self.bindings,
             &self.formula_texts,
+            &overrides,
         )
     }
 

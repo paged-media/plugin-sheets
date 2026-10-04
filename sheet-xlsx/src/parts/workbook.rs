@@ -73,6 +73,20 @@ pub struct ParsedWorkbook {
     /// through the workbook `.rels` to an `externalLinkN.xml` part. Empty when
     /// the workbook references no external books (the common case).
     pub external_refs: Vec<String>,
+    /// The `<calcPr>` iteration knobs (Wave 4 — iterative calculation is
+    /// honoured from the file). `None` when the workbook has no `<calcPr>`.
+    pub calc_pr: Option<crate::structure::CalcPr>,
+}
+
+/// Parse a `<calcPr>` start tag's iteration knobs.
+fn parse_calc_pr(
+    e: &quick_xml::events::BytesStart<'_>,
+) -> Result<crate::structure::CalcPr, XlsxError> {
+    Ok(crate::structure::CalcPr {
+        iterate: attr(e, b"iterate")?.map(|v| is_xml_true(&v)),
+        iterate_count: attr(e, b"iterateCount")?.and_then(|v| v.trim().parse().ok()),
+        iterate_delta: attr(e, b"iterateDelta")?.and_then(|v| v.trim().parse().ok()),
+    })
 }
 
 /// Parse `workbook.xml`.
@@ -86,6 +100,7 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
     let mut date_system = DateSystem::Date1900;
     let mut names = NameTable::default();
     let mut external_refs: Vec<String> = Vec::new();
+    let mut calc_pr: Option<crate::structure::CalcPr> = None;
 
     // definedName carries its target as element text; track the in-progress
     // name + accumulate its text.
@@ -114,6 +129,7 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
                             external_refs.push(rid);
                         }
                     }
+                    b"calcPr" => calc_pr = Some(parse_calc_pr(&e)?),
                     _ => {}
                 }
             }
@@ -145,6 +161,7 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
                         cur_name = Some((name, scope));
                         cur_text.clear();
                     }
+                    b"calcPr" => calc_pr = Some(parse_calc_pr(&e)?),
                     _ => {}
                 }
             }
@@ -181,6 +198,7 @@ pub fn parse(xml: &[u8]) -> Result<ParsedWorkbook, XlsxError> {
         date_system,
         names,
         external_refs,
+        calc_pr,
     })
 }
 
@@ -259,6 +277,22 @@ mod tests {
 </workbook>"#;
         let wb = parse(xml).unwrap();
         assert!(wb.external_refs.is_empty());
+    }
+
+    #[test]
+    fn calc_pr_iteration_knobs_parse() {
+        let xml = br#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets>
+  <calcPr calcId="191029" iterate="1" iterateCount="42" iterateDelta="0.0005"/>
+</workbook>"#;
+        let cp = parse(xml).unwrap().calc_pr.unwrap();
+        assert_eq!(cp.iterate, Some(true));
+        assert_eq!(cp.iterate_count, Some(42));
+        assert_eq!(cp.iterate_delta, Some(0.0005));
+        let none =
+            br#"<workbook><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+        assert!(parse(none).unwrap().calc_pr.is_none());
     }
 
     #[test]

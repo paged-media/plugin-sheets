@@ -65,12 +65,14 @@ const CALC_CHAIN_PART: &str = "xl/calcChain.xml";
 ///
 /// `bindings` maps each worksheet's part name + SheetId so dirty sheets can
 /// be re-encoded from the model. `formula_texts` supplies the raw `<f>` text
-/// for each edited formula cell.
+/// for each edited formula cell. `overrides` maps a part name to bytes that
+/// replace its stored ones (the save-time structure splices).
 pub fn save(
     container: &OpcContainer,
     model: &SheetModel,
     bindings: &[SheetBinding],
     formula_texts: &BTreeMap<(SheetId, u32, u32), String>,
+    overrides: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, XlsxError> {
     let drop_calc_chain = container.part(CALC_CHAIN_PART).is_some();
 
@@ -90,6 +92,14 @@ pub fn save(
 
         // calcChain is dropped entirely.
         if drop_calc_chain && name == CALC_CHAIN_PART {
+            continue;
+        }
+
+        // A save-time splice (`structure.rs` — e.g. a changed `<calcPr>`)
+        // supersedes the stored bytes of that one part.
+        if let Some(bytes) = overrides.get(name) {
+            zip.start_file(name, opts)?;
+            zip.write_all(bytes).map_err(zip_io)?;
             continue;
         }
 
