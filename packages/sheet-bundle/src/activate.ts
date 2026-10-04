@@ -48,6 +48,7 @@ import {
   type BindingProviderHandle,
 } from "./binding-provider/adr023-seam";
 import { makeSwatchesBindingProvider } from "./binding-provider/swatches-provider";
+import { subscribeProviderInvalidation } from "./binding-provider/invalidation";
 import { makeTextBindingProvider } from "./binding-provider/text-provider";
 import { createWorkbookSession } from "./session";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
@@ -448,9 +449,11 @@ export function activate(host: BundleHost): BundleHandle {
     );
 
     if (swatchesProviderHandle || textProviderHandle) {
-      providerInvalidateSub = session.onDidChange(() => {
-        swatchesProviderHandle?.invalidate();
-        textProviderHandle?.invalidate();
+      // Each provider re-reads only on changes that can move its answer
+      // (see binding-provider/invalidation.ts) — not on every signal.
+      providerInvalidateSub = subscribeProviderInvalidation(session, {
+        swatches: swatchesProviderHandle,
+        text: textProviderHandle,
       });
     }
   }

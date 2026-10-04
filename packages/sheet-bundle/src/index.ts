@@ -76,6 +76,9 @@ export {
   selectionRangeA1,
   tsvToRows,
   REFRESH_DEBOUNCE_MS,
+  regionsOf,
+  type CellRegion,
+  type SessionChange,
   type SessionResult,
   type SessionState,
   type WorkbookSession,
@@ -108,6 +111,11 @@ export {
 // The chart → paged.draw vector lower (M2 charts track, spec §8.4).
 export { lowerChartToFrame } from "./lower-chart";
 export { importXlsx } from "./import-xlsx";
+export {
+  a1Bounds,
+  subscribeProviderInvalidation,
+  touchesSelection,
+} from "./binding-provider/invalidation";
 export { makeWorkbookPanel } from "./panels/workbook-panel";
 export { makeGridPanel } from "./panels/grid-panel";
 export { makeDatasetsPanel } from "./panels/datasets-panel";

@@ -214,3 +214,52 @@ describe("sheet_grid_clipboard_paste_range: K-6 paste", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+// Wave 2 — the batch write door: an engine with `setCells` takes the
+// whole paste in ONE call (one recalc); one that refuses the batch (a bad
+// input) gets the cells one by one, so only the bad cell is skipped.
+describe("sheet_grid_clipboard_paste_range: the setCells batch door [sheet.edit.ops]", () => {
+  it("pastes through ONE setCells call and journals the whole paste as one undo", async () => {
+    const { engine, setCellCalls } = fakeEngine();
+    const batches: { sheet: number; row: number; col: number; input: string }[][] = [];
+    engine.setCells = (inputs) => {
+      batches.push([...inputs]);
+      for (const i of inputs) engine.setCell(i.sheet, i.row, i.col, i.input);
+      setCellCalls.length = 0; // the batch is ONE engine call
+      return { changedCount: inputs.length, circular: [] };
+    };
+    const { host, setClipboard } = fakeHost();
+    const session = bootedSession(host, engine);
+    session.setGridSelection(1, 1, 1, 1);
+    setClipboard({ tabular: { rows: [["a", "b"], ["c", "d"]] } });
+    expect(await session.pasteAtSelection()).toEqual({ ok: true, rows: 2, cols: 2 });
+    expect(batches).toEqual([
+      [
+        { sheet: 0, row: 1, col: 1, input: "a" },
+        { sheet: 0, row: 1, col: 2, input: "b" },
+        { sheet: 0, row: 2, col: 1, input: "c" },
+        { sheet: 0, row: 2, col: 2, input: "d" },
+      ],
+    ]);
+    expect(setCellCalls).toHaveLength(0);
+    // One undo restores the four prior (empty) inputs.
+    expect(session.undoCellEdit()).toBe(true);
+    expect(setCellCalls.map((c) => c[3])).toEqual(["", "", "", ""]);
+  });
+
+  it("falls back to per-cell writes when the batch is refused", async () => {
+    const { engine, setCellCalls } = fakeEngine();
+    engine.setCells = () => {
+      throw new Error("parse error in (0,1,2)");
+    };
+    const { host, setClipboard } = fakeHost();
+    const session = bootedSession(host, engine);
+    session.setGridSelection(0, 0, 1, 1);
+    setClipboard({ tabular: { rows: [["x", "y"]] } });
+    expect(await session.pasteAtSelection()).toEqual({ ok: true, rows: 1, cols: 2 });
+    expect(setCellCalls).toEqual([
+      [0, 0, 0, "x"],
+      [0, 0, 1, "y"],
+    ]);
+  });
+});

@@ -384,13 +384,7 @@ export function makeGridPanel(
       );
     }
 
-    const o = {
-      ...DEFAULT_GRID_SVG_OPTIONS,
-      gridColor: "var(--pg-border)",
-      textColor: "var(--pg-fg)",
-      selectionColor: "var(--pg-primary)",
-    };
-    const svg = gridSceneToSvg(scene, o);
+    const svg = svgOf(scene);
     const wPx = (scene.viewport.xOffsets.at(-1) ?? 0) * PX_PER_PT;
     const hPx = (scene.viewport.yOffsets.at(-1) ?? 0) * PX_PER_PT;
 
@@ -626,6 +620,27 @@ const scrollBtn: CSSProperties = {
   padding: "2px 8px",
   cursor: "pointer",
 };
+
+const GRID_SVG_OPTIONS = {
+  ...DEFAULT_GRID_SVG_OPTIONS,
+  gridColor: "var(--pg-border)",
+  textColor: "var(--pg-fg)",
+  selectionColor: "var(--pg-primary)",
+};
+
+/** The SVG string of a scene, built once per scene. The session memoises
+ *  the scene until the next change signal, so a re-render that changed
+ *  nothing in the grid (a formula-bar keystroke, a completion move)
+ *  reuses the string instead of re-serialising every cell. */
+const svgCache = new WeakMap<GridScene, string>();
+function svgOf(scene: GridScene): string {
+  let svg = svgCache.get(scene);
+  if (svg === undefined) {
+    svg = gridSceneToSvg(scene, GRID_SVG_OPTIONS);
+    svgCache.set(scene, svg);
+  }
+  return svg;
+}
 
 /** Strip the outer `<svg …>…</svg>` wrapper produced by `gridSceneToSvg`,
  *  yielding just the body so the panel can re-host it inside a React-owned

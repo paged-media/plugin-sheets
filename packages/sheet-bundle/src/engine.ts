@@ -135,6 +135,21 @@ export interface PaginateOptions {
  *  re-enterable INPUT texts (the ADR-012 journal's inverse pair), straight
  *  from the engine so the session can journal the whole op as one grouped
  *  undo step. */
+/** One input of a batch write (`setCells`). */
+export interface CellInputArg {
+  sheet: number;
+  row: number;
+  col: number;
+  input: string;
+}
+
+/** `setCells`' deliberately slim result: how many stored values changed
+ *  (written + recomputed) and the circular cells, if any. */
+export interface SetCellsResult {
+  changedCount: number;
+  circular: { sheet: number; row: number; col: number }[];
+}
+
 export interface CellEditRecord {
   sheet: number;
   row: number;
@@ -232,6 +247,11 @@ export interface SheetEngine {
     col: number,
     input: string,
   ): { changed: CellChange[] };
+  /** Commit MANY cell inputs with ONE recalc (Wave 2 batch door). Every
+   *  input is validated first: a bad sheet id or a parse error throws and
+   *  leaves the workbook untouched. Optional — an artifact that predates
+   *  the door has no `set_cells`; callers fall back to `setCell`. */
+  setCells?(inputs: readonly CellInputArg[]): SetCellsResult;
   /** The current formatted display of one cell. */
   getCellDisplay(sheet: number, row: number, col: number): string;
   /** The cell's re-enterable INPUT text (`"=…"` for a formula cell; `""`
@@ -476,6 +496,7 @@ export interface SheetWasmEngine {
     col: number,
     input: string,
   ): { changed: CellChange[] };
+  set_cells?(inputs: readonly CellInputArg[]): SetCellsResult;
   get_cell_display(sheet: number, row: number, col: number): string;
   get_cell_input(sheet: number, row: number, col: number): string;
   sort_range(
@@ -606,6 +627,12 @@ export function wrapEngine(
       tick();
       return wasm.set_cell(sheet, row, col, input);
     },
+    setCells: wasm.set_cells
+      ? (inputs) => {
+          tick();
+          return wasm.set_cells!(inputs);
+        }
+      : undefined,
     getCellDisplay: (sheet, row, col) =>
       wasm.get_cell_display(sheet, row, col),
     getCellInput: (sheet, row, col) => wasm.get_cell_input(sheet, row, col),

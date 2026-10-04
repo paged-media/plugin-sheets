@@ -31,6 +31,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -39,6 +40,7 @@ import {
 
 import type { BundleHost } from "@paged-media/plugin-api";
 
+import type { FunctionEntry } from "../../../sheet-host-model/src";
 import type { FindMatch } from "../engine";
 import { DELIMITED_MIMES, importBytes, XLSX_MIME } from "../import-xlsx";
 import { columnLabel, type WorkbookSession } from "../session";
@@ -103,7 +105,7 @@ export function makeWorkbookPanel(
 ): () => ReactElement {
   return function WorkbookPanel(): ReactElement {
     // Re-render on every session change (import, sheet/range edits).
-    const [, force] = useState(0);
+    const [version, force] = useState(0);
     const fileRef = useRef<HTMLInputElement | null>(null);
     useEffect(() => {
       const sub = session.onDidChange(() => force((n) => n + 1));
@@ -274,7 +276,21 @@ export function makeWorkbookPanel(
       );
     }, [styleName]);
 
-    const sheets = st.engine ? st.engine.listSheets() : [];
+    // Memoised in the session until the next change (not per render).
+    const sheets = session.sheets();
+    // The engine's read-only inventories, read once per session change —
+    // not on every render (a keystroke in any of this panel's inputs
+    // re-renders it).
+    const inventories = useMemo(() => {
+      const eng = st.engine;
+      if (!eng) return null;
+      return {
+        freezes: eng.listFreezePanes(),
+        validations: eng.listDataValidations(),
+        comments: eng.listComments(),
+        charts: eng.listCharts(),
+      };
+    }, [st.engine, version]);
     // The chart-kind vocabulary comes from the ENGINE (Rust owns which kinds
     // exist), never a literal list here.
     const chartKinds = session.chartKinds();
@@ -724,11 +740,8 @@ export function makeWorkbookPanel(
              *  validations are preserved, never enforced; comments are
              *  display-only. */}
             {(() => {
-              const eng = st.engine;
-              if (!eng) return null;
-              const freezes = eng.listFreezePanes();
-              const validations = eng.listDataValidations();
-              const comments = eng.listComments();
+              if (!inventories) return null;
+              const { freezes, validations, comments } = inventories;
               if (
                 freezes.length === 0 &&
                 validations.length === 0 &&
@@ -839,9 +852,8 @@ export function makeWorkbookPanel(
               </p>
             )}
             {(() => {
-              const eng = st.engine;
-              if (!eng) return null;
-              const charts = eng.listCharts();
+              if (!inventories) return null;
+              const { charts } = inventories;
               if (charts.length === 0) return null;
               return (
                 <div data-sheet-chart-list>
@@ -890,9 +902,10 @@ export function makeWorkbookPanel(
               style={{ maxHeight: 180, overflowY: "auto", marginTop: "var(--space-1, 4px)" }}
             >
               {(() => {
-                const eng = st.engine;
-                if (!eng) return null;
-                const all = eng.listFunctions();
+                if (!st.engine) return null;
+                // The registry, read ONCE per session (it is build-time
+                // fixed) — a filter keystroke re-filters, never re-reads.
+                const all = session.functionList();
                 const q = fnFilter.trim().toUpperCase();
                 const hitsFn = q
                   ? all.filter(
@@ -900,7 +913,7 @@ export function makeWorkbookPanel(
                         f.name.includes(q) || f.family.toUpperCase().includes(q),
                     )
                   : all;
-                const byFamily = new Map<string, typeof hitsFn>();
+                const byFamily = new Map<string, FunctionEntry[]>();
                 for (const f of hitsFn) {
                   const list = byFamily.get(f.family) ?? [];
                   list.push(f);

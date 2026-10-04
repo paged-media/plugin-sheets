@@ -143,6 +143,10 @@ function fakeHost() {
   return { host, submits, cleared: () => cleared };
 }
 
+/** Let the coalesced in-frame submit land (Wave 2: submits are batched
+ *  per animation frame — a microtask turn where there is no rAF). */
+const nextFrame = () => new Promise((r) => setTimeout(r, 0));
+
 /** A booted+loaded session over the fakes (bypassing the wasm boot). */
 function bootedSession(host: BundleHost, engine: SheetEngine) {
   const session = createWorkbookSession(host);
@@ -170,6 +174,7 @@ describe("sheet_scene_layer_in_frame: K-1 click-to-select", () => {
     // A content-space point in col1 (x∈[40,80)) row0 (y∈[0,20)).
     const hit = session.selectCellInFrame(50, 10);
     expect(hit).toBe(true);
+    await nextFrame();
     // The cell was selected (engine told + session state).
     expect(setSelCalls).toContainEqual([0, 0, 1, 1, 1]);
     // A re-render was submitted (now WITH the selection wash + stroke).
@@ -207,6 +212,7 @@ describe("sheet_scene_layer_in_frame: K-1 cell editor", () => {
     await session.showGridInFrame("frame-1");
     // Select B1 (col1/row0) — the edit target.
     session.selectCellInFrame(50, 10);
+    await nextFrame();
     return { session, submits, setCellCalls };
   }
 
@@ -215,6 +221,7 @@ describe("sheet_scene_layer_in_frame: K-1 cell editor", () => {
     const before = submits.length;
     expect(session.typeCellChar("7")).toBe(true);
     expect(session.isCellEditing()).toBe(true);
+    await nextFrame();
     // Re-rendered with the buffer "7" overlaid on B1 (replacing "100").
     expect(submits).toHaveLength(before + 1);
     const texts = textsOf(submits[submits.length - 1]);
@@ -226,6 +233,8 @@ describe("sheet_scene_layer_in_frame: K-1 cell editor", () => {
     const { session, submits } = await shownSession();
     session.typeCellChar("4");
     session.typeCellChar("2");
+    await nextFrame();
+    // ONE submit for the two keystrokes (same frame), showing both.
     expect(textsOf(submits[submits.length - 1])).toContain("42");
   });
 
@@ -233,6 +242,7 @@ describe("sheet_scene_layer_in_frame: K-1 cell editor", () => {
     const { session, submits } = await shownSession();
     // Not yet editing → opens from B1's value "100", drops to "10".
     expect(session.backspaceCellEdit()).toBe(true);
+    await nextFrame();
     expect(textsOf(submits[submits.length - 1])).toContain("10");
   });
 
@@ -243,6 +253,7 @@ describe("sheet_scene_layer_in_frame: K-1 cell editor", () => {
     // engine.setCell(sheet0, row0, col1, "9").
     expect(setCellCalls).toContainEqual([0, 0, 1, "9"]);
     expect(session.isCellEditing()).toBe(false);
+    await nextFrame();
     // The committed engine value re-renders (fake getGridScene → "100").
     expect(textsOf(submits[submits.length - 1])).toContain("100");
   });

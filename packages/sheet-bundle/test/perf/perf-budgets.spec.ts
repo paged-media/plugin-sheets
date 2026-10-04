@@ -45,6 +45,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createElement } from "react";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+
 import type { BundleHost } from "@paged-media/plugin-api";
 import type { HeadlessHost } from "@paged-media/plugin-sdk";
 
@@ -52,7 +55,10 @@ import {
   CHAIN_REFLOW_DEBOUNCE_MS,
   createWorkbookSession,
   lowerPaginatedToChain,
+  makeGridPanel,
+  makeWorkbookPanel,
   subscribeChainReflow,
+  subscribeProviderInvalidation,
   type SheetEngine,
   type WorkbookSession,
 } from "../../src";
@@ -168,8 +174,10 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
 
   /** A session over the COUNTED host (with the recording scene channel),
    *  holding `bytes`. Setup work is forgotten before it returns. */
+  let channel: ReturnType<typeof withSceneChannel>;
   async function open(bytes: Uint8Array, range: string): Promise<WorkbookSession> {
-    const { host } = countingHost(withSceneChannel(raw).host, SHARED);
+    channel = withSceneChannel(raw);
+    const { host } = countingHost(channel.host, SHARED);
     const s = createWorkbookSession(host);
     session = s;
     await s.import(bytes, "perf.xlsx");
@@ -246,10 +254,13 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
   });
 
   // COVERS: the K-1 in-frame edit session (session.ts typeCellChar /
-  // commitCellEdit / submitInFrameGrid) — every keystroke re-renders the
-  // whole windowed grid scene and submits it (and core answers a vector
-  // SubmitSceneLayer with CacheEffect::ClearAll — the core half is Wave 8).
-  // Inherent: one small submit per keystroke at most, coalesced per frame.
+  // commitCellEdit / submitInFrameGrid). Wave 2: the asks for a submit
+  // inside one animation frame (one microtask turn here — no rAF in the
+  // headless host) collapse into ONE window + submit of the final state,
+  // and the engine window is memoised until the next change signal. Was
+  // 21 getGridScene / 21 submits / 5922 items. The scene contract replaces
+  // a frame's whole layer (no per-item patch), so a submit still carries
+  // the window — see the per-frame scenario below.
   it("type 20 chars into one cell in-frame, then commit [sheet.grid.inframe]", async () => {
     const s = await open(
       await authorWorkbook(30, 8, (r, c) => String(r * 8 + c)),
@@ -262,18 +273,21 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     expect(s.selectCellInFrame(4, 4)).toBe(true);
     await settle();
     resetWork();
+    channel.submits.length = 0;
     const text = "abcdefghijklmnopqrst";
     for (const ch of text) expect(s.typeCellChar(ch)).toBe(true);
     expect(s.commitCellEdit()).toBe(true);
     await s.flushPersist();
     await settle();
     const work = take("type 20 chars in-frame + commit");
-    // Behaviour: the committed cell holds the typed text (A1 — the hit).
+    // Behaviour: the committed cell holds the typed text (A1 — the hit),
+    // and the LAST submit shows it (the final state is what landed).
     expect(engineOf(s).getCellDisplay(0, 0, 0)).toBe(text);
+    expect(channel.submits.at(-1)?.texts).toContain(text);
     expectBudget("type 20 chars in-frame + commit", work, {
-      "engine.getGridScene": 21, // the whole window, per keystroke → 1 + a cell patch
-      "sceneLayer.submit": 21, // → coalesced per animation frame
-      "supports": 23,
+      "engine.getGridScene": 1, // was 21: the whole window, per keystroke
+      "sceneLayer.submit": 1, // was 21: coalesced per frame
+      "supports": 3,
       "engine.getCellInput": 1,
       "engine.setCell": 1,
       "engine.saveXlsx": 1, // the persist after the commit
@@ -281,10 +295,58 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "parts.write": 2,
       "storage.set": 1,
       "=mutations": 0,
-      "=engineCalls": 24,
+      "=engineCalls": 4,
       "=reads": 0,
       "=bytesWritten": 5293,
-      "=sceneItems": 5922, // 21 × the full grid; a keystroke changes one cell
+      "=sceneItems": 282, // was 5922 (21 × the full grid)
+      "=rejected": 0,
+    });
+  });
+
+  // COVERS: the same gesture with every keystroke in its OWN frame (the
+  // real cadence of typing): each keystroke still submits — the layer is
+  // replaced whole — but none re-windows the engine: the buffer is
+  // overlaid on the memoised window. Only the commit (a change signal)
+  // re-windows.
+  it("type 20 chars in-frame, one keystroke per frame [sheet.grid.inframe]", async () => {
+    const s = await open(
+      await authorWorkbook(30, 8, (r, c) => String(r * 8 + c)),
+      "A1:H30",
+    );
+    const frame = await s.lowerSelection();
+    expect(await s.showGridInFrame(frame!)).toBe(true);
+    expect(s.selectCellInFrame(4, 4)).toBe(true);
+    await settle();
+    resetWork();
+    channel.submits.length = 0;
+    const text = "abcdefghijklmnopqrst";
+    for (const ch of text) {
+      expect(s.typeCellChar(ch)).toBe(true);
+      await settle();
+      // Each frame shows the buffer as typed so far.
+      expect(channel.submits.at(-1)?.texts).toContain(text.slice(0, text.indexOf(ch) + 1));
+    }
+    expect(s.commitCellEdit()).toBe(true);
+    await s.flushPersist();
+    await settle();
+    const work = take("type 20 chars in-frame, per frame");
+    expect(engineOf(s).getCellDisplay(0, 0, 0)).toBe(text);
+    expect(channel.submits.at(-1)?.texts).toContain(text);
+    expectBudget("type 20 chars in-frame, per frame", work, {
+      "engine.getGridScene": 1, // the commit's re-window; keystrokes reuse the memo
+      "sceneLayer.submit": 21, // one per frame — the contract replaces the whole layer
+      "supports": 23,
+      "engine.getCellInput": 1,
+      "engine.setCell": 1,
+      "engine.saveXlsx": 1,
+      "blob.write": 1,
+      "parts.write": 2,
+      "storage.set": 1,
+      "=mutations": 0,
+      "=engineCalls": 4,
+      "=reads": 0,
+      "=bytesWritten": 5293,
+      "=sceneItems": 5922,
       "=rejected": 0,
     });
   });
@@ -445,5 +507,147 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "=sceneItems": 0,
       "=rejected": 0, // against the real core engine: every reshape op applied
     });
+  });
+
+  /** Render `Panel` and return its test tree (act-wrapped). */
+  function render(Panel: () => ReturnType<ReturnType<typeof makeGridPanel>>): ReactTestRenderer {
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = create(createElement(Panel));
+    });
+    return tree;
+  }
+  const byData = (tree: ReactTestRenderer, attr: string): ReactTestInstance =>
+    tree.root.find((n) => typeof n.type === "string" && n.props[attr] !== undefined);
+
+  // COVERS: the grid panel's render path (grid-panel.tsx). Every render
+  // re-windowed the grid (`getGridScene`), re-read the selected cell's input
+  // (`getCellInput`) and re-serialised the SVG — and a formula-bar keystroke
+  // is a render. Wave 2: the session memoises its panel reads until the next
+  // change signal, and the SVG string is built once per scene.
+  it("type 12 chars into the grid panel's formula bar [sheet.grid.panel-edit-contract]", async () => {
+    const s = await open(
+      await authorWorkbook(30, 8, (r, c) => String(r * 8 + c)),
+      "A1:H30",
+    );
+    s.setGridSelection(2, 3, 1, 1);
+    const tree = render(makeGridPanel(raw, s));
+    resetWork();
+    const input = byData(tree, "data-formula-input");
+    const text = "=SUM(A1:A30)";
+    for (let i = 1; i <= text.length; i++) {
+      act(() => {
+        input.props.onChange({
+          target: { value: text.slice(0, i), selectionStart: i },
+        });
+      });
+    }
+    // Behaviour: the bar shows the draft.
+    expect(byData(tree, "data-formula-input").props.value).toBe(text);
+    // Enter commits the draft through the journaled lane.
+    act(() => {
+      byData(tree, "data-formula-input").props.onKeyDown({
+        key: "Enter",
+        preventDefault() {},
+      });
+    });
+    const work = take("grid panel: 12 formula-bar keystrokes + Enter");
+    expect(engineOf(s).getCellInput(0, 2, 3)).toBe(text);
+    act(() => tree.unmount());
+    expectBudget("grid panel: 12 formula-bar keystrokes + Enter", work, {
+      // The keystrokes: 0 (was 12 — one re-window per render). The commit's
+      // re-render: 1.
+      "engine.getGridScene": 1,
+      // The journal's prior input reuses the bar's memoised read (was 1);
+      // the commit's re-render prefills the bar with the new input: 1.
+      "engine.getCellInput": 1,
+      "engine.setCell": 1,
+      "=mutations": 0,
+      "=engineCalls": 3,
+      "=reads": 0,
+      "=bytesWritten": 0,
+      "=sceneItems": 0,
+      "=rejected": 0,
+    });
+  });
+
+  // COVERS: the workbook panel's function browser + inventories
+  // (workbook-panel.tsx). A filter keystroke re-rendered the panel, which
+  // re-read the whole function registry (`listFunctions`), the sheets and
+  // the four inventories (freeze panes, validations, comments, charts).
+  it("type 6 chars into the workbook panel's function filter [sheet.plugin.formula-bar]", async () => {
+    const s = await open(
+      await authorWorkbook(10, 4, (r, c) => String(r * 4 + c)),
+      "A1:D10",
+    );
+    const tree = render(makeWorkbookPanel(raw, s));
+    resetWork();
+    const filter = byData(tree, "data-sheet-fn-filter");
+    const q = "VLOOKU";
+    for (let i = 1; i <= q.length; i++) {
+      act(() => {
+        filter.props.onChange({ target: { value: q.slice(0, i) } });
+      });
+    }
+    const work = take("workbook panel: 6 filter keystrokes");
+    // Behaviour: the filtered list shows VLOOKUP.
+    expect(
+      tree.root.findAll((n) => n.props["data-sheet-fn"] === "VLOOKUP").length,
+    ).toBeGreaterThan(0);
+    act(() => tree.unmount());
+    expectBudget("workbook panel: 6 filter keystrokes", work, {
+      // was 6 each: listFunctions, listSheets, listFreezePanes,
+      // listDataValidations, listComments, listCharts, calcSettings,
+      // chartKinds — one per render.
+      "engine.listFunctions": 0,
+      "engine.listSheets": 0,
+      "engine.listFreezePanes": 0,
+      "engine.listDataValidations": 0,
+      "engine.listComments": 0,
+      "engine.listCharts": 0,
+      "engine.calcSettings": 0,
+      "engine.chartKinds": 0,
+      "=mutations": 0,
+      "=engineCalls": 0,
+      "=reads": 0,
+      "=bytesWritten": 0,
+      "=sceneItems": 0,
+      "=rejected": 0,
+    });
+  });
+
+  // COVERS: the ADR-023 binding providers' re-read signal
+  // (binding-provider/invalidation.ts). Every session change signal used to
+  // invalidate BOTH providers — each a host re-read that lowers the
+  // selected range through the engine. Now the text provider re-reads when
+  // its selection moves or an edit lands inside it, the swatches provider
+  // only on unclassified changes.
+  it("binding providers across edits outside the selection [sheet.edit.ops]", async () => {
+    const s = await open(
+      await authorWorkbook(20, 4, (r, c) => String(r * 4 + c)),
+      "A1:D20",
+    );
+    const counts = { swatches: 0, text: 0 };
+    const sub = subscribeProviderInvalidation(s, {
+      swatches: { invalidate: () => (counts.swatches += 1) },
+      text: { invalidate: () => (counts.text += 1) },
+    });
+    s.setGridSelection(0, 0, 2, 2); // A1:B2 — moves the selection: text re-reads
+    for (let r = 10; r < 20; r++) expect(s.editCell(0, r, 3, String(r))).toBe(true);
+    clip.payload = { tabular: { rows: [["x", "y"], ["z", "w"]] } } as never;
+    s.setGridSelection(14, 2, 1, 1);
+    expect((await s.pasteAtSelection()).ok).toBe(true); // selection moved, paste inside it
+    s.setGridSelection(0, 0, 2, 2); // back to A1:B2
+    expect(s.editCell(0, 1, 1, "inside")).toBe(true); // an edit INSIDE A1:B2
+    await settle();
+    sub.dispose();
+    // Behaviour: the edits landed.
+    expect(engineOf(s).getCellDisplay(0, 1, 1)).toBe("inside");
+    expect(engineOf(s).getCellDisplay(0, 15, 3)).toBe("w");
+    // Was 15 / 15 — one each per signal (3 selections, 10 edits, the
+    // paste, the inside edit). Now: 3 selection moves + the paste inside
+    // its selection + the edit inside A1:B2 = 5 text re-reads; the palette
+    // never moved.
+    expect(counts).toEqual({ swatches: 0, text: 5 });
   });
 });

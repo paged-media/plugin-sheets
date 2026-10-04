@@ -55,6 +55,7 @@ import {
   type FindMatch,
   type FindOptions,
   type SheetEngine,
+  type SheetInfo,
   type StructuralEditKind,
 } from "./engine";
 import {
@@ -107,11 +108,79 @@ export const PERSIST_DEBOUNCE_MS = 750;
 const PALETTE_PROBE_WPT = 400;
 const PALETTE_PROBE_HPT = 300;
 
+/** What a change signal carried (Wave 2) — so a listener that only cares
+ *  about some cells can skip the rest. Anything not classified is
+ *  `other`, which every listener must treat as "anything may have
+ *  changed".
+ *
+ *  - `selection`: only the grid selection moved.
+ *  - `cells`: only the VALUES / inputs of these cells changed (an edit,
+ *    paste, sort, replace, undo/redo of those) — no style, sheet or
+ *    workbook structure. `regions` bound every written cell. */
+export type SessionChange =
+  | { kind: "selection" }
+  | { kind: "cells"; regions: readonly CellRegion[] }
+  | { kind: "other" };
+
+/** A rectangle of cells on one sheet (inclusive bounds). */
+export interface CellRegion {
+  sheet: number;
+  firstRow: number;
+  firstCol: number;
+  lastRow: number;
+  lastCol: number;
+}
+
+const OTHER_CHANGE: SessionChange = { kind: "other" };
+
+/** The regions (one bounding box per sheet) covering `cells`. */
+export function regionsOf(
+  cells: readonly { sheet: number; row: number; col: number }[],
+): CellRegion[] {
+  const bySheet = new Map<number, CellRegion>();
+  for (const { sheet, row, col } of cells) {
+    const r = bySheet.get(sheet);
+    if (!r) {
+      bySheet.set(sheet, { sheet, firstRow: row, firstCol: col, lastRow: row, lastCol: col });
+      continue;
+    }
+    r.firstRow = Math.min(r.firstRow, row);
+    r.firstCol = Math.min(r.firstCol, col);
+    r.lastRow = Math.max(r.lastRow, row);
+    r.lastCol = Math.max(r.lastCol, col);
+  }
+  return [...bySheet.values()];
+}
+
+/** Run `cb` at the next animation frame — or, with no
+ *  `requestAnimationFrame` (a worker, the headless host), after the
+ *  current microtask turn. A hidden tab never fires rAF, so a timeout
+ *  races it: the work still lands, just not frame-aligned. */
+function nextFrame(cb: () => void): void {
+  const raf = (globalThis as { requestAnimationFrame?: (f: () => void) => unknown })
+    .requestAnimationFrame;
+  if (typeof raf !== "function") {
+    queueMicrotask(cb);
+    return;
+  }
+  let ran = false;
+  const once = () => {
+    if (ran) return;
+    ran = true;
+    cb();
+  };
+  raf(once);
+  setTimeout(once, 100);
+}
+
 /** A tiny synchronous event emitter (one channel: "did the session
  *  state change"). Avoids dragging a dependency for a single signal. */
 class Emitter {
-  private listeners = new Set<() => void>();
-  on(listener: () => void): { dispose(): void } {
+  private listeners = new Set<(change: SessionChange) => void>();
+  /** Runs before the listeners on every emit (the session drops its read
+   *  caches there, so no listener can read a stale answer). */
+  constructor(private readonly beforeEmit?: () => void) {}
+  on(listener: (change: SessionChange) => void): { dispose(): void } {
     this.listeners.add(listener);
     return {
       dispose: () => {
@@ -119,8 +188,9 @@ class Emitter {
       },
     };
   }
-  emit(): void {
-    for (const l of [...this.listeners]) l();
+  emit(change: SessionChange = OTHER_CHANGE): void {
+    this.beforeEmit?.();
+    for (const l of [...this.listeners]) l(change);
   }
   clear(): void {
     this.listeners.clear();
@@ -156,8 +226,10 @@ export interface SessionState {
 export interface WorkbookSession {
   /** Read the current state snapshot. */
   state(): SessionState;
-  /** Subscribe to state changes (the panel's render trigger). */
-  onDidChange(listener: () => void): { dispose(): void };
+  /** Subscribe to state changes (the panel's render trigger). The
+   *  listener receives what changed ({@link SessionChange}); `other`
+   *  means anything may have. */
+  onDidChange(listener: (change: SessionChange) => void): { dispose(): void };
   /** Import XLSX bytes under a display name: boots the engine on first
    *  use, loads the workbook, defaults the active sheet + range, and (when
    *  `host.blob` is wired) PERSISTS the bytes so they survive a reload
@@ -299,6 +371,10 @@ export interface WorkbookSession {
    *  ENGINE's, never a TS list). Cached after the first call (the registry
    *  is build-time fixed). Empty when there is no engine (never throws). */
   functionList(): readonly FunctionEntry[];
+  /** The workbook's sheets (`engine.listSheets`), memoised until the next
+   *  change signal — the panels read it on every render. Empty when there
+   *  is no engine (never throws). */
+  sheets(): readonly SheetInfo[];
   /** ADR-012 Tier 1 — undo one step of the in-session journal. An OPEN
    *  cell-edit buffer unwinds first (= cancel, no Operation); then each
    *  call re-enters the previous INPUT of the latest committed cell edit.
@@ -534,7 +610,19 @@ export function tsvToRows(text: string): string[][] {
 }
 
 export function createWorkbookSession(host: BundleHost): WorkbookSession {
-  const emitter = new Emitter();
+  // Panel-facing engine READS, memoised until the next change signal
+  // (every engine write is followed by one): a panel re-renders on every
+  // keystroke in its own inputs, and each render used to re-window the
+  // grid scene, re-list the sheets and re-read the selected cell's input
+  // through the wasm boundary.
+  const readCache = new Map<string, unknown>();
+  function cachedRead<T>(key: string, read: () => T): T {
+    if (readCache.has(key)) return readCache.get(key) as T;
+    const v = read();
+    readCache.set(key, v);
+    return v;
+  }
+  const emitter = new Emitter(() => readCache.clear());
   const state: SessionState = {
     engine: null,
     fileName: null,
@@ -635,11 +723,17 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     col: number,
     input: string,
   ): boolean {
-    if (!state.engine) return false;
+    const engine = state.engine;
+    if (!engine) return false;
     let prev: string;
     try {
-      prev = state.engine.getCellInput(sheet, row, col);
-      state.engine.setCell(sheet, row, col, input);
+      // The prior input, for the journal — the formula bar usually read it
+      // a moment ago (same memo key as `cellInputAt`), so a bar commit
+      // costs no second read.
+      prev = cachedRead(`input:${sheet}:${row}:${col}`, () =>
+        engine.getCellInput(sheet, row, col),
+      );
+      writeOneCell(engine, sheet, row, col, input);
     } catch (err) {
       host.log.error("setCell failed", err);
       return false;
@@ -649,6 +743,29 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     journalCursor = editJournal.length;
     markEdited();
     return true;
+  }
+
+  /** Write one cell. The session never reads `setCell`'s result (the
+   *  dirty cut is re-read by whoever renders), so the batch door's slim
+   *  `{changedCount, circular}` reply is preferred over marshalling every
+   *  changed cell's display back across the boundary; an engine without
+   *  the door — or one that refuses the input as a batch — takes `setCell`. */
+  function writeOneCell(
+    engine: SheetEngine,
+    sheet: number,
+    row: number,
+    col: number,
+    input: string,
+  ): void {
+    if (engine.setCells) {
+      try {
+        engine.setCells([{ sheet, row, col, input }]);
+        return;
+      } catch {
+        // fall through: setCell is the authority on a single input
+      }
+    }
+    engine.setCell(sheet, row, col, input);
   }
 
   /** Journal a BULK op's per-cell rewrites (the engine's `edits` lane —
@@ -698,27 +815,56 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.debug("setGridSelection: engine not ready", err);
       }
     }
-    emitter.emit();
+    emitter.emit({ kind: "selection" });
+  }
+
+  /** The in-frame grid as it is NOW, submitted once per animation frame
+   *  (Wave 2). Every edit, keystroke and selection change asks for it;
+   *  the asks inside one frame (one microtask turn where there is no
+   *  `requestAnimationFrame`, e.g. a worker or the headless host) collapse
+   *  into ONE window + submit of the final state — typing a burst of
+   *  characters no longer submits the whole grid per character. The
+   *  returned promise settles with that submit's outcome. Never throws. */
+  let gridSubmitPending: Promise<boolean> | null = null;
+  function submitInFrameGrid(): Promise<boolean> {
+    if (gridSubmitPending) return gridSubmitPending;
+    const pending = new Promise<boolean>((resolve) => {
+      nextFrame(() => {
+        // Asks arriving while this submit is in flight schedule the next.
+        gridSubmitPending = null;
+        void flushInFrameGrid().then(resolve);
+      });
+    });
+    gridSubmitPending = pending;
+    return pending;
   }
 
   /** Re-window + submit the in-frame grid for `lastGridWindow` (carrying
-   *  the current selection). Caches `lastGridScene` for the next hit-test.
-   *  Returns false when there is no target frame / scene channel / window
-   *  / engine. Never throws. */
-  async function submitInFrameGrid(): Promise<boolean> {
+   *  the current selection and the open cell edit). Caches `lastGridScene`
+   *  for the next hit-test. Returns false when there is no target frame /
+   *  scene channel / window / engine. Never throws.
+   *
+   *  The scene contract (`SceneLayerSurface.submit`) replaces the frame's
+   *  whole layer — there is no per-item patch — so a keystroke still
+   *  re-sends the window; what it no longer does is re-window it: the
+   *  engine scene is memoised until the next change signal, and the edit
+   *  buffer is overlaid on a copy. */
+  async function flushInFrameGrid(): Promise<boolean> {
     if (!lastFrameId || !lastGridWindow) return false;
     const surface = sceneChannel();
     if (!surface) return false;
-    const scene = computeGridScene(
+    const base = computeGridScene(
       lastGridWindow.firstRow,
       lastGridWindow.firstCol,
       lastGridWindow.wPt,
       lastGridWindow.hPt,
     );
-    if (!scene) return false;
+    if (!base) return false;
     // K-1 — overlay the in-progress cell-edit text on its cell (the engine
     // scene still shows the COMMITTED value; the buffer is uncommitted).
-    if (cellEdit) overlayCellText(scene, cellEdit.row, cellEdit.col, cellEdit.text);
+    const scene = cellEdit
+      ? withCellText(base, cellEdit.row, cellEdit.col, cellEdit.text)
+      : base;
     lastGridScene = scene;
     try {
       await surface.submit(lastFrameId, gridSceneToSceneLayer(scene));
@@ -729,23 +875,27 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     return true;
   }
 
-  /** Override the rendered text of `(row, col)` in `scene` (mutates it) —
-   *  the uncommitted cell-edit buffer. Replaces the cell if present in the
-   *  window, else appends a left-aligned one so an edit on an empty cell
-   *  still shows. */
-  function overlayCellText(
+  /** `scene` with `(row, col)` rendering `text` — the uncommitted cell-edit
+   *  buffer. A copy: `scene` is the memoised engine window. Replaces the
+   *  cell if present in the window, else appends a left-aligned one so an
+   *  edit on an empty cell still shows. */
+  function withCellText(
     scene: GridScene,
     row: number,
     col: number,
     text: string,
-  ): void {
-    const existing = scene.cells.find((c) => c.row === row && c.col === col);
-    if (existing) {
-      existing.text = text;
-      return;
+  ): GridScene {
+    let found = false;
+    const cells = scene.cells.map((c) => {
+      if (c.row !== row || c.col !== col) return c;
+      found = true;
+      return { ...c, text };
+    });
+    if (!found) {
+      const cell: GridCell = { row, col, text, align: "left", styleKey: 0 };
+      cells.push(cell);
     }
-    const cell: GridCell = { row, col, text, align: "left", styleKey: 0 };
-    scene.cells.push(cell);
+    return { ...scene, cells };
   }
 
   /** The display value of `(row, col)` on the active sheet, or "" — the
@@ -779,18 +929,31 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     records: ProviderRecordSet,
   ): void {
     const fields = records.schema.fields;
-    // Header row (row 0) — the schema field names.
+    // Header row (row 0) — the schema field names; body rows 1.. — column-
+    // major: columns[c][r] is the cell value for data-row r, which lands
+    // on sheet row r + 1.
+    const inputs: { sheet: number; row: number; col: number; input: string }[] = [];
     for (let c = 0; c < fields.length; c++) {
-      writeCell(engine, 0, c, fields[c].name);
+      inputs.push({ sheet: 0, row: 0, col: c, input: fields[c].name });
     }
-    // Body rows (rows 1..rowCount) — column-major: columns[c][r] is the
-    // cell value for data-row r, which lands on sheet row r + 1.
     for (let c = 0; c < records.columns.length; c++) {
       const col = records.columns[c];
       for (let r = 0; r < records.rowCount; r++) {
-        writeCell(engine, r + 1, c, cellToString(col[r]));
+        inputs.push({ sheet: 0, row: r + 1, col: c, input: cellToString(col[r]) });
       }
     }
+    // ONE write + ONE recalc through the batch door when the engine has it;
+    // per cell otherwise, or when the batch refuses an input (a bad cell is
+    // then skipped alone).
+    if (engine.setCells) {
+      try {
+        engine.setCells(inputs);
+        return;
+      } catch (err) {
+        host.log.debug("sourceFromDataset: batch seed refused — per cell", err);
+      }
+    }
+    for (const i of inputs) writeCell(engine, i.row, i.col, i.input);
   }
 
   /** Write one cell through the engine, tolerating a throw (an out-of-range
@@ -816,23 +979,24 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     wPt: number,
     hPt: number,
   ): GridScene | null {
-    if (!state.engine || state.activeSheet === null) return null;
-    let scene: GridScene;
-    try {
-      scene = state.engine.getGridScene(
-        state.activeSheet,
-        firstRow,
-        firstCol,
-        wPt,
-        hPt,
-        { includeGridlines: true },
-      );
-    } catch (err) {
-      host.log.warn("gridScene: engine windowing failed", err);
-      return null;
-    }
-    if (state.gridSelection) scene.selection = state.gridSelection;
-    return scene;
+    const engine = state.engine;
+    const sheet = state.activeSheet;
+    if (!engine || sheet === null) return null;
+    // Memoised until the next change signal (a selection change is one),
+    // so callers must treat the scene as read-only.
+    return cachedRead(`scene:${sheet}:${firstRow}:${firstCol}:${wPt}:${hPt}`, () => {
+      let scene: GridScene;
+      try {
+        scene = engine.getGridScene(sheet, firstRow, firstCol, wPt, hPt, {
+          includeGridlines: true,
+        });
+      } catch (err) {
+        host.log.warn("gridScene: engine windowing failed", err);
+        return null;
+      }
+      if (state.gridSelection) scene.selection = state.gridSelection;
+      return scene;
+    });
   }
 
   /** S-08: persist the imported bytes + name (best-effort — never let a
@@ -881,6 +1045,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   }
 
   function markEdited(): void {
+    readCache.clear();
     if (!state.engine) return;
     revision += 1;
     scheduleRefresh();
@@ -1288,10 +1453,13 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       if (!cellEdit) return false;
       const { row, col, text } = cellEdit;
       cellEdit = null;
-      if (state.engine && state.activeSheet !== null) {
-        journaledSetCell(state.activeSheet, row, col, text);
+      const sheet = state.activeSheet;
+      if (state.engine && sheet !== null) {
+        journaledSetCell(sheet, row, col, text);
+        emitter.emit({ kind: "cells", regions: regionsOf([{ sheet, row, col }]) });
+      } else {
+        emitter.emit();
       }
-      emitter.emit();
       void submitInFrameGrid();
       return true;
     },
@@ -1356,13 +1524,16 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     chartKinds() {
-      if (!state.engine) return [];
-      try {
-        return state.engine.chartKinds() ?? [];
-      } catch (err) {
-        host.log.warn("chartKinds: engine call failed", err);
-        return [];
-      }
+      const engine = state.engine;
+      if (!engine) return [];
+      return cachedRead("chartKinds", () => {
+        try {
+          return engine.chartKinds() ?? [];
+        } catch (err) {
+          host.log.warn("chartKinds: engine call failed", err);
+          return [];
+        }
+      });
     },
 
     authorChart(values, categories, kind, title, seriesIn) {
@@ -1421,20 +1592,24 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       if (!journaledSetCell(sheet, row, col, input)) return false;
       // The dirty cut recomputed in Rust; refresh the panel (it re-requests
       // the windowed scene on the next render).
-      emitter.emit();
+      emitter.emit({ kind: "cells", regions: regionsOf([{ sheet, row, col }]) });
       return true;
     },
 
     cellInputAt(row, col) {
       // S-04 formula bar — re-enterable input (engine.getCellInput), so the
       // bar shows a cell's FORMULA, not its computed display. Never throws.
-      if (!state.engine || state.activeSheet === null) return "";
-      try {
-        return state.engine.getCellInput(state.activeSheet, row, col) ?? "";
-      } catch (err) {
-        host.log.warn("cellInputAt: engine read failed", err);
-        return "";
-      }
+      const engine = state.engine;
+      const sheet = state.activeSheet;
+      if (!engine || sheet === null) return "";
+      return cachedRead(`input:${sheet}:${row}:${col}`, () => {
+        try {
+          return engine.getCellInput(sheet, row, col) ?? "";
+        } catch (err) {
+          host.log.warn("cellInputAt: engine read failed", err);
+          return "";
+        }
+      });
     },
 
     async copySelection() {
@@ -1521,26 +1696,54 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       // whole paste journals as ONE grouped ADR-012 undo step. A per-cell write
       // failure is tolerated (logged + skipped) — never half a crash.
       const sheet = state.activeSheet;
+      const engine = state.engine;
       const edits: CellEditRecord[] = [];
       let written = 0;
+      // The journal's prior inputs, read before anything is written.
+      const targets: CellEditRecord[] = [];
       for (let r = 0; r < grid.length; r++) {
         const row = grid[r];
         for (let c = 0; c < row.length; c++) {
           const targetRow = sel.anchorRow + r;
           const targetCol = sel.anchorCol + c;
-          const next = row[c];
           let prev: string;
           try {
-            prev = state.engine.getCellInput(sheet, targetRow, targetCol);
-            state.engine.setCell(sheet, targetRow, targetCol, next);
+            prev = engine.getCellInput(sheet, targetRow, targetCol);
+          } catch (err) {
+            host.log.warn(`pasteAtSelection: read (${sheet},${targetRow},${targetCol}) failed`, err);
+            continue;
+          }
+          targets.push({ sheet, row: targetRow, col: targetCol, prevInput: prev, nextInput: row[c] });
+        }
+      }
+      // ONE write + ONE recalc through the batch door when the engine has
+      // it (it refuses the whole batch on any bad input — then the cells
+      // go one by one, so a single bad cell is skipped, not the paste).
+      let batched = false;
+      if (engine.setCells && targets.length > 0) {
+        try {
+          engine.setCells(
+            targets.map((t) => ({ sheet: t.sheet, row: t.row, col: t.col, input: t.nextInput })),
+          );
+          batched = true;
+          edits.push(...targets);
+          written = targets.length;
+        } catch (err) {
+          host.log.debug("pasteAtSelection: batch write refused — per cell", err);
+        }
+      }
+      if (!batched) {
+        for (const t of targets) {
+          try {
+            engine.setCell(t.sheet, t.row, t.col, t.nextInput);
           } catch (err) {
             host.log.warn(
-              `pasteAtSelection: setCell(${sheet},${targetRow},${targetCol}) failed`,
+              `pasteAtSelection: setCell(${t.sheet},${t.row},${t.col}) failed`,
               err,
             );
             continue;
           }
-          edits.push({ sheet, row: targetRow, col: targetCol, prevInput: prev, nextInput: next });
+          edits.push(t);
           written += 1;
         }
       }
@@ -1548,13 +1751,26 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         return { ok: false as const, message: "the paste wrote no cells" };
       }
       journalBatch(edits); // one grouped Cmd-Z undoes the whole paste
-      emitter.emit();
+      emitter.emit({ kind: "cells", regions: regionsOf(edits) });
       void submitInFrameGrid();
       return {
         ok: true as const,
         rows: grid.length,
         cols: Math.max(...grid.map((r) => r.length)),
       };
+    },
+
+    sheets() {
+      const engine = state.engine;
+      if (!engine) return [];
+      return cachedRead("sheets", () => {
+        try {
+          return engine.listSheets();
+        } catch (err) {
+          host.log.warn("sheets: engine read failed", err);
+          return [];
+        }
+      });
     },
 
     functionList() {
@@ -1577,7 +1793,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       // in-flight edit (no Operation was committed for it).
       if (cellEdit !== null) {
         cellEdit = null;
-        emitter.emit();
+        emitter.emit({ kind: "cells", regions: [] }); // only the buffer went
         void submitInFrameGrid();
         return true;
       }
@@ -1586,8 +1802,10 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       // plain entries (no batch) unwind singly. Cells in a batch are
       // disjoint, so reverse-order re-entry is order-independent.
       const group = editJournal[journalCursor - 1].batch;
+      const undone: { sheet: number; row: number; col: number }[] = [];
       do {
         const entry = editJournal[journalCursor - 1];
+        undone.push(entry);
         try {
           state.engine.setCell(entry.sheet, entry.row, entry.col, entry.prev);
         } catch (err) {
@@ -1601,7 +1819,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         journalCursor > 0 &&
         editJournal[journalCursor - 1].batch === group
       );
-      emitter.emit();
+      emitter.emit({ kind: "cells", regions: regionsOf(undone) });
       void submitInFrameGrid();
       return true;
     },
@@ -1613,8 +1831,10 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       if (!state.engine) return false;
       // Mirror of undo: a batched group re-applies whole.
       const group = editJournal[journalCursor].batch;
+      const redone: { sheet: number; row: number; col: number }[] = [];
       do {
         const entry = editJournal[journalCursor];
+        redone.push(entry);
         try {
           state.engine.setCell(entry.sheet, entry.row, entry.col, entry.next);
         } catch (err) {
@@ -1628,7 +1848,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         journalCursor < editJournal.length &&
         editJournal[journalCursor].batch === group
       );
-      emitter.emit();
+      emitter.emit({ kind: "cells", regions: regionsOf(redone) });
       void submitInFrameGrid();
       return true;
     },
@@ -1662,7 +1882,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
           hasHeader,
         );
         journalBatch(res.edits); // one grouped ADR-012 undo step
-        emitter.emit();
+        emitter.emit({ kind: "cells", regions: regionsOf(res.edits) });
         void submitInFrameGrid();
         return { ok: true };
       } catch (err) {
@@ -1697,7 +1917,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       try {
         const res = state.engine.replaceAll(sheet, needle, replacement, opts);
         journalBatch(res.edits); // one grouped ADR-012 undo step
-        emitter.emit();
+        emitter.emit({ kind: "cells", regions: regionsOf(res.edits) });
         void submitInFrameGrid();
         return {
           occurrences: res.occurrences,
@@ -2146,11 +2366,15 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     calcSettings() {
-      try {
-        return state.engine?.calcSettings?.() ?? null;
-      } catch {
-        return null;
-      }
+      const engine = state.engine;
+      if (!engine) return null;
+      return cachedRead("calcSettings", () => {
+        try {
+          return engine.calcSettings?.() ?? null;
+        } catch {
+          return null;
+        }
+      });
     },
 
     setIterative(on) {
