@@ -567,3 +567,56 @@
   tests:
     rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_norm_s_inv"]
     corpus: ["corpus/fn-corpus/stat/norm_s_inv.golden.tsv"]
+
+- id: sheet.fn.stat.percentrank
+  name: PERCENTRANK
+  family: stat
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat2::percentrank
+  status: implemented
+  provenance: ["Microsoft PERCENTRANK (public docs) — legacy name of PERCENTRANK.INC; values recorded on Excel 16 (oracle lane)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_oracle_added.rs::sheet_fn_stat_percentrank"]
+    corpus: ["corpus/fn-corpus/stat/percentrank.golden.tsv"]
+
+- id: sheet.fn.stat.percentrank-inc
+  name: PERCENTRANK.INC
+  family: stat
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat2::percentrank_inc
+  status: implemented
+  provenance: ["Microsoft PERCENTRANK.INC (public docs) — inclusive rank fraction, linear interpolation, truncated to significance digits; values recorded on Excel 16"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_oracle_added.rs::sheet_fn_stat_percentrank"]
+    corpus: ["corpus/fn-corpus/stat/percentrank_inc.golden.tsv"]
+
+- id: sheet.fn.stat.percentrank-exc
+  name: PERCENTRANK.EXC
+  family: stat
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat2::percentrank_exc
+  status: implemented
+  provenance: ["Microsoft PERCENTRANK.EXC (public docs) — exclusive rank fraction (position/(n+1)), truncated; values recorded on Excel 16"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_oracle_added.rs::sheet_fn_stat_percentrank"]
+    corpus: ["corpus/fn-corpus/stat/percentrank_exc.golden.tsv"]
+
+- id: sheet.fn.stat.linest
+  name: LINEST
+  family: stat
+  arity: { min: 1, max: 4 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: stat2::linest
+  status: implemented
+  provenance: ["Microsoft LINEST (public docs) — least squares over one or more regressors, [const], [stats]; collinear regressors #NUM! (Excel drops them; not modelled); values recorded on Excel 16"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_oracle_added.rs::sheet_fn_stat_linest"]
+    corpus: ["corpus/fn-corpus/stat/linest.golden.tsv"]

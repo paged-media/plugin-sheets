@@ -208,9 +208,14 @@ fn sheet_fn_date_date_error_propagation() {
 
 #[test]
 fn sheet_fn_date_date_out_of_domain_is_num() {
-    // A huge negative day underflows below the 1900 epoch -> #NUM!.
+    // A day outside 16 bits saturates to 32767 (Excel 16, recorded); a day
+    // inside them that lands before the epoch is #NUM!.
     assert_eq!(
         call("DATE", &[n(1900.0), n(1.0), n(-1000000.0)], &ctx()),
+        CellValue::Number(32767.0)
+    );
+    assert_eq!(
+        call("DATE", &[n(1900.0), n(1.0), n(-30000.0)], &ctx()),
         CellValue::Error(CellError::Num)
     );
 }

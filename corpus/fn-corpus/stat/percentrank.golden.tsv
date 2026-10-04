@@ -1,0 +1,9 @@
+# sheet.fn.stat.percentrank golden corpus — expected values recorded on Excel 16 (oracle lane).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see median.golden.tsv header).
+exact	=PERCENTRANK(A1:A10,4)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	0.555
+interp	=PERCENTRANK(A1:A10,5)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	0.583
+sig-two	=PERCENTRANK(A1:A10,8,2)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	0.66
+min	=PERCENTRANK(A1:A10,1)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	0
+max	=PERCENTRANK(A1:A10,13)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	1
+below-na	=PERCENTRANK(A1:A10,0)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	#N/A
+sig-zero-num	=PERCENTRANK(A1:A10,4,0)	A1=13;A2=12;A3=11;A4=8;A5=4;A6=3;A7=2;A8=1;A9=1;A10=1	#NUM!

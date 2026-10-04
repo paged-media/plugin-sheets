@@ -76,6 +76,8 @@ const XLFN: &[&str] = &[
     "NUMBERVALUE",
     "PERCENTILE.EXC",
     "PERCENTILE.INC",
+    "PERCENTRANK.EXC",
+    "PERCENTRANK.INC",
     "QUARTILE.EXC",
     "QUARTILE.INC",
     "RANDARRAY",

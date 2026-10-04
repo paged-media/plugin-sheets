@@ -527,6 +527,264 @@ pub fn norm_s_inv(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     }
 }
 
+
+// ---- PERCENTRANK / .INC / .EXC ---------------------------------------------
+
+/// Shared PERCENTRANK core: the numeric cells of `array`, the value `x`, and
+/// `significance` digits (default 3; < 1 is `#NUM!`). `x` outside the
+/// values' span is `#N/A`. The fractional rank is `(position) / divisor`
+/// where `position` is the 0-based (inclusive) or 1-based (exclusive) place
+/// of `x`, interpolated linearly between neighbours; the result is
+/// TRUNCATED to `significance` digits (Microsoft PERCENTRANK docs).
+fn percent_rank(args: &[Arg], exclusive: bool) -> CellValue {
+    let values = match numbers_or_error(&args[..1]) {
+        Ok(v) => v,
+        Err(e) => return CellValue::Error(e),
+    };
+    let x = match scalar_number(args.get(1)) {
+        Ok(v) => v,
+        Err(e) => return CellValue::Error(e),
+    };
+    let sig = match args.get(2) {
+        None => 3.0,
+        Some(_) => match scalar_number(args.get(2)) {
+            Ok(v) => v.trunc(),
+            Err(e) => return CellValue::Error(e),
+        },
+    };
+    if sig < 1.0 || values.is_empty() {
+        return CellValue::Error(CellError::Num);
+    }
+    let v = sorted(&values);
+    let n = v.len();
+    if x < v[0] || x > v[n - 1] {
+        return CellValue::Error(CellError::Na);
+    }
+    let less = v.iter().filter(|&&a| a < x).count();
+    // 0-based position of x among the sorted values, interpolated.
+    let pos = if v.get(less) == Some(&x) {
+        less as f64
+    } else {
+        let (lo, hi) = (v[less - 1], v[less]);
+        (less - 1) as f64 + (x - lo) / (hi - lo)
+    };
+    let rank = if exclusive {
+        (pos + 1.0) / (n as f64 + 1.0)
+    } else if n == 1 {
+        1.0
+    } else {
+        pos / (n as f64 - 1.0)
+    };
+    let scale = 10f64.powi(sig as i32);
+    // Truncate (not round); the epsilon keeps 0.3 * 1000 = 299.99… at 300.
+    finite((rank * scale + 1e-9).floor() / scale)
+}
+
+/// `PERCENTRANK(array, x, [significance])` — the legacy name of
+/// [`percentrank_inc`].
+pub fn percentrank(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
+    percent_rank(args, false)
+}
+
+/// `PERCENTRANK.INC(array, x, [significance])` — the rank of `x` as a
+/// fraction 0..1 of the data set, inclusive.
+pub fn percentrank_inc(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
+    percent_rank(args, false)
+}
+
+/// `PERCENTRANK.EXC(array, x, [significance])` — the rank of `x` as a
+/// fraction strictly between 0 and 1.
+pub fn percentrank_exc(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
+    percent_rank(args, true)
+}
+
+// ---- LINEST ----------------------------------------------------------------
+
+/// Solve the normal equations: the inverse of the symmetric `a` (Gauss-Jordan
+/// with partial pivoting); `None` when singular.
+fn invert(mut a: Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
+    let k = a.len();
+    let mut inv: Vec<Vec<f64>> = (0..k)
+        .map(|i| (0..k).map(|j| if i == j { 1.0 } else { 0.0 }).collect())
+        .collect();
+    for col in 0..k {
+        let piv = (col..k).max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs()))?;
+        if a[piv][col].abs() < 1e-300 {
+            return None;
+        }
+        a.swap(col, piv);
+        inv.swap(col, piv);
+        let d = a[col][col];
+        for j in 0..k {
+            a[col][j] /= d;
+            inv[col][j] /= d;
+        }
+        for r in 0..k {
+            if r != col {
+                let f = a[r][col];
+                if f != 0.0 {
+                    for j in 0..k {
+                        a[r][j] -= f * a[col][j];
+                        inv[r][j] -= f * inv[col][j];
+                    }
+                }
+            }
+        }
+    }
+    Some(inv)
+}
+
+fn bool_arg(arg: Option<&Arg>, default: bool) -> Result<bool, CellError> {
+    match arg {
+        None => Ok(default),
+        Some(Arg::Scalar(CellValue::Empty)) => Ok(default),
+        Some(Arg::Scalar(v)) => coerce::to_bool(v),
+        Some(Arg::Range(r)) => coerce::to_bool(&r.get(0, 0)),
+    }
+}
+
+/// `LINEST(known_ys, [known_xs], [const], [stats])` (Microsoft LINEST) —
+/// ordinary least squares over one or more regressors. Returns one row
+/// `m_k … m_1, b` (`b` is 0 when `const` is FALSE); with `stats` four more
+/// rows: standard errors; `r²`, `se_y`; `F`, `df`; `ss_reg`, `ss_resid`
+/// (unused cells `#N/A`). Without a constant the sums of squares are
+/// uncentred (Excel's rule). Collinear regressors are `#NUM!` (Excel drops
+/// them; not modelled).
+pub fn linest(args: &[Arg], _ctx: &EvalCtx) -> FnResult {
+    let fail = |e: CellError| FnResult::Scalar(CellValue::Error(e));
+    let yg = grid(&args[0]);
+    let ys = match strict_numbers(&yg) {
+        Ok(v) => v,
+        Err(e) => return fail(e),
+    };
+    let n = ys.len();
+    let y_is_col = yg.first().map_or(0, Vec::len) == 1;
+    // Regressors as columns of an n × k matrix.
+    let xcols: Vec<Vec<f64>> = match args.get(1) {
+        None => vec![(1..=n).map(|i| i as f64).collect()],
+        Some(Arg::Scalar(CellValue::Empty)) => vec![(1..=n).map(|i| i as f64).collect()],
+        Some(a) => {
+            let g = grid(a);
+            let (gr, gc) = (g.len(), g.first().map_or(0, Vec::len));
+            let mut cols = Vec::new();
+            if y_is_col && gr == n {
+                for c in 0..gc {
+                    cols.push(g.iter().map(|row| row[c].clone()).collect::<Vec<_>>());
+                }
+            } else if !y_is_col && gc == n {
+                for row in &g {
+                    cols.push(row.clone());
+                }
+            } else if gr * gc == n {
+                cols.push(g.iter().flatten().cloned().collect());
+            } else {
+                return fail(CellError::Ref);
+            }
+            let mut out = Vec::new();
+            for c in cols {
+                match strict_numbers(&[c]) {
+                    Ok(v) => out.push(v),
+                    Err(e) => return fail(e),
+                }
+            }
+            out
+        }
+    };
+    let with_const = match bool_arg(args.get(2), true) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
+    let stats = match bool_arg(args.get(3), false) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
+    let k = xcols.len();
+    let p = k + usize::from(with_const);
+    if n == 0 || p == 0 {
+        return fail(CellError::Value);
+    }
+    let row = |i: usize| -> Vec<f64> {
+        let mut r: Vec<f64> = xcols.iter().map(|c| c[i]).collect();
+        if with_const {
+            r.push(1.0);
+        }
+        r
+    };
+    let mut xtx = vec![vec![0.0; p]; p];
+    let mut xty = vec![0.0; p];
+    for i in 0..n {
+        let r = row(i);
+        for a in 0..p {
+            xty[a] += r[a] * ys[i];
+            for b in 0..p {
+                xtx[a][b] += r[a] * r[b];
+            }
+        }
+    }
+    let Some(inv) = invert(xtx) else {
+        return fail(CellError::Num);
+    };
+    let beta: Vec<f64> = (0..p)
+        .map(|a| (0..p).map(|b| inv[a][b] * xty[b]).sum())
+        .collect();
+    let intercept = if with_const { beta[k] } else { 0.0 };
+    // Coefficients right to left: m_k … m_1, then b.
+    let mut first: Vec<CellValue> = (0..k).rev().map(|j| finite(beta[j])).collect();
+    first.push(finite(intercept));
+    if !stats {
+        return FnResult::Array(vec![first]);
+    }
+    let fitted: Vec<f64> = (0..n)
+        .map(|i| row(i).iter().zip(&beta).map(|(x, b)| x * b).sum())
+        .collect();
+    let ss_resid: f64 = ys.iter().zip(&fitted).map(|(y, f)| (y - f).powi(2)).sum();
+    let ss_reg: f64 = if with_const {
+        let mean = ys.iter().sum::<f64>() / n as f64;
+        fitted.iter().map(|f| (f - mean).powi(2)).sum()
+    } else {
+        fitted.iter().map(|f| f * f).sum()
+    };
+    let df = n as f64 - p as f64;
+    let na = CellValue::Error(CellError::Na);
+    let cols = k + 1;
+    let pad = |mut v: Vec<CellValue>| {
+        v.resize(cols, na.clone());
+        v
+    };
+    let sey2 = if df > 0.0 { ss_resid / df } else { f64::NAN };
+    let se = |j: usize| -> CellValue {
+        if df > 0.0 {
+            finite((inv[j][j] * sey2).sqrt())
+        } else {
+            CellValue::Error(CellError::Num)
+        }
+    };
+    let mut second: Vec<CellValue> = (0..k).rev().map(se).collect();
+    second.push(if with_const { se(k) } else { na.clone() });
+    let r2 = if ss_reg + ss_resid == 0.0 {
+        CellValue::Number(1.0)
+    } else {
+        finite(ss_reg / (ss_reg + ss_resid))
+    };
+    let sey = if df > 0.0 {
+        finite(sey2.sqrt())
+    } else {
+        CellValue::Error(CellError::Num)
+    };
+    let f = if df > 0.0 && ss_resid > 0.0 {
+        finite((ss_reg / k as f64) / (ss_resid / df))
+    } else {
+        CellValue::Error(CellError::Num)
+    };
+    FnResult::Array(vec![
+        first,
+        second,
+        pad(vec![r2, sey]),
+        pad(vec![f, CellValue::Number(df)]),
+        pad(vec![finite(ss_reg), finite(ss_resid)]),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

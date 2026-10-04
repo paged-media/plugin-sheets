@@ -4,7 +4,6 @@
 # engine/excel are typed tokens (n: s: b: e: blank). The lane fails on an unlisted
 # disagreement, on a row whose values moved, and on a row that now agrees.
 # file	id	kind	engine	excel	reason
-date.golden.tsv	date.underflow-num	defect	e:#NUM!	n:32767	DATE with a huge negative day: Excel returns 32767 (its day argument is clamped to a 16-bit range), the engine #NUM!
 drop.golden.tsv	all-value	diverges	e:#VALUE!	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
 filter.golden.tsv	filter-empty-na	diverges	e:#N/A	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
 irr.golden.tsv	irr-doc-pos	diverges	n:0.08663094803625213	n:8.663094803652216E-2	iterative solver: the engine converges to a tighter root than Excel's own stopping tolerance; both are roots within Excel's precision of the method

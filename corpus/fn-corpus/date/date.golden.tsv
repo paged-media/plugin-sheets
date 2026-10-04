@@ -10,4 +10,9 @@ date.day-roll-fwd	=DATE(2020,1,32)		43862
 date.day-roll-back	=DATE(2020,1,0)		43830
 date.year-shorthand	=DATE(20,1,1)		7306
 date.from-cells	=DATE(A1,A2,A3)	A1=2021;A2=1;A3=1	44197
-date.underflow-num	=DATE(1900,1,-1000000)		#NUM!
+date.underflow-num	=DATE(1900,1,-1000000)		32767
+date.probe-big-day	=DATE(1900,1,1000000)		32767
+date.probe-neg-40000	=DATE(1900,1,-40000)		32767
+date.probe-neg-32769	=DATE(1900,1,-32769)		32767
+date.probe-2000-neg	=DATE(2000,1,-30000)		6525
+date.probe-month-neg	=DATE(1900,-100000,1)		#NUM!
