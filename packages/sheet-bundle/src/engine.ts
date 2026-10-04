@@ -456,6 +456,94 @@ export interface SheetEngine {
   /** Replace the workbook with delimited text (CSV/TSV) as one sheet.
    *  `delimiter` "" = sniff; `localeTag` reads numbers + dates. */
   loadCsv?(text: string, delimiter: string, localeTag: string, sheetName: string): void;
+
+  // ── Wave 6 doors (optional for older fakes; `wrapEngine` supplies all).
+
+  /** Apply a partial style to a range (A1, a defined name or a table). */
+  setStyle?(sheet: number, range: string, patch: CellStylePatch): { cells: number; styles: number };
+  /** The full style of one cell. */
+  getStyle?(sheet: number, row: number, col: number): CellStylePatch;
+  /** Merge a range (top-left keeps its content; the rest is cleared). */
+  merge?(sheet: number, range: string): { changed: CellChange[] };
+  /** Remove every merge intersecting a range; how many. */
+  unmerge?(sheet: number, range: string): number;
+  /** Set (`null` clears) the width of columns `first..=last`, characters. */
+  setColWidth?(sheet: number, first: number, last: number, width: number | null): void;
+  /** Set (`null` clears) the height of rows `first..=last`, points. */
+  setRowHeight?(sheet: number, first: number, last: number, height: number | null): void;
+  /** Freeze the first `rows` rows and `cols` columns (`0, 0` clears). */
+  setFreeze?(sheet: number, rows: number, cols: number): void;
+  /** Sizes, merges and the frozen split of a sheet. */
+  getLayout?(sheet: number): SheetLayoutInfo;
+  /** Define (or redefine) a name → a range as seen from `sheet`. */
+  defineName?(sheet: number, name: string, refersTo: string, scope: number | null): void;
+  /** Delete a defined name. */
+  deleteName?(sheet: number, name: string, scope: number | null): void;
+  /** The workbook's defined names. */
+  listNames?(): NameInfo[];
+  /** Resolve A1 / a name / a table name to `{sheet, range}`. */
+  resolveRange?(sheet: number, text: string): ResolvedRange;
+}
+
+/** A range argument resolved by the engine: its sheet, normalized A1, and
+ *  0-based inclusive bounds. */
+export interface ResolvedRange {
+  sheet: number;
+  range: string;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+// ── Wave 6: formatting & layout ──────────────────────────────────────────
+
+/** One border edge of a style patch: an xlsx line style (`thin`, `medium`,
+ *  `thick`, `dashed`, `dotted`, `double`, `hair`, …; `none` removes it) and
+ *  an optional `#RRGGBB` colour (absent = automatic). */
+export interface EdgeStyle {
+  style: string;
+  color?: string | null;
+}
+
+/** A partial cell style (`setStyle`): absent fields are left as each cell
+ *  has them; an EMPTY `fontColor` / `fill` clears it; `hAlign` `general`
+ *  and `vAlign` `bottom` are the defaults. `getStyle` answers the same shape
+ *  with every field present. All semantics (validation, dedup, the xlsx
+ *  records) are Rust's. */
+export interface CellStylePatch {
+  numFmt?: string;
+  fontName?: string;
+  fontSize?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontColor?: string;
+  fill?: string;
+  borderTop?: EdgeStyle;
+  borderRight?: EdgeStyle;
+  borderBottom?: EdgeStyle;
+  borderLeft?: EdgeStyle;
+  hAlign?: string;
+  vAlign?: string;
+  wrap?: boolean;
+}
+
+/** A sheet's layout: explicit column widths (characters) and row heights
+ *  (points) as `[index, size]` pairs, merges in A1, the frozen split. */
+export interface SheetLayoutInfo {
+  colWidths: [number, number][];
+  rowHeights: [number, number][];
+  merges: string[];
+  freezeRows: number;
+  freezeCols: number;
+}
+
+/** One defined name (`scope` absent = workbook scope). */
+export interface NameInfo {
+  name: string;
+  scope?: number | null;
+  refersTo: string;
 }
 
 /** The structural edits `structuralEdit` accepts. */
@@ -581,6 +669,19 @@ export interface SheetWasmEngine {
   delete_sheet?(sheet: number): { changed: CellChange[] };
   structural_edit?(sheet: number, kind: string, at: number, n: number): { changed: CellChange[] };
   load_csv?(text: string, delimiter: string, locale_tag: string, sheet_name: string): void;
+  // Wave 6.
+  set_style?(sheet: number, range: string, patch: CellStylePatch): { cells: number; styles: number };
+  get_style?(sheet: number, row: number, col: number): CellStylePatch;
+  merge?(sheet: number, range: string): { changed: CellChange[] };
+  unmerge?(sheet: number, range: string): number;
+  set_col_width?(sheet: number, first: number, last: number, width?: number): void;
+  set_row_height?(sheet: number, first: number, last: number, height?: number): void;
+  set_freeze?(sheet: number, rows: number, cols: number): void;
+  get_layout?(sheet: number): SheetLayoutInfo;
+  define_name?(sheet: number, name: string, refers_to: string, scope?: number): void;
+  delete_name?(sheet: number, name: string, scope?: number): void;
+  list_names?(): NameInfo[];
+  resolve_range?(sheet: number, text: string): ResolvedRange;
 }
 
 /** The module shape the wasm-bindgen `--target web` glue exports. */
@@ -701,6 +802,37 @@ export function wrapEngine(
       tick();
       need("load_csv")(text, delimiter, localeTag, sheetName);
     },
+    // Wave 6 — formatting & layout. `null` crosses as `undefined` (the
+    // wasm `Option<…>` reads an absent value).
+    setStyle: (sheet, range, patch) =>
+      need("set_style")(sheet, range, patch) as { cells: number; styles: number },
+    getStyle: (sheet, row, col) => need("get_style")(sheet, row, col) as CellStylePatch,
+    merge: (sheet, range) => {
+      tick();
+      return need("merge")(sheet, range) as { changed: CellChange[] };
+    },
+    unmerge: (sheet, range) => need("unmerge")(sheet, range) as number,
+    setColWidth: (sheet, first, last, width) => {
+      need("set_col_width")(sheet, first, last, width ?? undefined);
+    },
+    setRowHeight: (sheet, first, last, height) => {
+      need("set_row_height")(sheet, first, last, height ?? undefined);
+    },
+    setFreeze: (sheet, rows, cols) => {
+      need("set_freeze")(sheet, rows, cols);
+    },
+    getLayout: (sheet) => need("get_layout")(sheet) as SheetLayoutInfo,
+    defineName: (sheet, name, refersTo, scope) => {
+      tick();
+      need("define_name")(sheet, name, refersTo, scope ?? undefined);
+    },
+    deleteName: (sheet, name, scope) => {
+      tick();
+      need("delete_name")(sheet, name, scope ?? undefined);
+    },
+    listNames: () => need("list_names")() as NameInfo[],
+    resolveRange: (sheet, text) =>
+      need("resolve_range")(sheet, text) as ResolvedRange,
   };
 }
 

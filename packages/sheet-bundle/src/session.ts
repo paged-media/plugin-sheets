@@ -51,6 +51,10 @@ import {
   ENGINE_NOT_BUILT,
   type CalcSettingsInfo,
   type CellEditRecord,
+  type CellStylePatch,
+  type EdgeStyle,
+  type NameInfo,
+  type SheetLayoutInfo,
   type ChartInfo,
   type FindMatch,
   type FindOptions,
@@ -506,8 +510,9 @@ export interface WorkbookSession {
   /** Paginate the active range across the threaded frames of the selected
    *  text frame (or, with none selected, the frame last placed into), live:
    *  a resize of a chain frame re-paginates (debounced) and REPLACES the
-   *  tables; workbook edits refresh them too. */
-  paginateSelection(): Promise<SessionResult>;
+   *  tables; workbook edits refresh them too. `repeatHeaderRows` (Wave 6)
+   *  repeats that many leading rows at the top of every frame. */
+  paginateSelection(opts?: { repeatHeaderRows?: number }): Promise<SessionResult>;
   /** Bring every placed table, chart and paginated chain up to date with
    *  the workbook now (edits schedule this on their own, debounced). */
   refreshPlacements(): Promise<void>;
@@ -533,6 +538,57 @@ export interface WorkbookSession {
   /** The workbook content version (bumps on every committed edit) — the
    *  number placed frames' bindings carry. */
   contentVersion(): number;
+
+  // ── Wave 6: formatting & layout ─────────────────────────────────────
+
+  /** What the format verbs act on: the grid selection when there is one,
+   *  else the panel's range (which may be a defined name or a table name),
+   *  resolved by the engine to its sheet + bounds. */
+  formatTarget(): FormatTarget | null;
+  /** Apply a partial style to the format target. */
+  setStyle(patch: CellStylePatch): SessionResult;
+  /** Borders on the format target: `all` edges of every cell, the
+   *  `outline` of the block, one side of the block, or `none` (every edge
+   *  of every cell cleared). */
+  setBorders(kind: BorderKind, edge: EdgeStyle): SessionResult;
+  /** The full style of the format target's top-left cell. */
+  styleAtTarget(): CellStylePatch | null;
+  /** Merge the format target (top-left keeps its content). */
+  mergeTarget(): SessionResult;
+  /** Remove the merges the format target touches. */
+  unmergeTarget(): SessionResult;
+  /** Width (characters; `null` = default) of the target's columns. */
+  setColumnWidth(width: number | null): SessionResult;
+  /** Height (points; `null` = default) of the target's rows. */
+  setRowHeight(height: number | null): SessionResult;
+  /** Freeze the rows above / columns left of the grid selection's anchor
+   *  (no selection: the first row); clears an existing freeze. */
+  toggleFreeze(): SessionResult;
+  /** Sizes, merges and frozen split of the active sheet. */
+  layout(): SheetLayoutInfo | null;
+  /** The workbook's defined names. */
+  names(): NameInfo[];
+  /** Define (or redefine) `name` → `refersTo` (default: the format
+   *  target); `sheetScoped` makes it local to the active sheet. */
+  defineName(name: string, refersTo?: string, sheetScoped?: boolean): SessionResult;
+  /** Delete a defined name (`scope` as `names()` reports it). */
+  deleteName(name: string, scope?: number | null): SessionResult;
+  /** Place a defined name or a table into a frame (like Lower to frame);
+   *  the placement keeps the NAME, so a redefinition moves it. */
+  placeName(name: string): Promise<string | null>;
+}
+
+/** Which edges `setBorders` draws. */
+export type BorderKind = "all" | "outline" | "top" | "bottom" | "left" | "right" | "none";
+
+/** A resolved format target (0-based inclusive bounds). */
+export interface FormatTarget {
+  sheet: number;
+  range: string;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
 }
 
 /** S-15 — coerce one provider cell value to the string the engine's
@@ -654,6 +710,8 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // Wave 4 — the charts this session placed (their elements, so a refresh
   // can replace them) and the live paginated chains (storyId → handle).
   let placedCharts: PlacedChart[] = [];
+  // Wave 6 — the repeated-header option a chain was paginated with.
+  const chainHeaderRows = new Map<string, number>();
   const chains = new Map<
     string,
     { sub: ChainSubscription; sheet: number; range: string }
@@ -1211,6 +1269,27 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   }
 
   /** Run a workbook-structure verb; a throw becomes `{ok:false}`. */
+  /** Wave 6 — the cells the format verbs act on (see `formatTarget`). */
+  function formatTarget(): FormatTarget | null {
+    const e = state.engine;
+    const sheet = state.activeSheet;
+    if (!e || sheet === null) return null;
+    const sel = state.gridSelection;
+    const text = sel
+      ? selectionRangeA1(sel.anchorRow, sel.anchorCol, sel.rows, sel.cols)
+      : state.selectedRange;
+    if (!text) return null;
+    if (!e.resolveRange) return null;
+    // Memoised until the next change: the panel reads it on every render.
+    return cachedRead(`target:${sheet}:${text}`, () => {
+      try {
+        return e.resolveRange!(sheet, text) as FormatTarget;
+      } catch {
+        return null;
+      }
+    });
+  }
+
   function structureVerb(fn: (engine: SheetEngine) => void): SessionResult {
     if (!state.engine) return { ok: false, message: "no workbook open" };
     try {
@@ -2232,7 +2311,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       });
     },
 
-    async paginateSelection() {
+    async paginateSelection(opts) {
       const engine = state.engine;
       if (!engine || state.activeSheet === null || !state.selectedRange) {
         return { ok: false as const, message: "no workbook / sheet / range" };
@@ -2258,14 +2337,20 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       const prior = chains.get(storyId);
       const from = prior?.sub.current() ?? null;
       prior?.sub.dispose();
+      const repeatedHeaderRows =
+        opts?.repeatHeaderRows ?? chainHeaderRows.get(storyId) ?? 0;
+      chainHeaderRows.set(storyId, repeatedHeaderRows);
       const first = from
         ? null
-        : await lowerPaginatedToChain(host, engine, sheet, range, storyId);
+        : await lowerPaginatedToChain(host, engine, sheet, range, storyId, {
+            repeatedHeaderRows,
+          });
       if (!from && !first) {
         return { ok: false as const, message: "the frame threads no chain" };
       }
       const sub = subscribeChainReflow(host, engine, sheet, range, storyId, {
         from: from ?? first,
+        repeatedHeaderRows,
       });
       chains.set(storyId, { sub, sheet, range });
       if (from) await sub.refresh();
@@ -2407,6 +2492,192 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
 
     contentVersion() {
       return revision;
+    },
+
+    // ── Wave 6 ───────────────────────────────────────────────────────
+
+    formatTarget() {
+      return formatTarget();
+    },
+
+    setStyle(patch) {
+      const t = formatTarget();
+      if (!t) return { ok: false as const, message: "select cells or enter a range first" };
+      return structureVerb((e) => {
+        if (!e.setStyle) throw new Error("engine wasm predates set_style");
+        e.setStyle(t.sheet, t.range, patch);
+      });
+    },
+
+    setBorders(kind, edge) {
+      const t = formatTarget();
+      if (!t) return { ok: false as const, message: "select cells or enter a range first" };
+      // Pure A1 naming of the block's strips; every border rule is Rust's.
+      const a1 = (r0: number, c0: number, r1: number, c1: number) =>
+        `${columnLabel(c0)}${r0 + 1}:${columnLabel(c1)}${r1 + 1}`;
+      const none: EdgeStyle = { style: "none" };
+      const calls: [string, CellStylePatch][] = [];
+      const whole = a1(t.top, t.left, t.bottom, t.right);
+      const top = a1(t.top, t.left, t.top, t.right);
+      const bottom = a1(t.bottom, t.left, t.bottom, t.right);
+      const left = a1(t.top, t.left, t.bottom, t.left);
+      const right = a1(t.top, t.right, t.bottom, t.right);
+      switch (kind) {
+        case "all":
+          calls.push([whole, { borderTop: edge, borderBottom: edge, borderLeft: edge, borderRight: edge }]);
+          break;
+        case "none":
+          calls.push([whole, { borderTop: none, borderBottom: none, borderLeft: none, borderRight: none }]);
+          break;
+        case "outline":
+          calls.push([top, { borderTop: edge }], [bottom, { borderBottom: edge }]);
+          calls.push([left, { borderLeft: edge }], [right, { borderRight: edge }]);
+          break;
+        case "top":
+          calls.push([top, { borderTop: edge }]);
+          break;
+        case "bottom":
+          calls.push([bottom, { borderBottom: edge }]);
+          break;
+        case "left":
+          calls.push([left, { borderLeft: edge }]);
+          break;
+        case "right":
+          calls.push([right, { borderRight: edge }]);
+          break;
+      }
+      return structureVerb((e) => {
+        if (!e.setStyle) throw new Error("engine wasm predates set_style");
+        for (const [range, patch] of calls) e.setStyle(t.sheet, range, patch);
+      });
+    },
+
+    styleAtTarget() {
+      const t = formatTarget();
+      const e = state.engine;
+      if (!t || !e?.getStyle) return null;
+      return cachedRead(`style:${t.sheet}:${t.top}:${t.left}`, () => {
+        try {
+          return e.getStyle!(t.sheet, t.top, t.left);
+        } catch {
+          return null;
+        }
+      });
+    },
+
+    mergeTarget() {
+      const t = formatTarget();
+      if (!t) return { ok: false as const, message: "select cells or enter a range first" };
+      return structureVerb((e) => {
+        if (!e.merge) throw new Error("engine wasm predates merge");
+        e.merge(t.sheet, t.range);
+      });
+    },
+
+    unmergeTarget() {
+      const t = formatTarget();
+      if (!t) return { ok: false as const, message: "select cells or enter a range first" };
+      let removed = 0;
+      const r = structureVerb((e) => {
+        if (!e.unmerge) throw new Error("engine wasm predates unmerge");
+        removed = e.unmerge(t.sheet, t.range);
+      });
+      if (r.ok && removed === 0) return { ok: false as const, message: "no merge there" };
+      return r;
+    },
+
+    setColumnWidth(width) {
+      const t = formatTarget();
+      if (!t) return { ok: false as const, message: "select cells or enter a range first" };
+      return structureVerb((e) => {
+        if (!e.setColWidth) throw new Error("engine wasm predates set_col_width");
+        e.setColWidth(t.sheet, t.left, t.right, width);
+      });
+    },
+
+    setRowHeight(height) {
+      const t = formatTarget();
+      if (!t) return { ok: false as const, message: "select cells or enter a range first" };
+      return structureVerb((e) => {
+        if (!e.setRowHeight) throw new Error("engine wasm predates set_row_height");
+        e.setRowHeight(t.sheet, t.top, t.bottom, height);
+      });
+    },
+
+    toggleFreeze() {
+      const sheet = state.activeSheet;
+      if (sheet === null) return { ok: false as const, message: "no sheet" };
+      const cur = this.layout();
+      const frozen = !!cur && (cur.freezeRows > 0 || cur.freezeCols > 0);
+      const sel = state.gridSelection;
+      const rows = frozen ? 0 : sel ? sel.anchorRow : 1;
+      const cols = frozen ? 0 : sel ? sel.anchorCol : 0;
+      if (!frozen && rows === 0 && cols === 0) {
+        return { ok: false as const, message: "select the cell below / right of the split" };
+      }
+      return structureVerb((e) => {
+        if (!e.setFreeze) throw new Error("engine wasm predates set_freeze");
+        e.setFreeze(sheet, rows, cols);
+      });
+    },
+
+    layout() {
+      const e = state.engine;
+      const sheet = state.activeSheet;
+      if (!e?.getLayout || sheet === null) return null;
+      return cachedRead(`layout:${sheet}`, () => {
+        try {
+          return e.getLayout!(sheet);
+        } catch {
+          return null;
+        }
+      });
+    },
+
+    names() {
+      const e = state.engine;
+      if (!e?.listNames) return [];
+      return cachedRead("names", () => {
+        try {
+          return e.listNames!();
+        } catch {
+          return [];
+        }
+      });
+    },
+
+    defineName(name, refersTo, sheetScoped) {
+      const sheet = state.activeSheet;
+      if (sheet === null) return { ok: false as const, message: "no sheet" };
+      const target = refersTo?.trim() || formatTarget()?.range;
+      if (!target) return { ok: false as const, message: "select cells or enter a range first" };
+      return structureVerb((e) => {
+        if (!e.defineName) throw new Error("engine wasm predates define_name");
+        e.defineName(sheet, name.trim(), target, sheetScoped ? sheet : null);
+      });
+    },
+
+    deleteName(name, scope) {
+      return structureVerb((e) => {
+        if (!e.deleteName) throw new Error("engine wasm predates delete_name");
+        e.deleteName(state.activeSheet ?? 0, name, scope ?? null);
+      });
+    },
+
+    async placeName(name) {
+      const e = state.engine;
+      if (!e?.resolveRange || state.activeSheet === null) return null;
+      let resolved: { sheet: number };
+      try {
+        resolved = e.resolveRange(state.activeSheet, name);
+      } catch (err) {
+        host.log.warn("placeName: not a name or table", err);
+        return null;
+      }
+      state.activeSheet = resolved.sheet;
+      state.selectedRange = name;
+      emitter.emit();
+      return this.lowerSelection();
     },
 
     dispose() {
