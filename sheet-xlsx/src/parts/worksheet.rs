@@ -500,6 +500,7 @@ fn parse_range(s: &str) -> Option<RangeRef> {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
 
@@ -587,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_formula_member_gets_master_shifted_to_its_position() {
+    fn shared_formula_member_gets_master_shifted_to_its_position__feat__sheet_xlsx_roundtrip() {
         let xml = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>
     <row r="1">

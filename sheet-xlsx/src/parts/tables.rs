@@ -164,8 +164,9 @@ fn parse_ref(s: &str, sheet: sheet_core::SheetId) -> Option<RangeRef> {
 mod tests {
     use super::*;
 
+    #[allow(non_snake_case)]
     #[test]
-    fn x14_table_in_ext_lst_does_not_reset_the_root() {
+    fn x14_table_in_ext_lst_does_not_reset_the_root__feat__sheet_table_structured() {
         let xml = br#"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="T" displayName="Inv" ref="B3:C5"><tableColumns count="2"><tableColumn id="1" name="A"/><tableColumn id="2" name="B"/></tableColumns><extLst><ext uri="{504A1905-F514-4f6f-8877-14C23A59335A}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:table altTextSummary="x"/></ext></extLst></table>"#;
         let t = parse(xml, 0).expect("Office's extLst x14:table is not the root");
         assert_eq!(t.name.as_str(), "Inv");

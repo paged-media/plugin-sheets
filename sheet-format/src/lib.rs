@@ -240,6 +240,7 @@ fn render_text_section(section: &sections::Section, value: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
 
@@ -328,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn conditional_default_section_auto_signs_negative() {
+    fn conditional_default_section_auto_signs_negative__feat__sheet_format_engine() {
         // Excel 16 (recorded): the unconditioned fallthrough auto-prefixes a
         // minus to a negative, even over the author's own.
         assert_eq!(fv("[>=100]0;0", CellValue::Number(-5.0)), "-5");

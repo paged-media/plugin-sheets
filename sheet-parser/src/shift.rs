@@ -93,11 +93,12 @@ pub fn shift_formula_text(text: &str, drow: i64, dcol: i64) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::shift_formula_text as s;
 
     #[test]
-    fn relative_parts_move_absolute_parts_stay() {
+    fn relative_parts_move_absolute_parts_stay__feat__sheet_xlsx_roundtrip() {
         assert_eq!(s("B1*2", 1, 0).unwrap(), "B2*2");
         assert_eq!(s("$B1+B$1+$B$1", 2, 3).unwrap(), "$B3+E$1+$B$1");
         assert_eq!(s("SUM(A1:B2)", 0, 1).unwrap(), "SUM(B1:C2)");
@@ -108,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn strings_names_and_calls_are_kept() {
+    fn strings_names_and_calls_are_kept__feat__sheet_xlsx_roundtrip() {
         assert_eq!(
             s("IF(A1=\"B2\",LOG10(C3),Rate)", 1, 0).unwrap(),
             "IF(A2=\"B2\",LOG10(C4),Rate)"
@@ -117,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn off_grid_is_ref_error_and_bad_text_is_none() {
+    fn off_grid_is_ref_error_and_bad_text_is_none__feat__sheet_xlsx_roundtrip() {
         assert_eq!(s("A1", -1, 0).unwrap(), "#REF!");
         assert!(s("\"unterminated", 1, 0).is_none());
     }

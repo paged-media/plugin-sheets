@@ -239,8 +239,9 @@ fn rewrite_anchorarray(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[allow(non_snake_case)]
     #[test]
-    fn non_ascii_after_underscore_does_not_panic() {
+    fn non_ascii_after_underscore_does_not_panic__feat__sheet_parser_dialect() {
         // Found by the full corpus lane: a defined name over a sheet called
         // `_français` split the `ç` while probing for `_xlfn.`.
         assert_eq!(

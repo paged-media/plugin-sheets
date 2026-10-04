@@ -796,8 +796,9 @@ mod prop {
         /// `(1/0,-100,-1000)` printed as text that did not parse): any text
         /// over a small operator alphabet that parses must print to text that
         /// parses back to the same AST.
+        #[allow(non_snake_case)]
         #[test]
-        fn parsed_text_prints_reparsable(t in "[-+*/^&(),%1A0 ]{1,14}") {
+        fn parsed_text_prints_reparsable__feat__sheet_parser_dialect(t in "[-+*/^&(),%1A0 ]{1,14}") {
             if let Ok(f) = parse(&t, &Ctx::new()) {
                 let printed = print(&f, 0, &Ctx::new());
                 let reparsed = parse(&printed, &Ctx::new())

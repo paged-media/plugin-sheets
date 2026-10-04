@@ -711,8 +711,9 @@ fn sheet_fn_database_criteria_comparison_operator() {
     assert_eq!(out, num(33.0));
 }
 
+#[allow(non_snake_case)]
 #[test]
-fn sheet_fn_database_criteria_header_only_is_value() {
+fn sheet_fn_database_criteria_header_only_is_value__feat__sheet_fn_library() {
     // A header-only criteria table (no condition row) is #VALUE! in Excel 16
     // (recorded for every D-function); a header + blank row matches all.
     let db = orchard();
