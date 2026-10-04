@@ -292,3 +292,61 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
     expect(tables[0].get("2:1")).toBe("21");
   });
 });
+
+/** `row:col` → the paragraph style each table cell's text sits in, read off
+ *  the exported stories (`Name="col:row"` in IDML). */
+async function cellParagraphStyles(h: HeadlessHost): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const [name, xml] of await exportedIdmlParts(h)) {
+    if (!name.startsWith("Stories/")) continue;
+    for (const c of xml.matchAll(/<Cell\b[^>]*\bName="(\d+):(\d+)"[^>]*>([\s\S]*?)<\/Cell>/g)) {
+      const p = /<ParagraphStyleRange\b[^>]*AppliedParagraphStyle="([^"]*)"/.exec(c[3]);
+      out.set(`${c[2]}:${c[1]}`, p?.[1] ?? "");
+    }
+  }
+  return out;
+}
+
+describe.skipIf(!ENGINE_BUILT)("wave 9 — alignment reaches the placed table", () => {
+  vi.setConfig({ testTimeout: 60_000 });
+  let h: HeadlessHost;
+  let host: BundleHost;
+  let s: WorkbookSession | null = null;
+
+  beforeEach(async () => {
+    h = await openHost();
+    await h.load(blankPageIdml());
+    host = withSceneChannel(sheetHost(h)).host;
+  });
+  afterEach(() => {
+    s?.dispose();
+    s = null;
+    h?.dispose();
+  });
+
+  it("numbers sit right, text left; an edit that changes the kind re-aligns [sheet.lower.page]", async () => {
+    const session = createWorkbookSession(host);
+    s = session;
+    await session.import(
+      await authorWorkbook(3, 2, (r, c) => (c === 0 ? `name${r}` : String(r * 10 + 5))),
+      "a.xlsx",
+    );
+    session.setRange("A1:B3");
+    expect(await session.lowerSelection()).not.toBeNull();
+    await settle();
+    const RIGHT = "ParagraphStyle/paged.sheet align right";
+    let styles = await cellParagraphStyles(h);
+    expect(styles.get("0:1")).toBe(RIGHT);
+    expect(styles.get("2:1")).toBe(RIGHT);
+    expect(styles.get("0:0")).not.toBe(RIGHT);
+
+    session.editCell(0, 0, 0, "42"); // text → number
+    session.editCell(0, 1, 1, "label"); // number → text
+    await session.refreshPlacements();
+    await settle();
+    styles = await cellParagraphStyles(h);
+    expect(styles.get("0:0")).toBe(RIGHT);
+    expect(styles.get("1:1")).not.toBe(RIGHT);
+    expect(styles.get("2:1")).toBe(RIGHT);
+  });
+});

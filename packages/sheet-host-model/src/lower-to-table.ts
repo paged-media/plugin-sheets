@@ -193,11 +193,22 @@ function edgeOp(
   };
 }
 
-/** The xlsx vertical alignment → core's `cellVerticalJustification`. */
+/** The xlsx vertical alignment → core's `cellVerticalJustification`
+ *  (`bottom`, the xlsx default, arrives as an absent `vAlign`). */
 const V_JUSTIFICATION: Record<string, string> = {
   top: "TopAlign",
   center: "CenterAlign",
+  bottom: "BottomAlign",
 };
+
+/** The size an un-sized cell renders at (the document default, 12 pt —
+ *  the bundle's `DEFAULT_CELL_POINT_SIZE` says why). */
+const DEFAULT_TEXT_PT = 12;
+
+/** One line of text at `sizePt` with auto leading (120 %). */
+function lineHeightPt(sizePt: number | null | undefined): number {
+  return 1.2 * (sizePt ?? DEFAULT_TEXT_PT);
+}
 
 /** Per edge: the weight path, the colour path, the `borderLines` key. */
 const EDGES = [
@@ -374,6 +385,26 @@ export function tableDecorOps(
         cell.styleKey != null && cell.styleKey !== 0
           ? styleByKey.get(cell.styleKey)
           : undefined;
+      // Vertical alignment (Wave 9). Excel's default is BOTTOM; a native
+      // cell's is TOP. In a row with room for more than half another line
+      // of the cell's text the difference shows, so the default is written
+      // out there — and only there (a row near its line height looks the
+      // same either way, and a table of them carries no per-cell op).
+      const vj = style?.vAlign
+        ? V_JUSTIFICATION[style.vAlign]
+        : cell.text.length > 0 && row.heightPt > 1.5 * lineHeightPt(style?.fontSizePt)
+          ? "BottomAlign"
+          : undefined;
+      if (vj) {
+        cellProps.push({
+          op: "setElementProperty",
+          args: {
+            elementId: cellId(storyId, tableId, r, c),
+            path: "cellVerticalJustification",
+            value: { type: "text", value: vj },
+          },
+        });
+      }
       if (!style) continue;
       // The colorRef is a SWATCH ID (`Graphic::resolve`), never a hex —
       // see `cellFillSwatchOps`, which mints the swatch this names. A
@@ -415,17 +446,6 @@ export function tableDecorOps(
             },
           });
         }
-      }
-      const vj = style.vAlign ? V_JUSTIFICATION[style.vAlign] : undefined;
-      if (vj) {
-        cellProps.push({
-          op: "setElementProperty",
-          args: {
-            elementId: cellId(storyId, tableId, r, c),
-            path: "cellVerticalJustification",
-            value: { type: "text", value: vj },
-          },
-        });
       }
     }
   });

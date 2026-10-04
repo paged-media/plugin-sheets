@@ -119,7 +119,22 @@ describe("Wave 6 cell decor: border lines, colours, vertical alignment [sheet.fo
       type: "length",
       value: CELL_EDGE_STROKE_PT,
     });
-    expect(byPath(ops, "cellVerticalJustification")).toHaveLength(0);
+    // Wave 9: no vAlign is xlsx BOTTOM, and this 30 pt row has room for
+    // more than another half line of 12 pt text — written out.
+    expect(byPath(ops, "cellVerticalJustification")[0].args.value).toEqual({
+      type: "text",
+      value: "BottomAlign",
+    });
+  });
+
+  it("a row near its line height carries no vertical op (top and bottom look alike) [sheet.lower.page]", () => {
+    const fits: LoweredContent = {
+      ...FORMATTED,
+      rows: [{ index: 0, heightPt: 15, cells: [{ col: 0, text: "x", align: "left", styleKey: 0 }] }],
+    };
+    expect(byPath(tableDecorOps(fits, "Story/u1", "t1").ops, "cellVerticalJustification")).toHaveLength(0);
+    const tall = { ...fits, rows: [{ ...fits.rows[0], heightPt: 22 }] };
+    expect(byPath(tableDecorOps(tall, "Story/u1", "t1").ops, "cellVerticalJustification")).toHaveLength(1);
   });
 
   it("a refresh that drops the facets resets colour and justification", () => {
@@ -132,9 +147,9 @@ describe("Wave 6 cell decor: border lines, colours, vertical alignment [sheet.fo
       type: "colorRef",
       value: null,
     });
-    expect(byPath(r.decor, "cellVerticalJustification")[0].args.value).toEqual({
-      type: "text",
-      value: "",
-    });
+    // Centre gone: the 30 pt row falls back to xlsx's bottom (Wave 9).
+    expect(byPath(r.decor, "cellVerticalJustification").map((o) => o.args.value)).toEqual([
+      { type: "text", value: "BottomAlign" },
+    ]);
   });
 });

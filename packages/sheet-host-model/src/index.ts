@@ -181,3 +181,14 @@ export {
   cellCharacterStyles,
   cellsNeedingRestyle,
 } from "./cell-character-styles";
+
+// Wave 9 — horizontal cell alignment as paragraph styles on the native table.
+export {
+  ALIGN_PARAGRAPH_STYLES,
+  NO_PARAGRAPH_STYLE,
+  cellAlignApplies,
+  cellAlignMap,
+  cellAlignStyleMints,
+  cellsNeedingRealign,
+  needsAlignStyles,
+} from "./cell-paragraph-align";

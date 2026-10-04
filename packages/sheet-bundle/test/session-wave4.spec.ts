@@ -217,8 +217,10 @@ describe.skipIf(!built)("placed tables: styled door + refresh in place [sheet.lo
     const applied = all.filter((m) => m.op === "applyStyle") as Array<{
       args: { cell?: unknown; scope: string };
     }>;
-    expect(applied.length).toBeGreaterThan(0);
-    expect(applied.every((m) => m.args.cell && m.args.scope === "character")).toBe(true);
+    // Every apply is cell-qualified; the character styles carry the fonts
+    // (Wave 9 adds paragraph-scope applies for the cells' alignment).
+    expect(applied.some((m) => m.args.scope === "character")).toBe(true);
+    expect(applied.every((m) => m.args.cell && ["character", "paragraph"].includes(m.args.scope))).toBe(true);
     session.dispose();
   });
 

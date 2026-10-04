@@ -71,6 +71,10 @@ import {
   tableDecorOps,
   tableInsertOp,
   tableRefreshOps,
+  cellAlignApplies,
+  cellAlignStyleMints,
+  cellsNeedingRealign,
+  needsAlignStyles,
   cellCharacterStyleApplies,
   cellCharacterStyleMints,
   cellCharacterStyles,
@@ -274,18 +278,31 @@ async function tableContentOps(
   }
   const wantsFills = cellFillSwatchOps(content).length > 0;
   const wantsText = cellCharacterStyles(content).size > 0;
-  const [swatches, styles] = await Promise.all([
+  const wantsAlign = needsAlignStyles(content);
+  const [swatches, styles, paragraphs] = await Promise.all([
     wantsFills || wantsText ? readKnownSwatchIds(host) : Promise.resolve(undefined),
     wantsText ? readKnownCharacterStyleIds(host) : Promise.resolve(null),
+    wantsAlign ? readKnownParagraphStyleIds(host) : Promise.resolve(null),
   ]);
   const fillMints = wantsFills ? cellFillSwatchOps(content, swatches) : [];
-  const styleOps = wantsText
-    ? [
-        ...cellTextSwatchOps(content, swatches),
-        ...cellCharacterStyleMints(content, styles),
-        ...cellCharacterStyleApplies(content, storyId, tableId),
-      ]
-    : [];
+  const styleOps = [
+    ...(wantsText
+      ? [
+          ...cellTextSwatchOps(content, swatches),
+          ...cellCharacterStyleMints(content, styles),
+          ...cellCharacterStyleApplies(content, storyId, tableId),
+        ]
+      : []),
+    // Wave 9: horizontal alignment — numbers right, centred cells centred.
+    ...(wantsAlign
+      ? [
+          ...cellAlignStyleMints(content, paragraphs),
+          ...cellAlignApplies(content, storyId, tableId, {
+            available: paragraphs === null ? new Set() : undefined,
+          }),
+        ]
+      : []),
+  ];
   return { ops: [...fillMints, ...pourOps, ...decor.ops], styleOps };
 }
 
@@ -349,6 +366,19 @@ export function tableBindingStamp(
       ),
     },
   };
+}
+
+/** The document's paragraph-style ids, or null when the read failed. */
+async function readKnownParagraphStyleIds(
+  host: BundleHost,
+): Promise<Set<string> | null> {
+  try {
+    const rows = await host.document.collection<{ selfId: string }>("paragraphStyles");
+    return new Set(rows.map((r) => r.selfId));
+  } catch (err) {
+    host.log.warn("cell alignment: paragraph-style read failed", err);
+    return null;
+  }
 }
 
 /** The document's character-style ids, or null when the read failed. */
@@ -895,11 +925,14 @@ async function tableRefreshLanes(
   }
   const ops = tableRefreshOps(prev, next, storyId, tableId, prevWidths, nextWidths);
   const restyle = cellsNeedingRestyle(prev, next);
+  const realign = cellsNeedingRealign(prev, next);
   const wantsFills = cellFillSwatchOps(next).length > 0;
   const wantsText = restyle.size > 0 && cellCharacterStyles(next).size > 0;
-  const [swatches, styles] = await Promise.all([
+  const wantsAlign = realign.size > 0 && needsAlignStyles(next);
+  const [swatches, styles, paragraphs] = await Promise.all([
     wantsFills || wantsText ? readKnownSwatchIds(host) : Promise.resolve(undefined),
     wantsText ? readKnownCharacterStyleIds(host) : Promise.resolve(null),
+    wantsAlign ? readKnownParagraphStyleIds(host) : Promise.resolve(null),
   ]);
   const decor = [...(wantsFills ? cellFillSwatchOps(next, swatches) : []), ...ops.decor];
   const style =
@@ -917,7 +950,18 @@ async function tableRefreshLanes(
             includeDefault: true,
           }),
         ];
-  return [ops.structure, ops.text, decor, style].filter((l) => l.length > 0);
+  const align =
+    realign.size === 0
+      ? []
+      : [
+          ...(wantsAlign ? cellAlignStyleMints(next, paragraphs) : []),
+          ...cellAlignApplies(next, storyId, tableId, {
+            cells: realign,
+            includeDefault: true,
+            available: wantsAlign && paragraphs === null ? new Set() : undefined,
+          }),
+        ];
+  return [ops.structure, ops.text, decor, [...style, ...align]].filter((l) => l.length > 0);
 }
 
 /** Apply a placed table's in-place refresh as ONE `mutate` — the lanes of
