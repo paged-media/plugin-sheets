@@ -73,6 +73,8 @@ use crate::argview::{self, RangeBuf};
 use crate::spill::SpillState;
 
 mod lambda;
+mod lift;
+pub use lift::eval_array;
 
 /// Evaluate a formula root `expr` for the cell at `current`, with the given
 /// clock/seed context. Reads dependency values straight out of `model` (fresh
@@ -435,6 +437,12 @@ fn eval_unary(
     spills: &SpillState,
 ) -> CellValue {
     let v = eval(model, inner, ctx, spills);
+    unary_value(op, v)
+}
+
+/// A unary operator applied to one value (shared by the scalar path and the
+/// element-wise array path, [`lift`]).
+fn unary_value(op: UnOp, v: CellValue) -> CellValue {
     if let CellValue::Error(e) = v {
         return CellValue::Error(e);
     }
@@ -464,7 +472,12 @@ fn eval_binary(
 ) -> CellValue {
     let lhs = eval(model, a, ctx, spills);
     let rhs = eval(model, b, ctx, spills);
+    binary_values(op, lhs, rhs)
+}
 
+/// A binary operator applied to two values (shared by the scalar path and the
+/// element-wise array path, [`lift`]).
+fn binary_values(op: BinOp, lhs: CellValue, rhs: CellValue) -> CellValue {
     // Error propagation: left operand first.
     if let CellValue::Error(e) = lhs {
         return CellValue::Error(e);
@@ -651,6 +664,18 @@ fn plan_args<'m>(
         // `Arr = {1,2,3}`, `SUM(Dyn)` with `Dyn = OFFSET(…)`).
         let arg_c = deref_name(model, arg, ctx.current);
         let arg: &Expr = &arg_c;
+        // An operator / scalar-function tree over an array operand is an
+        // ARRAY argument (`SUM(A1:A3*2)`, `MIN(IF(ISNUMBER(r),r))`).
+        if lift::needs_lift(model, arg) {
+            match lift::eval_array(model, arg, ctx, spills) {
+                FnResult::Array(grid) => {
+                    bufs.push(RangeBuf::from_grid(ctx.current, grid));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                }
+                FnResult::Scalar(v) => plans.push(ArgPlan::Scalar(v)),
+            }
+            continue;
+        }
         match arg {
             Expr::Range(r) => {
                 let resolved = resolve_range_for_arg(model, *r);

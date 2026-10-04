@@ -328,3 +328,80 @@ fn this_row_references_intersect_the_formula_row__feat__sheet_table_structured()
     assert_eq!(s.get_cell_display(0, 1, 2), "6");
     assert_eq!(s.get_cell_display(0, 2, 2), "5");
 }
+
+/// Operators and scalar functions over a range inside a function argument
+/// evaluate element-wise (Excel 365 reads every formula so; CSE formulas
+/// always did). Each was `#VALUE!`.
+#[test]
+fn array_arguments_evaluate_element_wise__feat__sheet_calc_spill() {
+    let mut s = SheetSession::new();
+    for (r, v) in ["1", "5", "3"].iter().enumerate() {
+        s.set_cell(0, r as u32, 0, v).unwrap();
+    }
+    let cases = [
+        ("=SUM(A1:A3*2)", "18"),
+        ("=SUM(IF(A1:A3>1,A1:A3))", "8"),
+        ("=SUMPRODUCT((A1:A3>1)*1)", "2"),
+        ("=INDEX(A1:A3,MATCH(MAX(A1:A3*1),A1:A3,0))", "5"),
+        ("=SUM(--(A1:A3>=3))", "2"),
+        ("=MAX(LEN(A1:A3&\"xx\"))", "3"),
+        ("=SUM(A1:A3*{1;10;100})", "351"),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (f, want)) in cases.iter().enumerate() {
+        s.set_cell(0, i as u32, 3, f).unwrap();
+        let got = s.get_cell_display(0, i as u32, 3);
+        if got != *want {
+            wrong.push(format!("{f} -> {got}, Excel {want}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Legacy array (CSE) formulas, `<f t="array" ref=…>`: evaluated
+/// element-wise over their FIXED area — a one-cell area shows the block's
+/// top-left; a larger area is filled (a scalar repeats, positions past the
+/// block are `#N/A`) instead of spilling into the file's cached values
+/// (`#SPILL!`). The type and area survive a dirty save.
+#[test]
+fn legacy_array_formulas_fill_their_area__feat__sheet_calc_spill() {
+    let arr = |r: u32, c: &str, area: &str, f: &str, v: f64| {
+        format!(r#"<c r="{c}{r}"><f t="array" ref="{area}">{f}</f><v>{v}</v></c>"#)
+    };
+    let data = [
+        format!(
+            "<row r=\"1\">{}{}{}{}{}</row>",
+            num(1, "A", 1.0),
+            num(1, "B", 2.0),
+            arr(1, "C", "C1", "SUM(A1:A3*B1:B3)", 0.0),
+            arr(1, "D", "D1:D4", "A1:A3*10", 0.0),
+            arr(1, "E", "E1:E2", "SUM(A1:A3)", 0.0)
+        ),
+        format!("<row r=\"2\">{}{}{}{}</row>", num(2, "A", 5.0), num(2, "B", 1.0), num(2, "D", 99.0), num(2, "E", 99.0)),
+        format!("<row r=\"3\">{}{}{}</row>", num(3, "A", 3.0), num(3, "B", 4.0), num(3, "D", 99.0)),
+        format!("<row r=\"4\">{}</row>", num(4, "D", 99.0)),
+    ]
+    .concat();
+    let mut s = SheetSession::load_xlsx(&pkg("", &[("Sheet1", &data, "")], &[])).unwrap();
+    let look = |s: &SheetSession| -> Vec<String> {
+        [(0, 2), (0, 3), (1, 3), (2, 3), (3, 3), (0, 4), (1, 4)]
+            .iter()
+            .map(|&(r, c)| s.get_cell_display(0, r, c))
+            .collect()
+    };
+    let want = ["19", "10", "50", "30", "#N/A", "9", "9"];
+    assert_eq!(look(&s), want, "after load");
+    s.set_cell(0, 0, 0, "2").unwrap();
+    assert_eq!(look(&s), ["21", "20", "50", "30", "#N/A", "10", "10"], "after an edit");
+    let bytes = s.save_xlsx().unwrap();
+    let xml = {
+        use std::io::Read;
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut x = String::new();
+        z.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut x).unwrap();
+        x
+    };
+    assert!(xml.contains(r#"<f t="array" ref="D1:D4">"#), "{xml}");
+    let r = SheetSession::load_xlsx(&bytes).unwrap();
+    assert_eq!(look(&r), ["21", "20", "50", "30", "#N/A", "10", "10"], "after save + reload");
+}

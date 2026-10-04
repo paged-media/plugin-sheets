@@ -373,7 +373,11 @@ impl XlsxDocument {
             // Cells. Resolve style index -> StyleId; stash formula text in
             // formula_texts (NOT a model FormulaId — the consumer parses it).
             let mut cells = BTreeMap::new();
+            let mut array_formulas = BTreeMap::new();
             for pc in parsed_ws.cells {
+                if let Some(area) = pc.array_area {
+                    array_formulas.insert((pc.row, pc.col), area);
+                }
                 let style = xf_to_style
                     .get(pc.style_index as usize)
                     .copied()
@@ -391,7 +395,9 @@ impl XlsxDocument {
                     },
                 );
             }
-            model.sheet_mut(sid).expect("just added").cells = cells;
+            let ws = model.sheet_mut(sid).expect("just added");
+            ws.cells = cells;
+            ws.array_formulas = array_formulas;
 
             // Structured tables (ListObjects, spec §6.4 / ECMA-376 §18.5): a
             // worksheet references its table parts through its OWN `.rels`

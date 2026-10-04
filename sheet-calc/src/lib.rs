@@ -374,9 +374,13 @@ impl Engine {
             self.dirty.propagate_from(anchor, &self.graph);
         }
 
-        // Drop any prior formula registration for this cell.
+        // Drop any prior formula registration for this cell. A new input on a
+        // legacy array-formula anchor replaces the array formula too.
         self.graph.unregister(cref);
         self.dirty.forget(cref);
+        if let Some(ws) = self.model.sheet_mut(sheet) {
+            ws.array_formulas.remove(&(row, col));
+        }
 
         match input {
             SetInput::Empty => {
@@ -586,7 +590,29 @@ impl Engine {
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
         perf_count!(evaluations, 1);
+        if self.array_area(cref).is_some() {
+            // A one-cell legacy array formula: evaluated element-wise, the
+            // cell shows the block's top-left (Excel's CSE rule).
+            return match eval::eval_array(&self.model, &f.root, &ctx, &self.spills) {
+                FnResult::Scalar(v) => v,
+                FnResult::Array(g) => g
+                    .into_iter()
+                    .next()
+                    .and_then(|r| r.into_iter().next())
+                    .unwrap_or(CellValue::Empty),
+            };
+        }
         eval::eval_expr(&self.model, &f.root, &ctx, &self.spills)
+    }
+
+    /// The `(rows, cols)` area of the legacy array formula anchored at
+    /// `cref`, if it is one.
+    fn array_area(&self, cref: CellRef) -> Option<(u32, u32)> {
+        self.model
+            .sheet(cref.sheet)?
+            .array_formulas
+            .get(&(cref.row, cref.col))
+            .copied()
     }
 
     /// Drive iterative (circular) calculation over one cycle (spec §6.2, D-7;
@@ -677,6 +703,11 @@ impl Engine {
         let Some(fid) = cell.formula else {
             return false;
         };
+        // A legacy array formula over more than one cell fills its area
+        // through the spill machinery; over one cell it is a scalar.
+        if let Some((rows, cols)) = self.array_area(cref) {
+            return rows * cols > 1;
+        }
         self.model
             .formula(fid)
             .map(|f| eval::expr_spills(&f.root))
@@ -725,6 +756,10 @@ impl Engine {
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
         perf_count!(evaluations, 1);
+        if let Some((rows, cols)) = self.array_area(cref) {
+            let r = eval::eval_array(&self.model, &f.root, &ctx, &self.spills);
+            return FnResult::Array(fit_to_area(r, rows, cols));
+        }
         eval::eval_expr_rich(&self.model, &f.root, &ctx, &self.spills)
     }
 
@@ -950,6 +985,17 @@ impl Engine {
             }
         }
 
+        // Shift legacy array-formula anchors with their cells (an anchor
+        // whose row/column is deleted goes with it).
+        let old_arrays = std::mem::take(&mut ws.array_formulas);
+        for ((row, col), area) in old_arrays {
+            let coord = if axis == EditAxis::Row { row } else { col };
+            if let Some(nc) = shift_coord(coord, kind, at, n) {
+                let key = if axis == EditAxis::Row { (nc, col) } else { (row, nc) };
+                ws.array_formulas.insert(key, area);
+            }
+        }
+
         // Shift merges (drop any that collapse).
         let old_merges = std::mem::take(&mut ws.merges);
         for m in old_merges {
@@ -995,6 +1041,32 @@ impl Engine {
             }
         }
     }
+}
+
+/// Shape an array-formula result to its fixed `rows × cols` area (Excel's
+/// legacy array rule): a scalar fills every cell; a one-row or one-column
+/// block repeats along that axis; positions past a larger block's edge are
+/// `#N/A`; a bigger block is clipped.
+fn fit_to_area(r: FnResult, rows: u32, cols: u32) -> Vec<Vec<CellValue>> {
+    let g = match r {
+        FnResult::Scalar(v) => vec![vec![v]],
+        FnResult::Array(g) => g,
+    };
+    let (gr, gc) = (g.len(), g.first().map_or(0, Vec::len));
+    (0..rows as usize)
+        .map(|i| {
+            (0..cols as usize)
+                .map(|j| {
+                    let ii = if gr == 1 { 0 } else { i };
+                    let jj = if gc == 1 { 0 } else { j };
+                    g.get(ii)
+                        .and_then(|row| row.get(jj))
+                        .cloned()
+                        .unwrap_or(CellValue::Error(CellError::Na))
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Seed the dirty tracker's volatile set from each formula's extracted refs.

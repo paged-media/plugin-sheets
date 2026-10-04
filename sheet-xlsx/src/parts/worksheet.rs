@@ -63,6 +63,9 @@ pub struct ParsedCell {
     pub formula: Option<String>,
     /// The `s=` cellXfs index, or 0 (default style).
     pub style_index: u32,
+    /// `<f t="array" ref="…">`: the legacy array formula's area as
+    /// `(rows, cols)` from this (anchor) cell.
+    pub array_area: Option<(u32, u32)>,
 }
 
 /// Everything a worksheet part yields.
@@ -165,6 +168,18 @@ pub fn parse(xml: &[u8], shared: &[CompactString]) -> Result<ParsedWorksheet, Xl
                                 c.f_shared_si = si;
                                 c.f_is_shared_master =
                                     t.as_deref() == Some("shared") && attr(&e, b"ref")?.is_some();
+                                if t.as_deref() == Some("array") {
+                                    c.array_area = Some(
+                                        attr(&e, b"ref")?
+                                            .as_deref()
+                                            .and_then(parse_range)
+                                            .map(|r| {
+                                                let n = r.normalized();
+                                                (n.rows(), n.cols())
+                                            })
+                                            .unwrap_or((1, 1)),
+                                    );
+                                }
                             }
                             text_target = Some(TextTarget::Formula);
                         }
@@ -325,6 +340,7 @@ struct CellAccum {
     inline_t: String,
     f_shared_si: Option<u32>,
     f_is_shared_master: bool,
+    array_area: Option<(u32, u32)>,
 }
 
 impl CellAccum {
@@ -346,6 +362,7 @@ impl CellAccum {
             inline_t: String::new(),
             f_shared_si: None,
             f_is_shared_master: false,
+            array_area: None,
         })
     }
 }
@@ -391,6 +408,7 @@ fn push_cell(
         row: acc.row,
         col: acc.col,
         value,
+        array_area: acc.array_area.filter(|_| formula.is_some()),
         formula,
         style_index: acc.style_index,
     });

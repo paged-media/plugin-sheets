@@ -558,6 +558,31 @@ impl SheetSession {
             }
         }
 
+        // A legacy array formula fills its area: the other cells of the area
+        // carry the file's cached values, which would block the fill — they
+        // become blank (style kept) and the engine writes them.
+        for ws in &mut model.sheets {
+            let areas: Vec<((u32, u32), (u32, u32))> =
+                ws.array_formulas.iter().map(|(k, v)| (*k, *v)).collect();
+            for ((r0, c0), (rows, cols)) in areas {
+                for r in r0..r0.saturating_add(rows) {
+                    for c in c0..c0.saturating_add(cols) {
+                        if (r, c) == (r0, c0) {
+                            continue;
+                        }
+                        let keep = ws.cells.get(&(r, c)).map(|cell| cell.style);
+                        if let Some(style) = keep {
+                            if style.0 == 0 {
+                                ws.cells.remove(&(r, c));
+                            } else if let Some(cell) = ws.cells.get_mut(&(r, c)) {
+                                cell.value = CellValue::Empty;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Workbook names whose target is a plain reference become RANGE
         // names (Wave 6) — they loaded as raw text and every formula using
         // one read `#NAME?`.

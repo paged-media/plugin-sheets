@@ -316,7 +316,8 @@ fn encode_worksheet(
             None => s.push_str(&format!(r#"<row r="{r1}"{hidden}>"#)),
         }
         for (c, cell) in cells {
-            encode_cell(&mut s, sid, r, *c, cell, formula_texts);
+            let area = ws.array_formulas.get(&(r, *c)).copied();
+            encode_cell(&mut s, sid, r, *c, cell, formula_texts, area);
         }
         s.push_str("</row>");
     }
@@ -391,6 +392,7 @@ fn encode_cell(
     col: u32,
     cell: &sheet_core::Cell,
     formula_texts: &BTreeMap<(SheetId, u32, u32), String>,
+    array_area: Option<(u32, u32)>,
 ) {
     let r = format!("{}{}", col_to_a1(col), row + 1);
     // Style index: StyleId(0) is default — omit s= for it.
@@ -428,9 +430,18 @@ fn encode_cell(
         }
     };
 
-    let formula_xml = match formula {
-        Some(f) => format!("<f>{}</f>", xml_text(f)),
-        None => String::new(),
+    let formula_xml = match (formula, array_area) {
+        // A legacy array formula keeps its type and area (`t="array"`).
+        (Some(f), Some((rows, cols))) => {
+            let end = format!(
+                "{}{}",
+                col_to_a1(col + cols.saturating_sub(1)),
+                row + rows.max(1)
+            );
+            format!(r#"<f t="array" ref="{r}:{end}">{}</f>"#, xml_text(f))
+        }
+        (Some(f), None) => format!("<f>{}</f>", xml_text(f)),
+        (None, _) => String::new(),
     };
 
     if inner.is_empty() && formula_xml.is_empty() {

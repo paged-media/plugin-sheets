@@ -166,6 +166,10 @@ pub struct Worksheet {
     pub filters: Vec<crate::filter::FilterView>,
     /// Rows hidden by a Paged filter view, computed when the view is set.
     pub filtered_rows: std::collections::BTreeSet<u32>,
+    /// Legacy ARRAY formulas (`<f t="array" ref=…>`, Excel's CSE formulas):
+    /// anchor `(row, col)` -> the area's `(rows, cols)`. The anchor's formula
+    /// is evaluated element-wise and fills exactly that area (additive).
+    pub array_formulas: BTreeMap<(u32, u32), (u32, u32)>,
 }
 
 impl Worksheet {
