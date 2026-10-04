@@ -72,7 +72,9 @@ use sheet_xlsx::{XlsxChart, XlsxDocument};
 pub mod csv;
 mod format;
 mod ops;
-pub use format::{EdgeArg, ResolvedRange, SetStyleResult, StylePatchArg};
+pub use format::{
+    EdgeArg, MergeResult, ResolvedRange, SetStyleResult, SheetLayoutInfo, StylePatchArg,
+};
 pub use ops::{CalcSettingsInfo, StructuralEdit};
 
 // ─────────────────────────────────────────── serde wire structs (camelCase)

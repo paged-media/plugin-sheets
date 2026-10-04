@@ -389,3 +389,90 @@ fn set_style_font_name_and_refusals__feat__sheet_format_cell_style() {
         "{styles}"
     );
 }
+
+// ── 2. merges ────────────────────────────────────────────────────────────
+
+/// Merging keeps the top-left content and clears the rest (Excel's rule;
+/// the cleared inputs come back for the undo journal), the page lowering
+/// spans it, the writer persists `<mergeCells>`, and unmerge removes it.
+#[test]
+fn merge_and_unmerge_round_trip__feat__sheet_layout_merge() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "Title").unwrap();
+    s.set_cell(0, 0, 1, "x").unwrap();
+    s.set_cell(0, 1, 0, "=B1&\"!\"").unwrap();
+    let r = s.merge(0, "A1:C1").unwrap();
+    assert_eq!(r.edits.len(), 1);
+    assert_eq!((r.edits[0].col, r.edits[0].prev_input.as_str()), (1, "x"));
+    assert_eq!(s.get_cell_display(0, 0, 1), "");
+    assert_eq!(s.get_cell_display(0, 1, 0), "!", "dependents recalc");
+    assert!(
+        s.merge(0, "B1:D2").is_err(),
+        "an overlapping merge is refused"
+    );
+    assert!(s.merge(0, "E5").is_err(), "a single cell is not a merge");
+
+    let page = s
+        .get_range_page(0, "A1:C2", LowerOptions::default())
+        .unwrap();
+    assert_eq!(page.merges.len(), 1);
+    let m = &page.merges[0];
+    assert_eq!((m.row, m.col, m.row_span, m.col_span), (0, 0, 1, 3));
+
+    let out = s.save_xlsx().unwrap();
+    assert!(part_text(&out, SHEET1).contains(r#"<mergeCell ref="A1:C1"/>"#));
+    let mut s2 = SheetSession::load_xlsx(&out).unwrap();
+    assert_eq!(s2.get_layout(0).unwrap().merges, vec!["A1:C1".to_string()]);
+    assert_eq!(
+        s2.unmerge(0, "B1").unwrap(),
+        1,
+        "any cell of the merge unmerges it"
+    );
+    assert!(s2.get_layout(0).unwrap().merges.is_empty());
+    let out2 = s2.save_xlsx().unwrap();
+    assert!(!part_text(&out2, SHEET1).contains("mergeCell"));
+}
+
+// ── 3. column widths / row heights ───────────────────────────────────────
+
+/// Widths (characters) and heights (points) persist to `<cols>` and
+/// `<row ht customHeight>`, drive the lowering geometry, and clear back to
+/// the default; out-of-range values are refused.
+#[test]
+fn column_width_and_row_height_round_trip__feat__sheet_layout_sizes() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "a").unwrap();
+    s.set_col_width(0, 1, 2, Some(20.0)).unwrap();
+    s.set_row_height(0, 0, 0, Some(30.0)).unwrap();
+    assert!(s.set_col_width(0, 0, 0, Some(300.0)).is_err());
+    assert!(s.set_row_height(0, 0, 0, Some(-1.0)).is_err());
+
+    let page = s
+        .get_range_page(0, "A1:C2", LowerOptions::default())
+        .unwrap();
+    assert!(
+        (page.cols[1].width_pt - 105.0).abs() < 1e-9,
+        "20 ch = 105 pt"
+    );
+    assert!((page.cols[2].width_pt - 105.0).abs() < 1e-9);
+    assert!((page.rows[0].height_pt - 30.0).abs() < 1e-9);
+
+    let out = s.save_xlsx().unwrap();
+    let xml = part_text(&out, SHEET1);
+    assert!(
+        xml.contains(r#"<col min="2" max="2" width="20" customWidth="1"/>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<row r="1" ht="30" customHeight="1""#),
+        "{xml}"
+    );
+    let mut s2 = SheetSession::load_xlsx(&out).unwrap();
+    let l = s2.get_layout(0).unwrap();
+    assert_eq!(l.col_widths, vec![(1, 20.0), (2, 20.0)]);
+    assert_eq!(l.row_heights, vec![(0, 30.0)]);
+    s2.set_col_width(0, 1, 2, None).unwrap();
+    s2.set_row_height(0, 0, 0, None).unwrap();
+    let l = s2.get_layout(0).unwrap();
+    assert!(l.col_widths.is_empty() && l.row_heights.is_empty());
+}

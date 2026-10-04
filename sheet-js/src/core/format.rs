@@ -324,3 +324,252 @@ impl SheetSession {
         })
     }
 }
+
+/// The result of [`SheetSession::merge`]: recomputed displays + circular
+/// set (like `set_cell`) and the cells the merge CLEARED (their prior and
+/// new input, for the bundle's undo journal).
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeResult {
+    pub changed: Vec<super::CellChange>,
+    pub circular: Vec<super::CircularRef>,
+    pub edits: Vec<super::CellEdit>,
+}
+
+/// A sheet's layout, for a format panel: explicit column widths
+/// (characters) and row heights (points), merges in A1, the frozen split.
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetLayoutInfo {
+    pub col_widths: Vec<(u32, f64)>,
+    pub row_heights: Vec<(u32, f64)>,
+    pub merges: Vec<String>,
+    pub freeze_rows: u32,
+    pub freeze_cols: u32,
+}
+
+/// `A1` text of a 0-based cell.
+fn a1(row: u32, col: u32) -> String {
+    format!("{}{}", sheet_core::col_to_a1(col), row + 1)
+}
+
+/// Excel's column-width ceiling (characters) and row-height ceiling (pt).
+const MAX_COL_WIDTH: f64 = 255.0;
+const MAX_ROW_HEIGHT: f64 = 409.0;
+
+impl SheetSession {
+    // ── merges ──────────────────────────────────────────────────────────
+
+    /// Merge `range` (at least two cells). Excel's rule: the top-left cell
+    /// keeps its content, every other non-blank cell is CLEARED through the
+    /// normal entry lane (dependents recalc; the cleared inputs are returned
+    /// for the undo journal). Refused — model untouched — when the range
+    /// overlaps an existing merge or any part of a spilled array.
+    pub fn merge(&mut self, sheet: u16, range: &str) -> Result<MergeResult, SessionError> {
+        let (sheet, cr) = self.resolve_range(sheet, range)?;
+        let (top, left, bottom, right) = bounds(&cr);
+        if top == bottom && left == right {
+            return Err(SessionError("a merge needs at least two cells".into()));
+        }
+        let overlaps = |m: &sheet_core::RangeRef| {
+            let n = m.normalized();
+            n.start.row <= bottom && n.end.row >= top && n.start.col <= right && n.end.col >= left
+        };
+        let engine = self.engine();
+        let ws = engine.model().sheet(sheet).expect("validated");
+        if ws.merges.iter().any(overlaps) {
+            return Err(SessionError(
+                "the range overlaps an existing merge (unmerge it first)".into(),
+            ));
+        }
+        let mut to_clear = Vec::new();
+        for (&(r, c), _) in ws.cells.range((top, 0)..=(bottom, u32::MAX)) {
+            if c < left || c > right {
+                continue;
+            }
+            let at = sheet_core::CellRef {
+                sheet,
+                row: r,
+                col: c,
+                row_abs: false,
+                col_abs: false,
+            };
+            let spills = engine.spills();
+            if spills.owner_of(at).is_some() || spills.region_of(at).is_some() {
+                return Err(SessionError(
+                    "the range covers part of a spilled array".into(),
+                ));
+            }
+            if (r, c) != (top, left) {
+                let input = super::cell_input_text(engine.model(), sheet, r, c);
+                if !input.is_empty() {
+                    to_clear.push((r, c, input));
+                }
+            }
+        }
+        let mut changed: Vec<super::CellChange> = Vec::new();
+        let mut circular = Vec::new();
+        let mut edits = Vec::new();
+        for (r, c, prev) in to_clear {
+            let res = self.set_cell(sheet, r, c, "")?;
+            changed.retain(|x| {
+                !res.changed
+                    .iter()
+                    .any(|y| (y.sheet, y.row, y.col) == (x.sheet, x.row, x.col))
+            });
+            changed.extend(res.changed);
+            circular = res.circular;
+            edits.push(super::CellEdit {
+                sheet,
+                row: r,
+                col: c,
+                prev_input: prev,
+                next_input: String::new(),
+            });
+        }
+        let range_ref = sheet_core::RangeRef {
+            start: sheet_core::CellRef {
+                sheet,
+                row: top,
+                col: left,
+                row_abs: false,
+                col_abs: false,
+            },
+            end: sheet_core::CellRef {
+                sheet,
+                row: bottom,
+                col: right,
+                row_abs: false,
+                col_abs: false,
+            },
+        };
+        let layout = self
+            .engine_mut()
+            .sheet_layout_mut(sheet)
+            .expect("validated");
+        layout.merges.push(range_ref);
+        self.extra_dirty.insert(sheet);
+        Ok(MergeResult {
+            changed,
+            circular,
+            edits,
+        })
+    }
+
+    /// Remove every merge that intersects `range`; returns how many.
+    pub fn unmerge(&mut self, sheet: u16, range: &str) -> Result<u32, SessionError> {
+        let (sheet, cr) = self.resolve_range(sheet, range)?;
+        let (top, left, bottom, right) = bounds(&cr);
+        let layout = self
+            .engine_mut()
+            .sheet_layout_mut(sheet)
+            .expect("validated");
+        let before = layout.merges.len();
+        layout.merges.retain(|m| {
+            let n = m.normalized();
+            !(n.start.row <= bottom
+                && n.end.row >= top
+                && n.start.col <= right
+                && n.end.col >= left)
+        });
+        let removed = (before - layout.merges.len()) as u32;
+        if removed > 0 {
+            self.extra_dirty.insert(sheet);
+        }
+        Ok(removed)
+    }
+
+    // ── column widths / row heights ─────────────────────────────────────
+
+    /// Set (or with `None`, clear back to the default) the width of columns
+    /// `first..=last`, in characters (the xlsx unit; 0–255).
+    pub fn set_col_width(
+        &mut self,
+        sheet: u16,
+        first: u32,
+        last: u32,
+        width: Option<f64>,
+    ) -> Result<(), SessionError> {
+        self.validate_sheet(sheet)?;
+        if let Some(w) = width {
+            if !(w.is_finite() && (0.0..=MAX_COL_WIDTH).contains(&w)) {
+                return Err(SessionError(format!(
+                    "column width {w} outside 0–{MAX_COL_WIDTH} characters"
+                )));
+            }
+        }
+        let (a, b) = (first.min(last), first.max(last).min(sheet_core::MAX_COL));
+        let layout = self
+            .engine_mut()
+            .sheet_layout_mut(sheet)
+            .expect("validated");
+        for c in a..=b {
+            match width {
+                Some(w) => layout.col_widths.insert(c, w),
+                None => layout.col_widths.remove(&c),
+            };
+        }
+        self.extra_dirty.insert(sheet);
+        Ok(())
+    }
+
+    /// Set (or with `None`, clear) the height of rows `first..=last`, in
+    /// points (0–409).
+    pub fn set_row_height(
+        &mut self,
+        sheet: u16,
+        first: u32,
+        last: u32,
+        height: Option<f64>,
+    ) -> Result<(), SessionError> {
+        self.validate_sheet(sheet)?;
+        if let Some(h) = height {
+            if !(h.is_finite() && (0.0..=MAX_ROW_HEIGHT).contains(&h)) {
+                return Err(SessionError(format!(
+                    "row height {h} outside 0–{MAX_ROW_HEIGHT} pt"
+                )));
+            }
+        }
+        let (a, b) = (first.min(last), first.max(last).min(sheet_core::MAX_ROW));
+        if b - a > T0_LOWER_CELL_CAP as u32 {
+            return Err(SessionError("too many rows in one call".into()));
+        }
+        let layout = self
+            .engine_mut()
+            .sheet_layout_mut(sheet)
+            .expect("validated");
+        for r in a..=b {
+            match height {
+                Some(h) => layout.row_heights.insert(r, h),
+                None => layout.row_heights.remove(&r),
+            };
+        }
+        self.extra_dirty.insert(sheet);
+        Ok(())
+    }
+
+    /// The sheet's layout: explicit sizes, merges (A1) and frozen split.
+    pub fn get_layout(&self, sheet: u16) -> Result<SheetLayoutInfo, SessionError> {
+        self.validate_sheet(sheet)?;
+        let ws = self.engine().model().sheet(sheet).expect("validated");
+        let fp = self.doc.freeze_panes_of(sheet);
+        Ok(SheetLayoutInfo {
+            col_widths: ws.col_widths.iter().map(|(&c, &w)| (c, w)).collect(),
+            row_heights: ws.row_heights.iter().map(|(&r, &h)| (r, h)).collect(),
+            merges: ws
+                .merges
+                .iter()
+                .map(|m| {
+                    let n = m.normalized();
+                    format!(
+                        "{}:{}",
+                        a1(n.start.row, n.start.col),
+                        a1(n.end.row, n.end.col)
+                    )
+                })
+                .collect(),
+            freeze_rows: fp.rows,
+            freeze_cols: fp.cols,
+        })
+    }
+}

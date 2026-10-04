@@ -618,6 +618,53 @@ mod wasm {
             to_js(&r)
         }
 
+        /// Merge a range (top-left keeps its content; other cells are
+        /// cleared). Returns `{changed, circular, edits}`.
+        pub fn merge(&mut self, sheet: u16, range: &str) -> Result<JsValue, JsValue> {
+            let r = self.session.merge(sheet, range).map_err(map_err)?;
+            to_js(&r)
+        }
+
+        /// Remove every merge intersecting a range; returns how many.
+        pub fn unmerge(&mut self, sheet: u16, range: &str) -> Result<u32, JsValue> {
+            self.session.unmerge(sheet, range).map_err(map_err)
+        }
+
+        /// Set (`undefined` clears) the width of columns `first..=last`, in
+        /// characters.
+        pub fn set_col_width(
+            &mut self,
+            sheet: u16,
+            first: u32,
+            last: u32,
+            width: Option<f64>,
+        ) -> Result<(), JsValue> {
+            self.session
+                .set_col_width(sheet, first, last, width)
+                .map_err(map_err)
+        }
+
+        /// Set (`undefined` clears) the height of rows `first..=last`, in
+        /// points.
+        pub fn set_row_height(
+            &mut self,
+            sheet: u16,
+            first: u32,
+            last: u32,
+            height: Option<f64>,
+        ) -> Result<(), JsValue> {
+            self.session
+                .set_row_height(sheet, first, last, height)
+                .map_err(map_err)
+        }
+
+        /// `{colWidths, rowHeights, merges, freezeRows, freezeCols}` of a
+        /// sheet.
+        pub fn get_layout(&self, sheet: u16) -> Result<JsValue, JsValue> {
+            let r = self.session.get_layout(sheet).map_err(map_err)?;
+            to_js(&r)
+        }
+
         /// Resolve a range argument (A1, `Sheet!A1:B2`, a defined name or a
         /// table name) as seen from `sheet`: `{sheet, range}` (range in A1).
         pub fn resolve_range(&self, sheet: u16, text: &str) -> Result<JsValue, JsValue> {
