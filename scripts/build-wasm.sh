@@ -19,7 +19,12 @@ OUT=packages/sheet-bundle/bin
 # total. Mirrors plugin-sdk WASM_BUDGETS — change them together.
 BUDGET=$((100 * 1000 * 1000))
 
-cargo build --release --target wasm32-unknown-unknown -p sheet-js
+# Stamp the source hash into the wasm (option_env!, which cargo tracks)
+# and beside it, so packages/sheet-bundle/test/wasm-fresh.spec.ts can tell
+# a wasm built from these sources from one built from older ones.
+SOURCE_HASH=$(node scripts/source-hash.mjs)
+SHEET_JS_SOURCE_HASH=$SOURCE_HASH \
+  cargo build --release --target wasm32-unknown-unknown -p sheet-js
 
 # Pin check: wasm-bindgen-cli must match the Cargo.lock wasm-bindgen.
 LOCKED=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep version | head -1 | cut -d'"' -f2)
@@ -38,6 +43,8 @@ if command -v wasm-opt >/dev/null 2>&1; then
 else
   echo "warning: wasm-opt not found — shipping unoptimized wasm (CI optimizes)" >&2
 fi
+
+echo "$SOURCE_HASH" > "$OUT/SOURCE_HASH"
 
 SIZE=$(wc -c < "$OUT/sheet_js_bg.wasm" | tr -d ' ')
 echo "sheet_js_bg.wasm: $SIZE bytes (budget $BUDGET)"
