@@ -518,16 +518,18 @@ fn legacy_array_formulas_fill_their_area__feat__sheet_calc_spill() {
 /// externalLink parts — never by opening the source.
 #[test]
 fn external_workbook_refs_evaluate_from_the_cache__feat__sheet_xlsx_roundtrip() {
-    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../corpus/xlsx-corpus/10-extlink.xlsx");
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../corpus/xlsx-corpus/10-extlink.xlsx");
     let mut s = SheetSession::load_xlsx(&std::fs::read(p).unwrap()).unwrap();
     // A1 = [1]Sheet1!A1 is now a live formula over the cached 42.
     assert!(s.get_cell_input(0, 0, 0).starts_with('='), "A1 parsed");
     assert_eq!(s.get_cell_display(0, 0, 0), "42");
-    s.set_cell(0, 5, 5, "=[1]Sheet1!A1*2+'[1]Costs'!C3").unwrap();
+    s.set_cell(0, 5, 5, "=[1]Sheet1!A1*2+'[1]Costs'!C3")
+        .unwrap();
     assert_eq!(s.get_cell_display(0, 5, 5), "87.5");
     s.set_cell(0, 6, 5, "=COUNTA([1]Sheet1!A1:B2)").unwrap();
     assert_eq!(s.get_cell_display(0, 6, 5), "4"); // 42, "hello", TRUE, #DIV/0!
-    // Nothing about the shadow sheets reaches the saved workbook.
+                                                  // Nothing about the shadow sheets reaches the saved workbook.
     let saved = s.save_xlsx().unwrap();
     let r = SheetSession::load_xlsx(&saved).unwrap();
     assert_eq!(r.list_sheets().len(), s.list_sheets().len());
