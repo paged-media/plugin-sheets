@@ -179,6 +179,11 @@ impl SheetSession {
             )));
         }
         let patch: StylePatch = patch.into();
+        if let Some(code) = &patch.num_fmt {
+            // The engine must be able to RENDER the code it stores.
+            sheet_format::compile(code)
+                .map_err(|e| SessionError(format!("number format {code:?}: {e:?}")))?;
+        }
         if patch.is_empty() {
             return Ok(SetStyleResult::default());
         }

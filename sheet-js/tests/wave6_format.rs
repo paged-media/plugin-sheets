@@ -373,6 +373,16 @@ fn set_style_font_name_and_refusals__feat__sheet_format_cell_style() {
     ] {
         assert!(s.set_style(0, "A1", bad).is_err());
     }
+    assert!(s
+        .set_style(
+            0,
+            "A1",
+            StylePatchArg {
+                num_fmt: Some("0;0;0;@;0".into()), // five sections
+                ..Default::default()
+            },
+        )
+        .is_err());
     assert!(!s.metadata().dirty, "a refused patch changes nothing");
     s.set_style(
         0,
