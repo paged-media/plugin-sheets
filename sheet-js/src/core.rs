@@ -69,6 +69,9 @@ use sheet_parser::{
 };
 use sheet_xlsx::{XlsxChart, XlsxDocument};
 
+mod ops;
+pub use ops::{CalcSettingsInfo, StructuralEdit};
+
 // ─────────────────────────────────────────── serde wire structs (camelCase)
 
 /// One changed cell after an edit (spec §9: `display` is the number-FORMATTED
@@ -362,6 +365,13 @@ pub struct SheetSession {
     /// [`SheetSession::get_grid_scene`] for the SAME sheet. `None` until the
     /// panel records one; a selection on sheet A is not shown on sheet B.
     selection: Option<(SheetId, sheet_grid::GridSelection)>,
+    /// Sheets to re-encode on the next save although no cell in them was
+    /// edited (a row/column insert moved their cells; an unparsed formula's
+    /// text was rewritten by a sheet rename). Cleared by a successful save.
+    extra_dirty: BTreeSet<SheetId>,
+    /// A workbook-structure change (sheet added/renamed/deleted, calc
+    /// settings) is pending a save.
+    structure_changed: bool,
 }
 
 /// The T0 cap on cells materialized by a single [`SheetSession::get_range_lowered`]
@@ -431,6 +441,8 @@ impl SheetSession {
             edited: BTreeSet::new(),
             unparsed_formulas: 0,
             selection: None,
+            extra_dirty: BTreeSet::new(),
+            structure_changed: false,
         }
     }
 
@@ -440,7 +452,18 @@ impl SheetSession {
     /// keep their raw text + cached value and are counted. Then builds the
     /// engine and `recalc_all`s.
     pub fn load_xlsx(bytes: &[u8]) -> Result<SheetSession, SessionError> {
-        let config = EngineConfig::default();
+        Self::load_xlsx_at(bytes, EngineConfig::default().now_serial)
+    }
+
+    /// [`SheetSession::load_xlsx`] with the `NOW`/`TODAY` serial already set,
+    /// so the load-time recalc evaluates volatile cells against the host
+    /// clock instead of serial 0 (Wave 4 — the wasm shim carries the clock
+    /// across a load).
+    pub fn load_xlsx_at(bytes: &[u8], now_serial: f64) -> Result<SheetSession, SessionError> {
+        let config = EngineConfig {
+            now_serial,
+            ..EngineConfig::default()
+        };
         let mut doc = XlsxDocument::open(bytes).map_err(|e| SessionError(e.to_string()))?;
         let mut model = std::mem::take(&mut doc.model);
 
@@ -493,6 +516,8 @@ impl SheetSession {
             edited: BTreeSet::new(),
             unparsed_formulas,
             selection: None,
+            extra_dirty: BTreeSet::new(),
+            structure_changed: false,
         })
     }
 
@@ -538,6 +563,7 @@ impl SheetSession {
             }
             dirty_sheets.insert(sheet);
         }
+        dirty_sheets.extend(self.extra_dirty.iter().copied());
         for sheet in dirty_sheets {
             self.doc.mark_sheet_dirty(sheet);
         }
@@ -556,6 +582,8 @@ impl SheetSession {
         // 6. The edits are now persisted in the bytes — clear the pending set so
         //    `metadata().dirty` reads false until the next edit.
         self.edited.clear();
+        self.extra_dirty.clear();
+        self.structure_changed = false;
 
         Ok(bytes)
     }
@@ -2002,7 +2030,9 @@ impl SheetSession {
             // "dirty" = unsaved edits pending (panel's save-button state). The
             // container's own dirty flag only flips at save time, so we track
             // the edited-cell set instead (cleared on a successful save).
-            dirty: !self.edited.is_empty(),
+            dirty: !self.edited.is_empty()
+                || !self.extra_dirty.is_empty()
+                || self.structure_changed,
             unparsed_formulas: self.unparsed_formulas,
         }
     }

@@ -62,6 +62,7 @@ pub mod core;
 mod wasm {
     use crate::core::{
         FindOptions, FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg, SheetSession,
+        StructuralEdit,
     };
     use wasm_bindgen::prelude::*;
 
@@ -87,7 +88,9 @@ mod wasm {
         /// Parse + load an xlsx into this engine (replaces the current
         /// workbook). Recalc runs as part of the load.
         pub fn load_xlsx(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-            self.session = SheetSession::load_xlsx(bytes).map_err(map_err)?;
+            // Carry the host clock across the load so its recalc sees it.
+            let now = self.session.now_serial();
+            self.session = SheetSession::load_xlsx_at(bytes, now).map_err(map_err)?;
             Ok(())
         }
 
@@ -264,6 +267,29 @@ mod wasm {
             let lowered = self
                 .session
                 .get_range_styled(sheet, range, opts)
+                .map_err(map_err)?;
+            to_js(&lowered)
+        }
+
+        /// Lower a range for the PAGE (Wave 4): real per-cell styles with
+        /// conditional formatting folded on top, grid rules on by default.
+        /// The placed table's door; `get_range_lowered` keeps its key-0
+        /// contract.
+        pub fn get_range_page(
+            &self,
+            sheet: u16,
+            range: &str,
+            opts: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let opts: LowerOptions = if opts.is_undefined() || opts.is_null() {
+                LowerOptions::default()
+            } else {
+                serde_wasm_bindgen::from_value(opts)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            };
+            let lowered = self
+                .session
+                .get_range_page(sheet, range, opts)
                 .map_err(map_err)?;
             to_js(&lowered)
         }
@@ -452,6 +478,83 @@ mod wasm {
         /// Update the `NOW`/`TODAY` serial.
         pub fn set_now(&mut self, serial: f64) {
             self.session.set_now(serial);
+        }
+
+        /// Set `NOW`/`TODAY` from the host clock (`Date.now()` + the host's
+        /// `getTimezoneOffset()`); the serial conversion (date system,
+        /// local time) is Rust's. Returns the serial. No recalc.
+        pub fn set_clock(&mut self, unix_ms: f64, tz_offset_min: f64) -> f64 {
+            self.session.set_clock(unix_ms, tz_offset_min)
+        }
+
+        /// Recalculate volatile cells against the current clock:
+        /// `{changed,circular}`.
+        pub fn recalc_volatile(&mut self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.recalc_volatile())
+        }
+
+        /// The `<calcPr>` iteration knobs in effect:
+        /// `{iterative,maxIter,maxChange}`.
+        pub fn calc_settings(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.calc_settings())
+        }
+
+        /// Toggle iterative calculation (written back to `<calcPr>` on save).
+        pub fn set_iterative(
+            &mut self,
+            on: bool,
+            max_iter: u32,
+            max_change: f64,
+        ) -> Result<JsValue, JsValue> {
+            to_js(&self.session.set_iterative(on, max_iter, max_change))
+        }
+
+        /// Add a worksheet at the end (empty name = next free `SheetN`);
+        /// returns its id.
+        pub fn add_sheet(&mut self, name: &str) -> Result<u16, JsValue> {
+            self.session.add_sheet(name).map_err(map_err)
+        }
+
+        /// Rename a worksheet (Excel's name rules; unique).
+        pub fn rename_sheet(&mut self, sheet: u16, name: &str) -> Result<(), JsValue> {
+            self.session.rename_sheet(sheet, name).map_err(map_err)
+        }
+
+        /// Delete a worksheet (references to it become `#REF!`); returns
+        /// `{changed,circular}`.
+        pub fn delete_sheet(&mut self, sheet: u16) -> Result<JsValue, JsValue> {
+            let r = self.session.delete_sheet(sheet).map_err(map_err)?;
+            to_js(&r)
+        }
+
+        /// Insert/delete rows or columns: `kind` is `"insertRows"`,
+        /// `"deleteRows"`, `"insertCols"` or `"deleteCols"`; `at` is
+        /// 0-based. References are rewritten; refused (model untouched)
+        /// when preserved content would be left addressing the wrong cells.
+        /// Returns `{changed,circular}`.
+        pub fn structural_edit(
+            &mut self,
+            sheet: u16,
+            kind: &str,
+            at: u32,
+            n: u32,
+        ) -> Result<JsValue, JsValue> {
+            let kind = match kind {
+                "insertRows" => StructuralEdit::InsertRows,
+                "deleteRows" => StructuralEdit::DeleteRows,
+                "insertCols" => StructuralEdit::InsertCols,
+                "deleteCols" => StructuralEdit::DeleteCols,
+                other => {
+                    return Err(JsValue::from_str(&format!(
+                        "unknown structural edit {other:?}"
+                    )))
+                }
+            };
+            let r = self
+                .session
+                .structural_edit(sheet, kind, at, n)
+                .map_err(map_err)?;
+            to_js(&r)
         }
     }
 
