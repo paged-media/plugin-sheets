@@ -248,9 +248,13 @@ fn encode_worksheet(
         r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
     );
 
-    // Captured children that sit before <sheetData>.
+    // Captured children that sit before <sheetData>, in schema order around
+    // the modelled ones (ECMA-376 §18.3.1.99): `sheetPr` precedes
+    // `<dimension>`; `sheetViews` / `sheetFormatPr` follow it.
     for c in binding.captured.before() {
-        s.push_str(&String::from_utf8_lossy(&c.bytes));
+        if captured_local(&c.bytes) == "sheetPr" {
+            s.push_str(&String::from_utf8_lossy(&c.bytes));
+        }
     }
 
     // <dimension>
@@ -261,6 +265,12 @@ fn encode_worksheet(
             s.push_str(&format!(r#"<dimension ref="{a}"/>"#));
         } else {
             s.push_str(&format!(r#"<dimension ref="{a}:{b}"/>"#));
+        }
+    }
+
+    for c in binding.captured.before() {
+        if captured_local(&c.bytes) != "sheetPr" {
+            s.push_str(&String::from_utf8_lossy(&c.bytes));
         }
     }
 
@@ -283,8 +293,9 @@ fn encode_worksheet(
     for (&(r, c), cell) in ws.iter_cells() {
         rows.entry(r).or_default().push((c, cell));
     }
-    // A hidden row with no cells still needs its `<row hidden="1">`.
-    for &r in &ws.hidden_rows {
+    // A hidden row, or one with only a custom height, still needs its
+    // `<row>` even with no cells.
+    for &r in ws.hidden_rows.iter().chain(ws.row_heights.keys()) {
         rows.entry(r).or_default();
     }
     for (&r, cells) in &rows {
@@ -309,8 +320,15 @@ fn encode_worksheet(
         }
         s.push_str("</row>");
     }
-    // Any row that has only a custom height but no cells.
     s.push_str("</sheetData>");
+
+    // Captured children that precede `<mergeCells>` in schema order
+    // (`sheetProtection`, `autoFilter`, … — ECMA-376 §18.3.1.99).
+    for c in binding.captured.after() {
+        if BEFORE_MERGE_CELLS.contains(&captured_local(&c.bytes).as_str()) {
+            s.push_str(&String::from_utf8_lossy(&c.bytes));
+        }
+    }
 
     // <mergeCells>
     if !ws.merges.is_empty() {
@@ -324,13 +342,45 @@ fn encode_worksheet(
         s.push_str("</mergeCells>");
     }
 
-    // Captured children that sit after <sheetData>.
+    // The remaining captured children (conditional formatting, page setup,
+    // drawing, extLst, …) follow `<mergeCells>`.
     for c in binding.captured.after() {
-        s.push_str(&String::from_utf8_lossy(&c.bytes));
+        if !BEFORE_MERGE_CELLS.contains(&captured_local(&c.bytes).as_str()) {
+            s.push_str(&String::from_utf8_lossy(&c.bytes));
+        }
     }
 
     s.push_str("</worksheet>");
     Ok(s.into_bytes())
+}
+
+/// The `<worksheet>` children that sit between `<sheetData>` and
+/// `<mergeCells>` (ECMA-376 §18.3.1.99 child order).
+const BEFORE_MERGE_CELLS: &[&str] = &[
+    "sheetCalcPr",
+    "sheetProtection",
+    "protectedRanges",
+    "scenarios",
+    "autoFilter",
+    "sortState",
+    "dataConsolidate",
+    "customSheetViews",
+];
+
+/// The local name of a captured subtree's root element (`""` if none).
+pub(crate) fn captured_local(bytes: &[u8]) -> String {
+    let mut reader = quick_xml::Reader::from_reader(bytes);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(quick_xml::events::Event::Start(e)) | Ok(quick_xml::events::Event::Empty(e)) => {
+                return String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => return String::new(),
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 /// Encode one `<c>` cell: address, type, style index, value, and formula.
