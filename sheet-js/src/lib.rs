@@ -323,6 +323,52 @@ mod wasm {
             to_js(&lowered)
         }
 
+        /// Wave 5 — the re-enterable INPUT text of every cell in `range`
+        /// (row-major `string[][]`; formulas with `=`): a copy's snapshot.
+        pub fn get_range_inputs(&self, sheet: u16, range: &str) -> Result<JsValue, JsValue> {
+            let rows = self
+                .session
+                .get_range_inputs(sheet, range)
+                .map_err(map_err)?;
+            to_js(&rows)
+        }
+
+        /// Wave 5 — re-address copied inputs (`string[][]`) for a paste
+        /// `drow` rows down / `dcol` columns right on `sheet` (the copy
+        /// rule: `$` honoured, off-grid → `#REF!`). Pure — writes nothing.
+        pub fn shift_formulas(
+            &self,
+            sheet: u16,
+            inputs: JsValue,
+            drow: i32,
+            dcol: i32,
+        ) -> Result<JsValue, JsValue> {
+            let inputs: Vec<Vec<String>> = serde_wasm_bindgen::from_value(inputs)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let out = self
+                .session
+                .shift_formulas(sheet, &inputs, drow as i64, dcol as i64)
+                .map_err(map_err)?;
+            to_js(&out)
+        }
+
+        /// Wave 5 — fill `dst` from `src` (the fill handle with
+        /// `series = true`; fill down/right with `false`). Returns
+        /// `{changed, circular, edits}` — `edits` journal as one undo step.
+        pub fn fill_range(
+            &mut self,
+            sheet: u16,
+            src: &str,
+            dst: &str,
+            series: bool,
+        ) -> Result<JsValue, JsValue> {
+            let result = self
+                .session
+                .fill_range(sheet, src, dst, series)
+                .map_err(map_err)?;
+            to_js(&result)
+        }
+
         /// Read a range (`"A1:D9"` or `"A1"`) as a rectangular grid of
         /// formatted DISPLAY strings (K-6 / S-14 — the clipboard copy
         /// interchange). Returns `string[][]` (row-major, `""` for empty

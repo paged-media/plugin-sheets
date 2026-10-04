@@ -114,3 +114,75 @@
   provenance: ["sheet-js/src/core.rs::list_functions", "sheet-core/build.rs FUNC_META codegen", "spec §7 registry-driven dispatch"]
   tests:
     rust: ["sheet-conformance/tests/js_surface.rs::sheet_js_list_functions"]
+
+# ── Wave 5 — clipboard reference adjust + autofill (sheet-js/src/core/fill.rs)
+
+- id: sheet.edit.clipboard.range-inputs
+  title: A copy snapshots the range's re-enterable INPUT texts in one call (formulas with '=', literals as typed, blanks ""), bounded by the T0 cell cap
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::get_range_inputs"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_clipboard_range_inputs"]
+
+- id: sheet.edit.clipboard.shift
+  title: Paste re-addresses relative references by the paste offset (copy rule — $ honoured, off-grid → #REF!); values and unparseable text paste verbatim
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::shift_formulas", "sheet-parser/src/rewrite.rs::rewrite_fill", "Microsoft 'Move or copy a formula' — relative references change"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_clipboard_shift"]
+
+- id: sheet.edit.fill.numbers
+  title: "Fill handle over numbers: one number copies; two or more continue the least-squares linear trend (Excel AutoFill), rounded to 15 significant digits"
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::linear_series", "Microsoft 'Fill data automatically in worksheet cells'"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_numbers"]
+
+- id: sheet.edit.fill.dates
+  title: "Fill handle over dates: one date steps a day; dates on one day of the month step by their month delta with the day clamped to short months; otherwise the linear trend; the filled cells carry the source format"
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::month_series"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_dates"]
+
+- id: sheet.edit.fill.names
+  title: "Weekday and month names (short/long, English and German) continue their list by a constant step; the last source's UPPER/lower case is kept"
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::name_series"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_names"]
+
+- id: sheet.edit.fill.numbered-text
+  title: Text ending in an integer with a shared prefix counts on ("Item 1" → "Item 2"), keeping zero padding
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::numbered_text_series"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_numbered_text"]
+
+- id: sheet.edit.fill.formulas
+  title: Fill repeats formulas with relative references re-addressed per target cell ($ parts stay); per-cell prev/next inputs returned for one undo group
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::fill_range"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_formulas"]
+
+- id: sheet.edit.fill.copy
+  title: Fill down / fill right (series off) repeats the source block cyclically — no series
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::fill_range"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_copy"]
+
+- id: sheet.edit.fill.direction
+  title: Fill runs down, up, right and left (the series continues away from the source); a target that does not extend the source in exactly one direction is refused, model untouched
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::fill_range"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_direction"]
+
+- id: sheet.edit.fill.lanes
+  title: Each lane (column when filling down) fills on its own; a mixed lane repeats its source
+  status: implemented
+  provenance: ["sheet-js/src/core/fill.rs::series_of"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_fill.rs::sheet_edit_fill_lanes"]

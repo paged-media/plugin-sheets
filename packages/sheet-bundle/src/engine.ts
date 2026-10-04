@@ -483,6 +483,18 @@ export interface SheetEngine {
   listNames?(): NameInfo[];
   /** Resolve A1 / a name / a table name to `{sheet, range}`. */
   resolveRange?(sheet: number, text: string): ResolvedRange;
+
+  // ── Wave 5 doors (editing fundamentals). ────────────────────────────
+
+  /** The re-enterable INPUT text of every cell in `range` (row-major;
+   *  formulas with `=`) — a copy's snapshot, one call for the block. */
+  getRangeInputs?(sheet: number, range: string): string[][];
+  /** Re-address copied inputs for a paste `dRow` rows down / `dCol`
+   *  columns right (the copy rule — `$` honoured, off-grid `#REF!`). Pure. */
+  shiftFormulas?(sheet: number, inputs: string[][], dRow: number, dCol: number): string[][];
+  /** Fill `dst` from `src` (`series` = the fill handle; false = fill
+   *  down/right). The per-cell rewrites journal as one undo step. */
+  fillRange?(sheet: number, src: string, dst: string, series: boolean): SortResult;
 }
 
 /** A range argument resolved by the engine: its sheet, normalized A1, and
@@ -668,6 +680,9 @@ export interface SheetWasmEngine {
   rename_sheet?(sheet: number, name: string): void;
   delete_sheet?(sheet: number): { changed: CellChange[] };
   structural_edit?(sheet: number, kind: string, at: number, n: number): { changed: CellChange[] };
+  get_range_inputs?(sheet: number, range: string): string[][];
+  shift_formulas?(sheet: number, inputs: string[][], drow: number, dcol: number): string[][];
+  fill_range?(sheet: number, src: string, dst: string, series: boolean): SortResult;
   load_csv?(text: string, delimiter: string, locale_tag: string, sheet_name: string): void;
   // Wave 6.
   set_style?(sheet: number, range: string, patch: CellStylePatch): { cells: number; styles: number };
@@ -833,6 +848,14 @@ export function wrapEngine(
     listNames: () => need("list_names")() as NameInfo[],
     resolveRange: (sheet, text) =>
       need("resolve_range")(sheet, text) as ResolvedRange,
+    getRangeInputs: (sheet, range) =>
+      need("get_range_inputs")(sheet, range) as string[][],
+    shiftFormulas: (sheet, inputs, dRow, dCol) =>
+      need("shift_formulas")(sheet, inputs, dRow, dCol) as string[][],
+    fillRange: (sheet, src, dst, series) => {
+      tick();
+      return need("fill_range")(sheet, src, dst, series) as SortResult;
+    },
   };
 }
 

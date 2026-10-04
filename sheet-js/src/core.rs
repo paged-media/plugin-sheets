@@ -67,6 +67,7 @@ use sheet_parser::{
 use sheet_xlsx::{XlsxChart, XlsxDocument};
 
 pub mod csv;
+mod fill;
 mod format;
 mod ops;
 pub use format::{
