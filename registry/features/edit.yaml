@@ -46,11 +46,18 @@
     rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_collation"]
 
 - id: sheet.edit.sort.formula-boundary
-  title: Sort over formula cells or spill output REFUSES with a boundary error, model untouched (no copy/move ref rewrite exists — rewrite_fill is a T1 stub; silent reference corruption is never an option)
+  title: Sort over spilled array output REFUSES with a boundary error, model untouched; every moved formula is re-parsed BEFORE anything applies, so a refusal never half-applies (formula cells themselves move — sheet.edit.sort.formulas)
   status: implemented
-  provenance: ["sheet-js/src/core.rs::sort_range", "sheet-parser/src/rewrite.rs::rewrite_fill (T1 stub)"]
+  provenance: ["sheet-js/src/core.rs::sort_range"]
   tests:
     rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_formula_boundary"]
+
+- id: sheet.edit.sort.formulas
+  title: Sort carries formula cells with their row, re-addressed by the copy rule (sheet_parser::rewrite_fill — relative refs shift by the row delta, $-absolute refs stay, off-grid → #REF!); references from outside the range keep addressing positions (Excel)
+  status: implemented
+  provenance: ["sheet-js/src/core.rs::sort_range", "sheet-parser/src/rewrite.rs::rewrite_fill", "Microsoft 'Sort data in a range or table' — formulas with relative references are adjusted"]
+  tests:
+    rust: ["sheet-conformance/tests/edit_ops.rs::sheet_edit_sort_formulas"]
 
 - id: sheet.edit.find.values
   title: find_all matches the formatted DISPLAY text by default (a formula cell is found by its computed display); row-major hits with excerpts; empty needle is a boundary error

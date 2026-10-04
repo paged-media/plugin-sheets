@@ -68,7 +68,7 @@ pub use error::ParseError;
 pub use extract::{extract_refs, RefSet};
 pub use future::{storage_prefix, strip_storage_prefixes};
 pub use print::{print, print_ooxml};
-pub use rewrite::{rewrite, Edit};
+pub use rewrite::{rewrite, rewrite_fill, Edit};
 
 use sheet_core::ast::{Formula, NameId};
 use sheet_core::SheetId;
@@ -90,6 +90,13 @@ pub trait SheetNames {
     /// The sheet's display name, or `None` for an unknown id (prints
     /// `#REF!`).
     fn sheet_name(&self, id: SheetId) -> Option<&str>;
+
+    /// A defined name's spelling, so a formula using it prints back as typed.
+    /// The default (`None`) keeps the opaque `_NAME<id>` placeholder the
+    /// parse-print fixpoint tests resolve themselves.
+    fn defined_name(&self, _id: NameId) -> Option<&str> {
+        None
+    }
 }
 
 /// Parse a formula `input` (WITHOUT the leading `=`) into a [`Formula`].

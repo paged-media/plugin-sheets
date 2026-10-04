@@ -64,7 +64,9 @@ use sheet_lower::{
     lower_range, lower_range_styled, paginate as lower_paginate, CellRange, FrameBox, Page,
     ViewOptions,
 };
-use sheet_parser::{parse, print, print_ooxml, strip_storage_prefixes, ParseCtx, SheetNames};
+use sheet_parser::{
+    parse, print, print_ooxml, rewrite_fill, strip_storage_prefixes, ParseCtx, SheetNames,
+};
 use sheet_xlsx::{XlsxChart, XlsxDocument};
 
 // ─────────────────────────────────────────── serde wire structs (camelCase)
@@ -649,15 +651,15 @@ impl SheetSession {
     /// - **Cell VALUES move; per-cell styles stay with their position**
     ///   (banded/positional formatting is the publishing reading).
     ///
-    /// **Formula boundary (the honest subset):** VALUES-ONLY ranges sort
-    /// fully. If any movable cell holds a formula — or is engine-owned spill
-    /// output — the sort REFUSES with a boundary error and the model is
-    /// untouched. Excel rewrites relative references when sorting moves a
-    /// formula; the engine's only rewrite machinery today is the structural
-    /// insert/delete pass (`sheet_parser::rewrite`) — the `$`-honouring
-    /// copy/move rewrite (`rewrite_fill`) is an unimplemented T1 stub, so a
-    /// reference-adjusted sort cannot be built without silently corrupting
-    /// references. Refusal is the only honest behavior (never corrupt).
+    /// **Formulas move with their row (Excel's rule).** A formula cell is
+    /// carried to its new row through `sheet_parser::rewrite_fill`: relative
+    /// references shift by the row delta, `$`-absolute ones stay — so
+    /// `=B5*C5` sorted to row 2 reads `=B2*C2`, a `$B$1` constant stays put.
+    /// References from OUTSIDE the range into it are not rewritten (they keep
+    /// addressing positions, as in Excel). Every new formula text is parsed
+    /// BEFORE anything is applied, so a refusal leaves the model untouched.
+    /// Engine-owned spill output (and so a spilling anchor's region) still
+    /// REFUSES with a boundary error — part of an array cannot move.
     ///
     /// Rows re-enter through the NORMAL `Engine::enter` lane (each moved
     /// cell's re-enterable input, `get_cell_input` semantics), so the
@@ -710,17 +712,9 @@ impl SheetSession {
             let engine = self.engine();
             let model = engine.model();
             let spills = engine.spills();
-            if let Some(ws) = model.sheet(sheet) {
+            if model.sheet(sheet).is_some() {
                 for row in first_data..=bottom {
                     for col in left..=right {
-                        if let Some(cell) = ws.cell(row, col) {
-                            if cell.formula.is_some() {
-                                return Err(SessionError(format!(
-                                    "sort over formulas not yet supported (formula at {})",
-                                    a1_of(row, col)
-                                )));
-                            }
-                        }
                         let cref = CellRef {
                             sheet,
                             row,
@@ -740,8 +734,14 @@ impl SheetSession {
         }
 
         // ── snapshot every movable row: the key VALUE (typed compare) + the
-        //    re-enterable inputs (the move payload).
-        let rows_snap: Vec<(CellValue, Vec<String>)> = {
+        //    re-enterable inputs (the move payload) + each formula's AST (so
+        //    it can be re-addressed for its destination row).
+        type Snapshot = (
+            CellValue,
+            Vec<String>,
+            Vec<Option<sheet_core::ast::Formula>>,
+        );
+        let rows_snap: Vec<Snapshot> = {
             let model = self.engine().model();
             (first_data..=bottom)
                 .map(|row| {
@@ -753,7 +753,17 @@ impl SheetSession {
                     let inputs = (left..=right)
                         .map(|col| cell_input_text(model, sheet, row, col))
                         .collect();
-                    (key, inputs)
+                    let formulas = (left..=right)
+                        .map(|col| {
+                            model
+                                .sheet(sheet)
+                                .and_then(|ws| ws.cell(row, col))
+                                .and_then(|c| c.formula)
+                                .and_then(|fid| model.formula(fid))
+                                .cloned()
+                        })
+                        .collect();
+                    (key, inputs, formulas)
                 })
                 .collect()
         };
@@ -762,15 +772,49 @@ impl SheetSession {
         let mut order: Vec<usize> = (0..rows_snap.len()).collect();
         order.sort_by(|&a, &b| sort_key_cmp(&rows_snap[a].0, &rows_snap[b].0, ascending));
 
+        // ── the destination input of every cell: a value moves verbatim, a
+        //    formula is re-addressed for its new row (`rewrite_fill`), then
+        //    printed. Validate every rewritten formula BEFORE applying any.
+        let next_inputs: Vec<Vec<String>> = {
+            let model = self.engine().model();
+            let names = ModelSheetNames { model };
+            let ctx = ModelParseCtx {
+                model,
+                current: sheet,
+            };
+            let mut out = Vec::with_capacity(order.len());
+            for (i, &src) in order.iter().enumerate() {
+                let drow = i as i64 - src as i64;
+                let mut row_inputs = Vec::with_capacity(rows_snap[src].1.len());
+                for (j, input) in rows_snap[src].1.iter().enumerate() {
+                    match &rows_snap[src].2[j] {
+                        Some(f) if drow != 0 => {
+                            let text = print(&rewrite_fill(f, drow, 0), sheet, &names);
+                            if let Err(e) = parse(&text, &ctx) {
+                                return Err(SessionError(format!(
+                                    "sort cannot move the formula at {} ({e})",
+                                    a1_of(first_data + src as u32, left + j as u32)
+                                )));
+                            }
+                            row_inputs.push(format!("={text}"));
+                        }
+                        _ => row_inputs.push(input.clone()),
+                    }
+                }
+                out.push(row_inputs);
+            }
+            out
+        };
+
         // ── apply through the NORMAL entry lane (graph/dirty/spill
         //    bookkeeping intact; external dependents recalc as usual).
         let mut edits: Vec<CellEdit> = Vec::new();
         let mut changed_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
         let mut circular_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
-        for (i, &src) in order.iter().enumerate() {
+        for i in 0..order.len() {
             let dst_row = first_data + i as u32;
             for (j, col) in (left..=right).enumerate() {
-                let next = &rows_snap[src].1[j];
+                let next = &next_inputs[i][j];
                 let prev = &rows_snap[i].1[j];
                 if next == prev {
                     continue;
@@ -2157,5 +2201,8 @@ struct ModelSheetNames<'a> {
 impl SheetNames for ModelSheetNames<'_> {
     fn sheet_name(&self, id: SheetId) -> Option<&str> {
         self.model.sheet(id).map(|ws| ws.name.as_str())
+    }
+    fn defined_name(&self, id: sheet_core::NameId) -> Option<&str> {
+        self.model.names.get(id).map(|d| d.name.as_str())
     }
 }

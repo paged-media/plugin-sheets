@@ -21,7 +21,7 @@
 // only routes the active sheet/range in, journals the engine's per-cell
 // prev/next input rewrites as ONE grouped ADR-012 step (a sort or
 // replace-all undoes with a single Cmd-Z), and surfaces the engine's honest
-// boundary messages ("sort over formulas not yet supported"). All sort /
+// boundary messages ("sort over a spilled region not supported"). All sort /
 // find / replace SEMANTICS are pinned engine-side in
 // sheet-conformance/tests/edit_ops.rs — none are re-tested (or re-implemented)
 // here. No DOM, no wasm: a stateful fake engine applies the edits it reports
@@ -211,11 +211,11 @@ describe("sheet_plugin_sort_command: session glue + grouped journal", () => {
 
   it("surfaces the engine's refusal message honestly (nothing journaled)", () => {
     const { session, setSortError } = booted();
-    setSortError("sort over formulas not yet supported (formula at A2)");
+    setSortError("sort over a spilled region not supported (spilled cell at A2)");
     const res = session.sortRange(0, true, false);
     expect(res).toEqual({
       ok: false,
-      message: "sort over formulas not yet supported (formula at A2)",
+      message: "sort over a spilled region not supported (spilled cell at A2)",
     });
     expect(session.canUndoCellEdit()).toBe(false);
   });

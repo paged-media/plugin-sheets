@@ -152,7 +152,12 @@ impl Printer<'_> {
                 // back. (Documented: real name spelling round-trip is T1,
                 // when the printer gains a NameTable.)
                 if let Expr::Name(nid) = e {
-                    let _ = write!(out, "_NAME{}", nid.0);
+                    match self.sheets.defined_name(*nid) {
+                        Some(name) => out.push_str(name),
+                        None => {
+                            let _ = write!(out, "_NAME{}", nid.0);
+                        }
+                    }
                 }
             }
             Expr::Unary(op, inner) => self.unary(*op, inner, out),

@@ -1187,6 +1187,9 @@ impl sheet_parser::SheetNames for ModelSheetNames<'_> {
     fn sheet_name(&self, id: SheetId) -> Option<&str> {
         self.model.sheet(id).map(|ws| ws.name.as_str())
     }
+    fn defined_name(&self, id: sheet_core::ast::NameId) -> Option<&str> {
+        self.model.names.get(id).map(|d| d.name.as_str())
+    }
 }
 
 /// The cell currently being evaluated — exposed for the engine to build the

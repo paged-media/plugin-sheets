@@ -39,9 +39,9 @@
 //! The headline rulings exercised:
 //! - sort: STABLE, numbers-then-text typed order, blanks last BOTH
 //!   directions, header pinning, the honest case-insensitive code-point
-//!   collation (no ICU), and the FORMULA/SPILL REFUSAL boundary (the engine
-//!   has no copy/move reference rewrite yet — `rewrite_fill` is a T1 stub —
-//!   so sorting formula cells would corrupt relative refs; we refuse).
+//!   collation (no ICU), formula cells moving with their row (relative refs
+//!   re-addressed by `rewrite_fill`, Excel's rule) and the SPILL REFUSAL
+//!   boundary.
 //! - find: display-vs-input surface (`in_formulas`), case toggle, entire-cell.
 //! - replace: operates on INPUT text through the normal `set_cell` lane; a
 //!   replacement that does not parse SKIPS the cell (reported, untouched);
@@ -202,23 +202,76 @@ fn sheet_edit_sort_collation_case_insensitive_codepoint_order() {
 
 // ── sheet.edit.sort.formula-boundary ─────────────────────────────────────────
 
-/// A formula cell among the movable rows REFUSES the sort with a clean
-/// boundary error and the model is untouched (the honest subset — the
-/// engine has no copy/move ref rewrite; silent corruption is never an
-/// option).
-#[test]
-fn sheet_edit_sort_formula_boundary_refuses_and_leaves_model_intact() {
-    let mut s = session_with(&[(0, 0, "5"), (1, 0, "=A1+1"), (2, 0, "1")]);
+// ── sheet.edit.sort.formulas ─────────────────────────────────────────────────
 
-    let err = s.sort_range(0, "A1:A3", 0, true, false).unwrap_err();
-    assert!(
-        err.0.contains("sort over formulas not yet supported"),
-        "got: {}",
-        err.0
-    );
-    // Untouched: values AND the formula's input survive.
-    assert_eq!(col_displays(&s, 0, 3), ["5", "6", "1"]);
-    assert_eq!(s.get_cell_input(0, 1, 0), "=A1+1");
+/// Formula cells move with their row and their same-row relative references
+/// follow them (`=A3*2` sorted to row 1 reads `=A1*2`); a `$`-absolute
+/// reference outside the range stays put; an external dependent recalcs.
+#[test]
+fn sheet_edit_sort_formulas_move_with_their_row() {
+    let mut s = session_with(&[
+        (0, 0, "3"),
+        (0, 1, "=A1*$D$1"),
+        (1, 0, "1"),
+        (1, 1, "=A2*$D$1"),
+        (2, 0, "2"),
+        (2, 1, "=A3*$D$1"),
+        (0, 3, "10"),
+        (5, 1, "=B1"),
+    ]);
+    assert_eq!(col_displays(&s, 1, 3), ["30", "10", "20"]);
+
+    let res = s.sort_range(0, "A1:B3", 0, true, false).expect("sort");
+
+    assert_eq!(col_displays(&s, 0, 3), ["1", "2", "3"]);
+    assert_eq!(col_displays(&s, 1, 3), ["10", "20", "30"]);
+    assert_eq!(s.get_cell_input(0, 0, 1), "=A1*$D$1");
+    assert_eq!(s.get_cell_input(0, 2, 1), "=A3*$D$1");
+    // The outside reference to B1 keeps addressing B1 (now the 10 row).
+    assert_eq!(s.get_cell_display(0, 5, 1), "10");
+    // The formula text in B1 is unchanged by the move (only A1 is re-entered).
+    assert!(res.edits.iter().any(|e| e.row == 0 && e.col == 0));
+    assert!(!res.edits.iter().any(|e| e.row == 0 && e.col == 1));
+}
+
+/// A reference to ANOTHER row shifts by the move delta (the copy rule Excel
+/// applies when sorting); a shift off the top of the grid is `#REF!`.
+#[test]
+fn sheet_edit_sort_formulas_relative_rows_shift_and_off_grid_is_ref() {
+    // Row 2 holds =A1+100 (one row up); sorting descending by A moves it.
+    let mut s = session_with(&[(0, 0, "1"), (1, 0, "=A1+100"), (2, 0, "50")]);
+    assert_eq!(col_displays(&s, 0, 3), ["1", "101", "50"]);
+
+    s.sort_range(0, "A1:A3", 0, false, false).expect("sort");
+
+    // 101 sorts first: the formula lands on row 1 and its "one row up"
+    // reference falls off the grid.
+    assert_eq!(s.get_cell_input(0, 0, 0), "=#REF!+100");
+    assert_eq!(s.get_cell_display(0, 0, 0), "#REF!");
+}
+
+/// A formula using a defined name prints back by the name's spelling (it
+/// used to print an opaque `_NAME<id>` placeholder that did not re-parse), so
+/// it moves cleanly in a sort and its input round-trips for editing.
+#[test]
+fn sheet_edit_sort_formulas_defined_names_round_trip() {
+    let bytes = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../corpus/xlsx-corpus/06-multisheet-1904.xlsx"),
+    )
+    .expect("fixture 06");
+    let mut s = SheetSession::load_xlsx(&bytes).expect("load 06");
+    s.set_cell(0, 50, 0, "2").expect("A51");
+    s.set_cell(0, 51, 0, "1").expect("A52");
+    s.set_cell(0, 50, 1, "=A51&TaxRate").expect("B51");
+    s.set_cell(0, 51, 1, "=A52&TaxRate").expect("B52");
+    assert_eq!(s.get_cell_input(0, 50, 1), "=A51&TaxRate");
+
+    s.sort_range(0, "A51:B52", 0, true, false).expect("sort");
+
+    assert_eq!(s.get_cell_input(0, 50, 1), "=A51&TaxRate");
+    assert_eq!(s.get_cell_input(0, 51, 1), "=A52&TaxRate");
+    assert_eq!(s.get_cell_display(0, 50, 0), "1");
 }
 
 /// A header-pinned formula row is FINE (it never moves) — only movable rows

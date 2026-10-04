@@ -234,9 +234,10 @@ export interface SheetEngine {
    *  display is NOT re-enterable for formula cells). */
   getCellInput(sheet: number, row: number, col: number): string;
   /** Stable sort of a range's rows by a key column (0-based, RELATIVE to
-   *  the range). VALUES-ONLY ranges sort fully; a range containing formula
-   *  cells THROWS the honest boundary error ("sort over formulas not yet
-   *  supported") — all semantics in Rust (sheet.edit.sort.*). */
+   *  the range). Formula cells move with their row, relative references
+   *  re-addressed (Excel's rule); a range holding spilled array output
+   *  THROWS the honest boundary error — all semantics in Rust
+   *  (sheet.edit.sort.*). */
   sortRange(
     sheet: number,
     range: string,

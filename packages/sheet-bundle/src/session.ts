@@ -292,7 +292,7 @@ export interface WorkbookSession {
    *  (all sort semantics in Rust, sheet.edit.sort.*). The engine's per-cell
    *  input rewrites journal as ONE grouped ADR-012 step (one Cmd-Z undoes
    *  the whole sort). Returns the honest outcome: `ok: false` carries the
-   *  engine's boundary message (e.g. "sort over formulas not yet
+   *  engine's boundary message (e.g. "sort over a spilled region not
    *  supported") for the panel to show. Never throws. */
   sortRange(
     keyCol: number,
@@ -1437,7 +1437,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         void submitInFrameGrid();
         return { ok: true };
       } catch (err) {
-        // The honest boundary (e.g. "sort over formulas not yet
+        // The honest boundary (e.g. "sort over a spilled region not
         // supported") — surfaced verbatim for the panel.
         const message = err instanceof Error ? err.message : String(err);
         host.log.warn("sortRange refused", err);

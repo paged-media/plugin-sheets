@@ -121,12 +121,53 @@ pub fn rewrite(f: &Formula, edit: &Edit) -> Formula {
     }
 }
 
-/// Copy/fill rewrite (T1 stub, spec §6.1). Unlike insert/delete, copy/fill
-/// honours `$` flags: relative coordinates shift by the paste delta, absolute
-/// ones do not. Signature reserved; not implemented in T0.
-#[allow(dead_code)]
-pub(crate) fn rewrite_fill(_f: &Formula, _drow: i64, _dcol: i64) -> Formula {
-    unimplemented!("copy/fill rewrite is T1 (spec §6.1)")
+/// Copy/fill/move rewrite (spec §6.1): the formula as it reads after being
+/// copied `drow` rows down and `dcol` columns right. Unlike insert/delete this
+/// HONOURS `$` flags: a relative coordinate shifts by the delta, an absolute
+/// one does not (each range endpoint by its own flags). A coordinate pushed
+/// off the grid makes that reference `#REF!` (Excel). Structured references
+/// are name-anchored and do not move; a spill reference moves its anchor.
+/// Used by the range sort, which moves formula rows the way Excel does.
+pub fn rewrite_fill(f: &Formula, drow: i64, dcol: i64) -> Formula {
+    Formula {
+        root: fill_expr(&f.root, drow, dcol),
+    }
+}
+
+fn fill_cell(c: CellRef, drow: i64, dcol: i64) -> Option<CellRef> {
+    let shift = |v: u32, abs: bool, d: i64, max: u32| -> Option<u32> {
+        if abs {
+            return Some(v);
+        }
+        let n = v as i64 + d;
+        (0..=max as i64).contains(&n).then_some(n as u32)
+    };
+    Some(CellRef {
+        row: shift(c.row, c.row_abs, drow, MAX_ROW)?,
+        col: shift(c.col, c.col_abs, dcol, MAX_COL)?,
+        ..c
+    })
+}
+
+fn fill_expr(e: &Expr, drow: i64, dcol: i64) -> Expr {
+    let f = |x: &Expr| fill_expr(x, drow, dcol);
+    match e {
+        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) => e.clone(),
+        Expr::Ref(r) => match fill_cell(*r, drow, dcol) {
+            Some(c) => Expr::Ref(c),
+            None => ref_error(),
+        },
+        Expr::Range(r) => match (fill_cell(r.start, drow, dcol), fill_cell(r.end, drow, dcol)) {
+            (Some(start), Some(end)) => Expr::Range(RangeRef { start, end }),
+            _ => ref_error(),
+        },
+        Expr::Unary(op, a) => Expr::Unary(*op, Box::new(f(a))),
+        Expr::Binary(op, a, b) => Expr::Binary(*op, Box::new(f(a)), Box::new(f(b))),
+        Expr::Func(fid, args) => Expr::Func(*fid, args.iter().map(f).collect()),
+        Expr::Array(rows) => Expr::Array(rows.iter().map(|r| r.iter().map(f).collect()).collect()),
+        Expr::SpillRef(a) => Expr::SpillRef(Box::new(f(a))),
+        Expr::Call(c, args) => Expr::Call(Box::new(f(c)), args.iter().map(f).collect()),
+    }
 }
 
 fn rewrite_expr(e: &Expr, plan: &Plan) -> Expr {
