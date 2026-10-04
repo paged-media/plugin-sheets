@@ -48,9 +48,10 @@ The **in-frame grid renders + edits via K-1** (`sheet.grid.inframe`):
 Enter/Esc, session-scoped Cmd-Z per ADR-012) — driven by the editor
 journey `apps/canvas/tests/journey/plugins/sheet.journey.spec.ts` and the
 e2e `sheet-modal-session.spec.ts`. Workbook **persistence** rides
-`host.blob` (OPFS, S-08) + the `.paged` container part — ON IMPORT ONLY
-(`persistWorkbook` has one caller), so edits, sorts, pastes and a
-dataset-sourced workbook are lost on reload until edits are persisted; the
+`host.blob` (OPFS, S-08) + the `.paged` container part: written on
+import AND re-saved after every committed edit (debounced
+`PERSIST_DEBOUNCE_MS`, flushed on dispose / `flushPersist()`; before
+2026-10-04 edits were lost on reload); the
 **data-provider CONSUMER** (S-15, `sheetFromDataset`) sources a sheet from
 a governed dataset.
 
@@ -149,13 +150,13 @@ Rules for every code change in this repo:
   `@paged-media/shell`/`client` imports — writes via
   `host.document.mutate`, binding via `setPluginMetadata` (namespace
   `x-paged:media.paged.sheet`), persistence via `host.blob` (OPFS,
-  S-08 shipped — per-plugin keyed, restores the LAST IMPORTED workbook,
-  not later edits; the panel says so). Panels are factories closing over `BundleHost`;
+  S-08 shipped — per-plugin keyed, restores the last SAVED workbook,
+  edits included; the panel says so). Panels are factories closing over `BundleHost`;
   styling = the token layer (`--pg-*`, `--status-*`, `--font-mono`,
   `--space-*`, `--radius-*`).
 - **Reserved seams stay honest.** The page-lowering (S-03), in-frame
   grid + K-1 modal edit session (S-02/C-1/K-1), importer registration
-  (S-06/S-11), OPFS persistence on import (S-08), and the data-provider
+  (S-06/S-11), OPFS + container-part persistence (S-08), and the data-provider
   consumer (S-15) SHIP. Pagination (S-05) is BUILT but has no command.
   DONE in the RFI, no longer gaps: per-cell fill/borders and
   `appliedCellStyle` on a `tableCell` ElementId (S-04 — core applies
