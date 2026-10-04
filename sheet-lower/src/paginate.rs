@@ -157,6 +157,18 @@ pub fn paginate(
     // 1) Lower the full range ONCE — one model read; text/styles/merges are
     //    computed exactly here and re-sliced per frame below.
     let full = lower_range(model, sheet, range, &ViewOptions::default());
+    paginate_lowered(full, frames, opts)
+}
+
+/// Paginate an ALREADY-LOWERED range (Wave 6): the caller lowers once with
+/// whatever lane it needs — the styled / conditional-format page lowering, so
+/// a bold, filled header band repeats WITH its formatting on every frame —
+/// and this slices it across `frames` exactly as [`paginate`] does.
+pub fn paginate_lowered(
+    full: LoweredContent,
+    frames: &[FrameBox],
+    opts: &PaginateOptions,
+) -> Vec<Page> {
     // Hidden rows leave gaps in the range-relative row `index`; pagination
     // works in row POSITIONS, so re-base rows, merges and keep-together
     // blocks onto positions (identity when nothing is hidden).

@@ -60,10 +60,7 @@ use sheet_calc::{Engine, EngineConfig};
 use sheet_chart::{generate as generate_chart, ChartGeometry, PlotData};
 use sheet_core::{parse_a1, CellRef, CellValue, DateSystem, RangeRef, SheetId, SheetModel};
 use sheet_format::{FormatCache, FormatCtx};
-use sheet_lower::{
-    lower_range, lower_range_styled, paginate as lower_paginate, CellRange, FrameBox, Page,
-    ViewOptions,
-};
+use sheet_lower::{lower_range, lower_range_styled, CellRange, FrameBox, Page, ViewOptions};
 use sheet_parser::{
     parse, print, print_ooxml, rewrite_fill, strip_storage_prefixes, ParseCtx, SheetNames,
 };
@@ -369,6 +366,8 @@ pub struct FrameBoxArg {
 #[derive(serde::Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PaginateOptionsArg {
+    /// The header band height in rows (`repeatHeaderRows` is accepted too).
+    #[serde(alias = "repeatHeaderRows")]
     pub repeated_header_rows: Option<u32>,
     pub continued_marker: Option<bool>,
     pub keep_rows_together: Option<Vec<(u32, u32)>>,
@@ -1694,14 +1693,20 @@ impl SheetSession {
             keep_rows_together: opts.keep_rows_together.unwrap_or_default(),
         };
 
+        // Lower ONCE through the page lane (real styles + conditional
+        // formatting, grid rules on — what a placed table shows), then slice:
+        // the repeated header band keeps its formatting on every frame.
         let model = self.engine().model();
-        Ok(lower_paginate(
+        let cf = self.doc.lowered_conditional_formats(sheet);
+        let full = sheet_lower::lower_range_condfmt(
             model,
             sheet,
             cell_range,
-            &boxes,
-            &paginate_opts,
-        ))
+            &ViewOptions::default(),
+            &self.doc.visual_styles,
+            &cf,
+        );
+        Ok(sheet_lower::paginate_lowered(full, &boxes, &paginate_opts))
     }
 
     /// Window a worksheet into a [`sheet_grid::GridScene`] for the sheets-mode

@@ -41,7 +41,9 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
-use sheet_js::core::{EdgeArg, LowerOptions, SheetSession, StylePatchArg};
+use sheet_js::core::{
+    EdgeArg, FrameBoxArg, LowerOptions, PaginateOptionsArg, SheetSession, StylePatchArg,
+};
 
 fn parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
@@ -523,4 +525,57 @@ fn freeze_creates_sheet_views__feat__sheet_layout_freeze() {
     );
     assert!(pos_of(&xml, "dimension") < pos_of(&xml, "sheetViews"));
     assert!(pos_of(&xml, "sheetViews") < pos_of(&xml, "sheetData"));
+}
+
+// ── 5. repeated header rows when paginating ──────────────────────────────
+
+/// Threading a tall range: the header band repeats at the top of EVERY frame
+/// and keeps its formatting there (pagination used the unstyled lowering, so
+/// a bold, filled header came out plain on every page), and the bundle's
+/// `repeatHeaderRows` spelling is accepted.
+#[test]
+fn paginate_repeats_styled_header_rows__feat__sheet_lower_paginate() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "Region").unwrap();
+    s.set_cell(0, 1, 0, "Units").unwrap();
+    for r in 2..32 {
+        s.set_cell(0, r, 0, &format!("{r}")).unwrap();
+    }
+    s.set_style(
+        0,
+        "A1:A2",
+        StylePatchArg {
+            bold: Some(true),
+            fill: Some("#DDDDDD".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let opts: PaginateOptionsArg =
+        serde_json::from_str(r#"{"repeatHeaderRows": 2}"#).expect("repeatHeaderRows accepted");
+    let frames = vec![
+        FrameBoxArg {
+            width_pt: 200.0,
+            height_pt: 150.0, // 10 rows of 15 pt
+        };
+        6
+    ];
+    let pages = s.paginate(0, "A1:A32", frames, opts).unwrap();
+    assert!(
+        pages.len() >= 4,
+        "30 body rows over 8-row bodies: {}",
+        pages.len()
+    );
+    for p in &pages {
+        let c = &p.content;
+        assert_eq!(c.rows[0].cells[0].text, "Region", "frame {}", p.frame_index);
+        assert_eq!(c.rows[1].cells[0].text, "Units", "frame {}", p.frame_index);
+        for r in 0..2 {
+            let st = &c.styles[c.rows[r].cells[0].style_key as usize];
+            assert!(st.bold, "header row {r} bold on frame {}", p.frame_index);
+            assert_eq!(st.fill_rgb.as_deref(), Some("#DDDDDD"));
+        }
+        // Body rows stay plain.
+        assert_eq!(c.rows[2].cells[0].style_key, 0);
+    }
 }

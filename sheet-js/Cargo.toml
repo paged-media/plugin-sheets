@@ -48,6 +48,8 @@ console_error_panic_hook.workspace = true
 perf-counters = ["sheet-calc/perf-counters"]
 
 [dev-dependencies]
+# tests/wave6_format.rs reads the TS option spelling through serde.
+serde_json.workspace = true
 # tests/perf_budgets.rs reads sheet_calc::perf; a dev-dependency feature
 # never reaches the wasm build.
 sheet-calc = { path = "../sheet-calc", features = ["perf-counters"] }

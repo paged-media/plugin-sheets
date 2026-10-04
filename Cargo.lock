@@ -956,6 +956,7 @@ dependencies = [
  "criterion",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "sheet-calc",
  "sheet-chart",
  "sheet-core",
