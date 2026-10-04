@@ -33,19 +33,41 @@
 //! Generic interner (spec §5.1). Deduplicates values to small `u32` ids —
 //! the workbook model interns formulas and shared strings through it.
 //! Insertion order is preserved (id == arrival index).
+//!
+//! Each value is stored ONCE: the lookup index maps a value's 64-bit hash to
+//! the ids carrying that hash and resolves collisions against the value
+//! table. (Before 2026-10 the index was a `HashMap<T, u32>` — a second full
+//! copy of every interned formula tree and string.)
+//!
+//! Ids are never freed: a formula replaced by an edit keeps its slot. Ids are
+//! stored in cells (`FormulaId`) and must stay stable, so reclaiming needs a
+//! sweep that remaps every live cell's id (e.g. at save or after a structural
+//! edit) — a GC design, not done here.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
+
+use smallvec::SmallVec;
 
 /// Append-only value interner: `intern` dedups, returning a stable `u32`
 /// id; `get` resolves it back. Ids are dense and ordered by first arrival.
 #[derive(Debug)]
 pub struct Interner<T> {
     values: Vec<T>,
-    index: HashMap<T, u32>,
+    /// Value hash → the ids whose value has that hash (almost always one).
+    index: HashMap<u64, SmallVec<[u32; 1]>>,
 }
 
-impl<T: Clone + Eq + Hash> Interner<T> {
+/// A deterministic 64-bit hash of a value (`DefaultHasher::new()` uses fixed
+/// keys, so ids and lookups never depend on a per-process seed).
+fn hash_of<T: Hash>(value: &T) -> u64 {
+    let mut h = DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
+
+impl<T: Eq + Hash> Interner<T> {
     pub fn new() -> Self {
         Interner {
             values: Vec::new(),
@@ -55,12 +77,14 @@ impl<T: Clone + Eq + Hash> Interner<T> {
 
     /// Intern `value`, returning its id. Equal values share an id.
     pub fn intern(&mut self, value: T) -> u32 {
-        if let Some(&id) = self.index.get(&value) {
+        let h = hash_of(&value);
+        let ids = self.index.entry(h).or_default();
+        if let Some(&id) = ids.iter().find(|&&id| self.values[id as usize] == value) {
             return id;
         }
         let id = self.values.len() as u32;
-        self.values.push(value.clone());
-        self.index.insert(value, id);
+        self.values.push(value);
+        ids.push(id);
         id
     }
 
@@ -83,7 +107,7 @@ impl<T: Clone + Eq + Hash> Interner<T> {
     }
 }
 
-impl<T: Clone + Eq + Hash> Default for Interner<T> {
+impl<T: Eq + Hash> Default for Interner<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -119,5 +143,25 @@ mod tests {
 
         let collected: Vec<(u32, &str)> = it.iter().map(|(i, v)| (i, v.as_str())).collect();
         assert_eq!(collected, vec![(0, "first"), (1, "second"), (2, "third")]);
+    }
+
+    #[test]
+    fn colliding_hashes_resolve_by_value() {
+        // A type whose hash is constant: every value collides, ids still
+        // dedupe by equality.
+        #[derive(PartialEq, Eq)]
+        struct Same(u8);
+        impl Hash for Same {
+            fn hash<H: Hasher>(&self, h: &mut H) {
+                0u8.hash(h);
+            }
+        }
+        let mut it: Interner<Same> = Interner::new();
+        let a = it.intern(Same(1));
+        let b = it.intern(Same(2));
+        assert_ne!(a, b);
+        assert_eq!(it.intern(Same(1)), a);
+        assert_eq!(it.intern(Same(2)), b);
+        assert_eq!(it.len(), 2);
     }
 }
