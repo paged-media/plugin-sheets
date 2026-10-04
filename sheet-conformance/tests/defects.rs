@@ -117,7 +117,6 @@ fn defect_fixed_decimals_round_the_binary_value__feat__sheet_format_engine() {
 /// through this printer, so such a cell would be saved as a formula Excel
 /// (and this engine) cannot read back.
 #[test]
-#[should_panic(expected = "printed union does not reparse")]
 fn defect_union_prints_without_its_parentheses__feat__sheet_parser_dialect() {
     use sheet_core::{NameId, SheetId};
     use sheet_parser::{parse, print, ParseCtx, SheetNames};

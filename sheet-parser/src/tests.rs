@@ -784,7 +784,27 @@ mod prop {
             Just(BinOp::Eq),
             Just(BinOp::Lt),
             Just(BinOp::Ge),
+            // The union only parses inside parentheses: the printer must
+            // supply them wherever a union lands.
+            Just(BinOp::Union),
         ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4000))]
+        /// The TEXT side of the fixpoint (found by fuzzing:
+        /// `(1/0,-100,-1000)` printed as text that did not parse): any text
+        /// over a small operator alphabet that parses must print to text that
+        /// parses back to the same AST.
+        #[test]
+        fn parsed_text_prints_reparsable(t in "[-+*/^&(),%1A0 ]{1,14}") {
+            if let Ok(f) = parse(&t, &Ctx::new()) {
+                let printed = print(&f, 0, &Ctx::new());
+                let reparsed = parse(&printed, &Ctx::new())
+                    .unwrap_or_else(|err| panic!("{t:?} printed {printed:?}, which fails: {err}"));
+                prop_assert_eq!(&reparsed.root, &f.root, "{:?} printed {}", t, printed);
+            }
+        }
     }
 
     proptest! {

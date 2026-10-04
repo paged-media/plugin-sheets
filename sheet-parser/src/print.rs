@@ -125,7 +125,13 @@ impl Printer<'_> {
         let prec = expr_prec(e);
         // Parenthesize when the child binds looser than the parent, OR equal
         // precedence on the associativity-disfavored side.
-        let needs = prec < parent || (prec == parent && needs_assoc_paren(e, side));
+        // A union (`,`) only parses inside a `(...)` group: anywhere but
+        // directly under another union it carries its own parentheses
+        // (`(1/0,-100,-1000)` printed as `1/0,(-100,(-1000))` and did not
+        // re-parse).
+        let bare_union = matches!(e, Expr::Binary(BinOp::Union, _, _)) && parent != Prec::UNION;
+        let needs =
+            bare_union || prec < parent || (prec == parent && needs_assoc_paren(e, side));
         if needs {
             out.push('(');
         }
