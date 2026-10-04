@@ -216,7 +216,7 @@ describe.skipIf(!built)("placed tables: styled door + refresh in place [sheet.lo
     await vi.advanceTimersByTimeAsync(REFRESH_DEBOUNCE_MS + 50);
     await session.refreshPlacements();
 
-    const after = mutations.slice(mark);
+    const after = ops(mutations.slice(mark));
     expect(after.filter((m) => m.op === "insertTable")).toHaveLength(0);
     expect(mutations.filter((m) => m.op === "insertTable")).toHaveLength(tablesBefore);
     const texts = after.filter((m) => m.op === "insertText") as Array<{

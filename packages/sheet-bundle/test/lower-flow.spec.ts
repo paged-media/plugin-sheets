@@ -931,7 +931,10 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
       expect(paginateCalls.length).toBeGreaterThanOrEqual(1);
       expect(mutations.filter((m) => m.op === "insertTable")).toHaveLength(tablesBefore);
       // tbl1 re-poured in place (old text out, new text in) …
-      const after = mutations.slice(mark);
+      // Refresh text rides batches: flatten.
+      const after = mutations
+        .slice(mark)
+        .flatMap((m) => (m.op === "batch" ? m.args.ops : [m]));
       const tbl1Text = after.filter(
         (m) =>
           (m.op === "deleteRange" || m.op === "insertText") &&

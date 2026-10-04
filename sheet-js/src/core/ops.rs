@@ -146,7 +146,12 @@ fn drop_sheet_refs(e: &mut Expr, gone: SheetId) -> bool {
             .iter_mut()
             .flatten()
             .fold(false, |acc, a| drop_sheet_refs(a, gone) || acc),
-        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) => false,
+        Expr::Call(callee, args) => {
+            let x = drop_sheet_refs(callee, gone);
+            args.iter_mut()
+                .fold(x, |acc, a| drop_sheet_refs(a, gone) || acc)
+        }
+        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) => false,
     }
 }
 
