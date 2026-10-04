@@ -226,6 +226,70 @@ impl SheetSession {
         })
     }
 
+    /// The style ids of every cell of `range`, row-major — an exact
+    /// snapshot a caller restores with [`Self::set_style_ids`] (the in-session
+    /// undo of a format change). Ids are positional and the style table only
+    /// grows, so an id read now names the same record later.
+    pub fn get_style_ids(&self, sheet: u16, range: &str) -> Result<Vec<u32>, SessionError> {
+        let (sheet, cr) = self.resolve_range(sheet, range)?;
+        let (top, left, bottom, right) = bounds(&cr);
+        let area = (bottom - top + 1) as u64 * (right - left + 1) as u64;
+        if area > T0_LOWER_CELL_CAP {
+            return Err(SessionError(format!(
+                "range exceeds the style cap ({T0_LOWER_CELL_CAP} cells)"
+            )));
+        }
+        let ws = self
+            .engine()
+            .model()
+            .sheet(sheet)
+            .ok_or_else(|| SessionError(format!("sheet id {sheet} out of range")))?;
+        let mut out = Vec::with_capacity(area as usize);
+        for r in top..=bottom {
+            for c in left..=right {
+                out.push(ws.cell(r, c).map(|x| x.style.0).unwrap_or(0));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Put back a [`Self::get_style_ids`] snapshot: `ids` row-major over
+    /// `range`. Refused whole (nothing changes) when the count does not
+    /// match the range or an id names no style record. No value changes,
+    /// nothing recalculates; the sheet re-encodes on the next save.
+    pub fn set_style_ids(
+        &mut self,
+        sheet: u16,
+        range: &str,
+        ids: &[u32],
+    ) -> Result<(), SessionError> {
+        let (sheet, cr) = self.resolve_range(sheet, range)?;
+        let (top, left, bottom, right) = bounds(&cr);
+        let area = (bottom - top + 1) as u64 * (right - left + 1) as u64;
+        if ids.len() as u64 != area {
+            return Err(SessionError(format!(
+                "{} style ids for a range of {area} cells",
+                ids.len()
+            )));
+        }
+        let count = self.engine().model().styles.style_count() as u32;
+        if let Some(bad) = ids.iter().find(|&&id| id >= count) {
+            return Err(SessionError(format!(
+                "style id {bad} names no style record"
+            )));
+        }
+        let engine = self.engine_mut();
+        let mut it = ids.iter();
+        for r in top..=bottom {
+            for c in left..=right {
+                let id = *it.next().expect("count checked");
+                engine.set_cell_style(sheet, r, c, sheet_core::StyleId(id));
+            }
+        }
+        self.extra_dirty.insert(sheet);
+        Ok(())
+    }
+
     /// The full style of one cell (every field populated): number-format
     /// code, font, fill, borders, alignment, wrap. Theme / indexed colours
     /// read as empty (only explicit RGB is reported).

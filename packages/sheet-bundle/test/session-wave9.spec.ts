@@ -350,3 +350,110 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — alignment reaches the placed table", 
     expect(styles.get("2:1")).toBe(RIGHT);
   });
 });
+
+describe.skipIf(!ENGINE_BUILT)("wave 9 — format changes are undo steps [sheet.edit.undo]", () => {
+  vi.setConfig({ testTimeout: 60_000 });
+  let h: HeadlessHost;
+  let s: WorkbookSession | null = null;
+
+  beforeEach(async () => {
+    h = await openHost();
+    await h.load(blankPageIdml());
+  });
+  afterEach(() => {
+    s?.dispose();
+    s = null;
+    h?.dispose();
+  });
+
+  /** A blank workbook with a 3×2 block. */
+  async function block(): Promise<WorkbookSession> {
+    const session = createWorkbookSession(withSceneChannel(sheetHost(h)).host);
+    s = session;
+    await session.newWorkbook();
+    const cells = [["Region", "Units"], ["North", "1.5"], ["South", "2"]];
+    cells.forEach((row, r) => row.forEach((v, c) => session.editCell(0, r, c, v)));
+    return session;
+  }
+
+  it("setStyle and borders: one Cmd-Z each, redo re-applies", async () => {
+    const session = await block();
+    session.setGridSelection(0, 0, 1, 2); // A1:B1
+    expect(session.setStyle({ bold: true, fill: "#FFFF00" })).toEqual({ ok: true });
+    expect(session.setBorders("outline", { style: "thin" })).toEqual({ ok: true });
+    const style = () => session.state().engine!.getStyle!(0, 0, 1);
+    expect(style()).toMatchObject({ bold: true, fill: "#FFFF00" });
+    expect(style().borderTop?.style).toBe("thin");
+    expect(session.undoCellEdit()).toBe(true); // the borders
+    expect(style().borderTop?.style ?? "none").toBe("none");
+    expect(style().bold).toBe(true);
+    expect(session.undoCellEdit()).toBe(true); // the style
+    expect(style().bold).toBe(false);
+    expect(session.redoCellEdit()).toBe(true);
+    expect(style()).toMatchObject({ bold: true, fill: "#FFFF00" });
+    // The cell edits before stay reachable behind them.
+    expect(session.undoCellEdit()).toBe(true);
+    expect(session.undoCellEdit()).toBe(true);
+    expect(session.cellInputAt(2, 1)).toBe("");
+  });
+
+  it("merge brings its cleared cells back on undo; unmerge re-merges", async () => {
+    const session = await block();
+    session.setGridSelection(0, 0, 1, 2); // A1:B1
+    expect(session.mergeTarget()).toEqual({ ok: true });
+    expect(session.cellInputAt(0, 1)).toBe("");
+    expect(session.undoCellEdit()).toBe(true);
+    expect(session.layout()!.merges).toEqual([]);
+    expect(session.cellInputAt(0, 1)).toBe("Units");
+    expect(session.redoCellEdit()).toBe(true);
+    expect(session.layout()!.merges).toEqual(["A1:B1"]);
+    expect(session.cellInputAt(0, 1)).toBe("");
+    expect(session.unmergeTarget()).toEqual({ ok: true });
+    expect(session.undoCellEdit()).toBe(true);
+    expect(session.layout()!.merges).toEqual(["A1:B1"]);
+  });
+
+  it("sizes, freeze and names: one step each", async () => {
+    const session = await block();
+    session.setGridSelection(1, 1, 2, 1); // B2:B3
+    expect(session.setColumnWidth(12)).toEqual({ ok: true });
+    expect(session.setRowHeight(24)).toEqual({ ok: true });
+    expect(session.toggleFreeze()).toEqual({ ok: true });
+    expect(session.defineName("Units", "B2:B3")).toEqual({ ok: true });
+    expect(session.defineName("Units", "B2")).toEqual({ ok: true }); // redefine
+    const names = () => session.names().map((n) => `${n.name}=${n.refersTo}`);
+    expect(names()[0]).toMatch(/^Units=.*B\$?2$/);
+    expect(session.undoCellEdit()).toBe(true); // the redefinition
+    expect(names()[0]).toMatch(/B\$?3$/);
+    expect(session.undoCellEdit()).toBe(true); // the definition
+    expect(names()).toEqual([]);
+    expect(session.undoCellEdit()).toBe(true); // the freeze
+    expect(session.layout()).toMatchObject({ freezeRows: 0, freezeCols: 0 });
+    expect(session.undoCellEdit()).toBe(true); // the row heights
+    expect(session.layout()!.rowHeights).toEqual([]);
+    expect(session.undoCellEdit()).toBe(true); // the column width
+    expect(session.layout()!.colWidths).toEqual([]);
+    expect(session.redoCellEdit()).toBe(true);
+    expect(session.layout()!.colWidths).toEqual([[1, 12]]);
+    // A deleted name comes back.
+    session.defineName("Keep", "A1");
+    expect(session.deleteName("Keep")).toEqual({ ok: true });
+    expect(session.undoCellEdit()).toBe(true);
+    expect(session.names().some((n) => n.name === "Keep")).toBe(true);
+  });
+
+  it("a fill's carried formats undo with its values, in one step", async () => {
+    const session = await block();
+    session.setGridSelection(1, 1, 1, 1); // B2
+    session.setStyle({ bold: true, numFmt: "0.00" });
+    session.setGridSelection(1, 1, 2, 1); // B2:B3
+    expect(session.fillDown()).toEqual({ ok: true });
+    const e = session.state().engine!;
+    expect(e.getStyle!(0, 2, 1).bold).toBe(true);
+    expect(e.getCellDisplay(0, 2, 1)).toBe("1.50");
+    expect(session.undoCellEdit()).toBe(true);
+    expect(e.getStyle!(0, 2, 1).bold).toBe(false);
+    expect(session.cellInputAt(2, 1)).toBe("2");
+    expect(e.getStyle!(0, 1, 1).bold).toBe(true); // the source keeps its own
+  });
+});

@@ -664,6 +664,25 @@ mod wasm {
             to_js(&r)
         }
 
+        /// The style ids of every cell of `range`, row-major — a snapshot
+        /// for `set_style_ids` (the in-session undo of a format change).
+        pub fn get_style_ids(&self, sheet: u16, range: &str) -> Result<Vec<u32>, JsValue> {
+            self.session.get_style_ids(sheet, range).map_err(map_err)
+        }
+
+        /// Restore a `get_style_ids` snapshot over `range` (refused whole on
+        /// a count mismatch or an unknown id).
+        pub fn set_style_ids(
+            &mut self,
+            sheet: u16,
+            range: &str,
+            ids: Vec<u32>,
+        ) -> Result<(), JsValue> {
+            self.session
+                .set_style_ids(sheet, range, &ids)
+                .map_err(map_err)
+        }
+
         /// Merge a range (top-left keeps its content; other cells are
         /// cleared). Returns `{changed, circular, edits}`.
         pub fn merge(&mut self, sheet: u16, range: &str) -> Result<JsValue, JsValue> {

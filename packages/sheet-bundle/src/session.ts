@@ -114,6 +114,13 @@ export const REFRESH_DEBOUNCE_MS = 300;
 /** A session verb's outcome: done, or the reason it was not. */
 export type SessionResult = { ok: true } | { ok: false; message: string };
 
+/** One journaled FORMAT change (Wave 9): its two directions against the
+ *  engine, captured from the engine's own reads around the change. */
+interface FormatStep {
+  undo(engine: SheetEngine): void;
+  redo(engine: SheetEngine): void;
+}
+
 /** S-08 persistence keys: the workbook bytes live in `host.blob` (binary),
  *  its display name in the KV `host.storage`. Per-plugin — the last
  *  imported workbook is the one restored on reload. */
@@ -863,6 +870,13 @@ export function createWorkbookSession(
   // `batch` (additive): entries sharing a batch id were one BULK op (sort /
   // replace-all) — undo/redo unwind the whole batch as ONE step. Plain cell
   // edits carry no batch and unwind singly (unchanged behavior).
+  //
+  // Wave 9: a FORMAT change (style, borders, merge, sizes, freeze, names;
+  // the formats a fill carries) is a journal entry too — `fmt` holds its
+  // two directions, captured from the engine's own reads before the change
+  // (style-id snapshots, the layout, the names). It shares a `batch` with
+  // the cell rewrites it belongs to (a fill, a merge's cleared cells), so
+  // one Cmd-Z undoes the whole operation.
   let editJournal: {
     sheet: number;
     row: number;
@@ -874,6 +888,8 @@ export function createWorkbookSession(
      *  what a placed frame's binding carries once the edit is refreshed
      *  onto the page (the document-undo follower keys on it). */
     rev?: number;
+    /** A format step (no cell input changes; `row`/`col` are its anchor). */
+    fmt?: FormatStep;
   }[] = [];
   let journalCursor = 0;
   let nextJournalBatch = 1;
@@ -980,14 +996,32 @@ export function createWorkbookSession(
     const entries = undo
       ? editJournal.slice(last, first + 1).reverse()
       : editJournal.slice(first, last + 1);
-    const writes = entries.map((e) => ({
+    // Format steps run in journal order (reversed for undo), before the
+    // cell writes on undo (a merge's anchor must be unmerged before its
+    // cleared cells get their inputs back) and after them on redo.
+    const steps = entries.filter((e) => e.fmt);
+    const runSteps = (): boolean => {
+      for (const e of steps) {
+        try {
+          if (undo) e.fmt!.undo(engine);
+          else e.fmt!.redo(engine);
+        } catch (err) {
+          host.log.error(`${dir}: format step failed`, err);
+          return false;
+        }
+      }
+      return true;
+    };
+    if (undo && !runSteps()) return false;
+    const cells = entries.filter((e) => !e.fmt);
+    const writes = cells.map((e) => ({
       sheet: e.sheet,
       row: e.row,
       col: e.col,
       input: undo ? e.prev : e.next,
     }));
-    let done = false;
-    if (engine.setCells && writes.length > 1) {
+    let done = writes.length === 0;
+    if (!done && engine.setCells && writes.length > 1) {
       try {
         engine.setCells(writes);
         done = true;
@@ -1005,9 +1039,12 @@ export function createWorkbookSession(
         }
       }
     }
+    if (!undo && !runSteps()) return false;
     journalCursor = undo ? last : last + 1;
     markEdited();
-    emitter.emit({ kind: "cells", regions: regionsOf(entries) });
+    emitter.emit(
+      steps.length > 0 ? undefined : { kind: "cells", regions: regionsOf(entries) },
+    );
     void submitInFrameGrid();
     return true;
   }
@@ -1016,10 +1053,11 @@ export function createWorkbookSession(
    *  prev/next already faithful inputs) as ONE grouped batch: a single
    *  undo/redo step for the whole sort / replace-all. No-op when the op
    *  changed nothing. */
-  function journalBatch(edits: readonly CellEditRecord[]): void {
-    if (edits.length === 0) return;
+  function journalBatch(edits: readonly CellEditRecord[], fmt?: FormatStep | null): void {
+    if (edits.length === 0 && !fmt) return;
     editJournal.length = journalCursor; // drop any redo tail
     const batch = nextJournalBatch++;
+    if (fmt) editJournal.push({ sheet: 0, row: 0, col: 0, prev: "", next: "", batch, fmt });
     for (const e of edits) {
       editJournal.push({
         sheet: e.sheet,
@@ -1033,6 +1071,98 @@ export function createWorkbookSession(
     journalCursor = editJournal.length;
     markEdited();
     stampRev();
+  }
+
+  /** Run a FORMAT change and journal it as ONE undo step (Wave 9): `capture`
+   *  reads what the change will overwrite and returns the step's two
+   *  directions (or null — the engine lacks the read; the change still runs,
+   *  un-journaled, as before), `apply` makes the change and may return cell
+   *  rewrites that belong to it (a merge's cleared cells) — journaled in the
+   *  same step. */
+  function journalFormat(
+    capture: (engine: SheetEngine) => (() => FormatStep) | null,
+    apply: (engine: SheetEngine) => readonly CellEditRecord[] | void,
+  ): SessionResult {
+    const engine = state.engine;
+    if (!engine) return { ok: false, message: "no workbook open" };
+    let seal: (() => FormatStep) | null;
+    let edits: readonly CellEditRecord[] = [];
+    try {
+      seal = capture(engine);
+      edits = apply(engine) ?? [];
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+    let step: FormatStep | null = null;
+    try {
+      step = seal ? seal() : null;
+    } catch (err) {
+      host.log.warn("format change applied but not journaled", err);
+    }
+    if (step) journalBatch(edits, step);
+    else markEdited();
+    emitter.emit();
+    return { ok: true };
+  }
+
+  /** The style-id snapshot step over `sheet`/`range` (null when the engine
+   *  lacks the door): read now, read again once the change ran (`seal`). */
+  function styleSnapshot(engine: SheetEngine, sheet: number, range: string): (() => FormatStep) | null {
+    if (!engine.getStyleIds || !engine.setStyleIds) return null;
+    const before = engine.getStyleIds(sheet, range);
+    return () => {
+      const after = engine.getStyleIds!(sheet, range);
+      return {
+        undo: (e) => e.setStyleIds!(sheet, range, before),
+        redo: (e) => e.setStyleIds!(sheet, range, after),
+      };
+    };
+  }
+
+  /** The step of a column-width / row-height change over `first..=last`:
+   *  each index's explicit size before (absent = the default, `null`). */
+  function sizeStep(
+    engine: SheetEngine,
+    sheet: number,
+    axis: "col" | "row",
+    first: number,
+    last: number,
+    size: number | null,
+  ): (() => FormatStep) | null {
+    const layout = engine.getLayout?.(sheet);
+    if (!layout) return null;
+    const had = new Map(axis === "col" ? layout.colWidths : layout.rowHeights);
+    const set = (x: SheetEngine, a: number, b: number, v: number | null) =>
+      axis === "col" ? x.setColWidth!(sheet, a, b, v) : x.setRowHeight!(sheet, a, b, v);
+    return () => ({
+      undo: (x) => {
+        for (let i = first; i <= last; i++) set(x, i, i, had.get(i) ?? null);
+      },
+      redo: (x) => set(x, first, last, size),
+    });
+  }
+
+  /** The step of a defined-name change: the name as it stood before (its
+   *  target, or absent) comes back on undo; `redo` repeats the change. */
+  function nameStep(
+    engine: SheetEngine,
+    sheet: number,
+    name: string,
+    scope: number | null,
+    redo: () => void,
+  ): (() => FormatStep) | null {
+    if (!engine.listNames || !engine.defineName || !engine.deleteName) return null;
+    const key = name.toLowerCase();
+    const prior = engine
+      .listNames()
+      .find((n) => n.name.toLowerCase() === key && (n.scope ?? null) === scope);
+    return () => ({
+      undo: (x) => {
+        if (prior) x.defineName!(sheet, prior.name, prior.refersTo, scope);
+        else x.deleteName!(sheet, name, scope);
+      },
+      redo: () => redo(),
+    });
   }
 
   // ── K-1 in-frame cell editor (shared by the public verbs and the key
@@ -1300,7 +1430,17 @@ export function createWorkbookSession(
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
-    journalBatch(res.edits); // one grouped Cmd-Z undoes the whole fill
+    // The formats the fill carried (the engine reports the style ids it
+    // swapped) are part of the same step: one Cmd-Z undoes the whole fill.
+    const swap = res.styles;
+    const fmt: FormatStep | null =
+      swap && engine.setStyleIds
+        ? {
+            undo: (e) => e.setStyleIds!(sheet, swap.range, swap.before),
+            redo: (e) => e.setStyleIds!(sheet, swap.range, swap.after),
+          }
+        : null;
+    journalBatch(res.edits, fmt);
     emitter.emit({ kind: "cells", regions: regionsOf(res.edits) });
     applyModel(modelOfRect(select));
     return { ok: true };
@@ -3185,10 +3325,13 @@ export function createWorkbookSession(
     setStyle(patch) {
       const t = formatTarget();
       if (!t) return { ok: false as const, message: "select cells or enter a range first" };
-      return structureVerb((e) => {
-        if (!e.setStyle) throw new Error("engine wasm predates set_style");
-        e.setStyle(t.sheet, t.range, patch);
-      });
+      return journalFormat(
+        (e) => styleSnapshot(e, t.sheet, t.range),
+        (e) => {
+          if (!e.setStyle) throw new Error("engine wasm predates set_style");
+          e.setStyle(t.sheet, t.range, patch);
+        },
+      );
     },
 
     setBorders(kind, edge) {
@@ -3228,10 +3371,13 @@ export function createWorkbookSession(
           calls.push([right, { borderRight: edge }]);
           break;
       }
-      return structureVerb((e) => {
-        if (!e.setStyle) throw new Error("engine wasm predates set_style");
-        for (const [range, patch] of calls) e.setStyle(t.sheet, range, patch);
-      });
+      return journalFormat(
+        (e) => styleSnapshot(e, t.sheet, whole),
+        (e) => {
+          if (!e.setStyle) throw new Error("engine wasm predates set_style");
+          for (const [range, patch] of calls) e.setStyle(t.sheet, range, patch);
+        },
+      );
     },
 
     styleAtTarget() {
@@ -3250,20 +3396,59 @@ export function createWorkbookSession(
     mergeTarget() {
       const t = formatTarget();
       if (!t) return { ok: false as const, message: "select cells or enter a range first" };
-      return structureVerb((e) => {
-        if (!e.merge) throw new Error("engine wasm predates merge");
-        e.merge(t.sheet, t.range);
-      });
+      return journalFormat(
+        (e) => {
+          const before = e.getLayout?.(t.sheet).merges ?? null;
+          if (!before || !e.unmerge) return null;
+          return () => {
+            // Merges the new one absorbed come back on undo; the cleared
+            // cells come back as the step's cell entries.
+            const after = new Set(e.getLayout!(t.sheet).merges);
+            const absorbed = before.filter((m) => !after.has(m));
+            return {
+              undo: (x) => {
+                x.unmerge!(t.sheet, t.range);
+                for (const m of absorbed) x.merge!(t.sheet, m);
+              },
+              redo: (x) => {
+                x.merge!(t.sheet, t.range);
+              },
+            };
+          };
+        },
+        (e) => {
+          if (!e.merge) throw new Error("engine wasm predates merge");
+          return (e.merge(t.sheet, t.range) as { edits?: CellEditRecord[] }).edits ?? [];
+        },
+      );
     },
 
     unmergeTarget() {
       const t = formatTarget();
       if (!t) return { ok: false as const, message: "select cells or enter a range first" };
       let removed = 0;
-      const r = structureVerb((e) => {
-        if (!e.unmerge) throw new Error("engine wasm predates unmerge");
-        removed = e.unmerge(t.sheet, t.range);
-      });
+      const r = journalFormat(
+        (e) => {
+          const before = e.getLayout?.(t.sheet).merges ?? null;
+          if (!before || !e.merge) return null;
+          return () => {
+            const after = new Set(e.getLayout!(t.sheet).merges);
+            const gone = before.filter((m) => !after.has(m));
+            return {
+              undo: (x) => {
+                for (const m of gone) x.merge!(t.sheet, m);
+              },
+              redo: (x) => {
+                x.unmerge!(t.sheet, t.range);
+              },
+            };
+          };
+        },
+        (e) => {
+          if (!e.unmerge) throw new Error("engine wasm predates unmerge");
+          removed = e.unmerge(t.sheet, t.range);
+        },
+      );
       if (r.ok && removed === 0) return { ok: false as const, message: "no merge there" };
       return r;
     },
@@ -3271,19 +3456,25 @@ export function createWorkbookSession(
     setColumnWidth(width) {
       const t = formatTarget();
       if (!t) return { ok: false as const, message: "select cells or enter a range first" };
-      return structureVerb((e) => {
-        if (!e.setColWidth) throw new Error("engine wasm predates set_col_width");
-        e.setColWidth(t.sheet, t.left, t.right, width);
-      });
+      return journalFormat(
+        (e) => sizeStep(e, t.sheet, "col", t.left, t.right, width),
+        (e) => {
+          if (!e.setColWidth) throw new Error("engine wasm predates set_col_width");
+          e.setColWidth(t.sheet, t.left, t.right, width);
+        },
+      );
     },
 
     setRowHeight(height) {
       const t = formatTarget();
       if (!t) return { ok: false as const, message: "select cells or enter a range first" };
-      return structureVerb((e) => {
-        if (!e.setRowHeight) throw new Error("engine wasm predates set_row_height");
-        e.setRowHeight(t.sheet, t.top, t.bottom, height);
-      });
+      return journalFormat(
+        (e) => sizeStep(e, t.sheet, "row", t.top, t.bottom, height),
+        (e) => {
+          if (!e.setRowHeight) throw new Error("engine wasm predates set_row_height");
+          e.setRowHeight(t.sheet, t.top, t.bottom, height);
+        },
+      );
     },
 
     toggleFreeze() {
@@ -3297,10 +3488,19 @@ export function createWorkbookSession(
       if (!frozen && rows === 0 && cols === 0) {
         return { ok: false as const, message: "select the cell below / right of the split" };
       }
-      return structureVerb((e) => {
-        if (!e.setFreeze) throw new Error("engine wasm predates set_freeze");
-        e.setFreeze(sheet, rows, cols);
-      });
+      return journalFormat(
+        () => {
+          if (!cur) return null;
+          return () => ({
+            undo: (x) => x.setFreeze!(sheet, cur.freezeRows, cur.freezeCols),
+            redo: (x) => x.setFreeze!(sheet, rows, cols),
+          });
+        },
+        (e) => {
+          if (!e.setFreeze) throw new Error("engine wasm predates set_freeze");
+          e.setFreeze(sheet, rows, cols);
+        },
+      );
     },
 
     layout() {
@@ -3333,17 +3533,29 @@ export function createWorkbookSession(
       if (sheet === null) return { ok: false as const, message: "no sheet" };
       const target = refersTo?.trim() || formatTarget()?.range;
       if (!target) return { ok: false as const, message: "select cells or enter a range first" };
-      return structureVerb((e) => {
-        if (!e.defineName) throw new Error("engine wasm predates define_name");
-        e.defineName(sheet, name.trim(), target, sheetScoped ? sheet : null);
-      });
+      const scope = sheetScoped ? sheet : null;
+      return journalFormat(
+        (e) => nameStep(e, sheet, name.trim(), scope, () => {
+          e.defineName!(sheet, name.trim(), target, scope);
+        }),
+        (e) => {
+          if (!e.defineName) throw new Error("engine wasm predates define_name");
+          e.defineName(sheet, name.trim(), target, scope);
+        },
+      );
     },
 
     deleteName(name, scope) {
-      return structureVerb((e) => {
-        if (!e.deleteName) throw new Error("engine wasm predates delete_name");
-        e.deleteName(state.activeSheet ?? 0, name, scope ?? null);
-      });
+      const sheet = state.activeSheet ?? 0;
+      return journalFormat(
+        (e) => nameStep(e, sheet, name, scope ?? null, () => {
+          e.deleteName!(sheet, name, scope ?? null);
+        }),
+        (e) => {
+          if (!e.deleteName) throw new Error("engine wasm predates delete_name");
+          e.deleteName(sheet, name, scope ?? null);
+        },
+      );
     },
 
     async placeName(name) {

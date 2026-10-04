@@ -156,6 +156,20 @@ pub struct SortResult {
     pub changed: Vec<CellChange>,
     pub circular: Vec<CircularRef>,
     pub edits: Vec<CellEdit>,
+    /// The style ids a fill swapped (Wave 9; absent when it carried no
+    /// format) — the journal restores `before` over `range` on undo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub styles: Option<StyleSwap>,
+}
+
+/// The style ids of a range before and after an operation, row-major
+/// (restored with `set_style_ids`).
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleSwap {
+    pub range: String,
+    pub before: Vec<u32>,
+    pub after: Vec<u32>,
 }
 
 /// The result of [`SheetSession::set_filter`] / [`SheetSession::clear_filter`]:
@@ -984,6 +998,7 @@ impl SheetSession {
 
         let (changed, circular) = self.collect_changes(&changed_set, &circular_set);
         Ok(SortResult {
+            styles: None,
             changed,
             circular,
             edits,

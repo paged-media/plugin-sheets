@@ -71,7 +71,7 @@ use sheet_parser::{parse, print, rewrite_fill};
 
 use super::{
     cell_display, cell_input_text, parse_range, CellChange, CellEdit, CellInput, ModelParseCtx,
-    ModelSheetNames, SessionError, SheetSession, SortResult, T0_LOWER_CELL_CAP,
+    ModelSheetNames, SessionError, SheetSession, SortResult, StyleSwap, T0_LOWER_CELL_CAP,
 };
 
 /// The direction a fill extends its source.
@@ -359,13 +359,21 @@ impl SheetSession {
                 .map(|(row, col, _, style)| (*row, *col, *style))
                 .collect()
         };
-        if !restyle.is_empty() {
+        let styles = if restyle.is_empty() {
+            None
+        } else {
+            let before = self.get_style_ids(sheet, dst)?;
             let engine = self.engine_mut();
             for &(row, col, style) in &restyle {
                 engine.set_cell_style(sheet, row, col, style);
             }
             self.extra_dirty.insert(sheet);
-        }
+            Some(StyleSwap {
+                range: dst.to_string(),
+                before,
+                after: self.get_style_ids(sheet, dst)?,
+            })
+        };
 
         // ── inputs in ONE batch write (one recalc); the reply's priors are
         //    the journal's inverse. Every input is engine-printed, so the
@@ -384,7 +392,10 @@ impl SheetSession {
                 .collect()
         };
         if writes.is_empty() {
-            return Ok(SortResult::default());
+            return Ok(SortResult {
+                styles,
+                ..SortResult::default()
+            });
         }
         let res = self.set_cells(&writes)?;
         let model = self.engine().model();
@@ -414,6 +425,7 @@ impl SheetSession {
             changed,
             circular: res.circular,
             edits,
+            styles,
         })
     }
 

@@ -702,3 +702,51 @@ fn table_name_resolves_to_its_range__feat__sheet_names_define() {
     assert_eq!(page.rows[0].cells[0].text, "Region");
     assert!(s.resolve_range_a1(0, "NoSuchThing").is_err());
 }
+
+#[test]
+fn style_id_snapshot_restores_a_format_change__feat__sheet_edit_undo() {
+    let body = r#"<sheetData><row r="1"><c r="A1"><v>1.5</v></c></row></sheetData>"#;
+    let mut s = SheetSession::load_xlsx(&package("", body, None)).unwrap();
+    let before = s.get_style_ids(0, "A1:B2").unwrap();
+    assert_eq!(before, vec![0, 0, 0, 0]);
+    s.set_style(0, "A1:B2", full_patch()).unwrap();
+    let after = s.get_style_ids(0, "A1:B2").unwrap();
+    assert!(after.iter().all(|&id| id != 0));
+    // Undo: the snapshot goes back; the number format with it.
+    s.set_style_ids(0, "A1:B2", &before).unwrap();
+    assert_eq!(s.get_style_ids(0, "A1:B2").unwrap(), before);
+    assert_eq!(s.get_cell_display(0, 0, 0), "1.5");
+    // Redo: the post-change ids are still the same records.
+    s.set_style_ids(0, "A1:B2", &after).unwrap();
+    assert_eq!(s.get_cell_display(0, 0, 0), "1.50");
+    // Refusals change nothing.
+    assert!(s.set_style_ids(0, "A1:B2", &[0, 0]).is_err());
+    assert!(s.set_style_ids(0, "A1", &[9_999]).is_err());
+    assert_eq!(s.get_style_ids(0, "A1:B2").unwrap(), after);
+    // And it survives a save.
+    s.set_style_ids(0, "A1:B2", &before).unwrap();
+    let s2 = SheetSession::load_xlsx(&s.save_xlsx().unwrap()).unwrap();
+    assert_eq!(s2.get_cell_display(0, 0, 0), "1.5");
+}
+
+#[test]
+fn fill_reports_the_style_swap_it_carried__feat__sheet_edit_fill() {
+    let body = r#"<sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row></sheetData>"#;
+    let mut s = SheetSession::load_xlsx(&package("", body, None)).unwrap();
+    // An unformatted fill swaps nothing.
+    assert!(s
+        .fill_range(0, "A1:A2", "A1:A4", true)
+        .unwrap()
+        .styles
+        .is_none());
+    s.set_style(0, "A1:A2", full_patch()).unwrap();
+    let styled = s.get_style_ids(0, "A1").unwrap()[0];
+    let r = s.fill_range(0, "A1:A2", "A1:A6", true).unwrap();
+    let swap = r.styles.expect("the fill carried a format");
+    assert_eq!(swap.range, "A1:A6");
+    assert_eq!(swap.before, vec![styled, styled, 0, 0, 0, 0]);
+    assert_eq!(swap.after, vec![styled; 6]);
+    // The journal's undo: the before ids go back.
+    s.set_style_ids(0, &swap.range, &swap.before).unwrap();
+    assert_eq!(s.get_style_ids(0, "A5").unwrap(), vec![0]);
+}

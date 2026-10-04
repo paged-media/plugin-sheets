@@ -168,6 +168,9 @@ export interface CellEditRecord {
 export interface SortResult {
   changed: CellChange[];
   edits: CellEditRecord[];
+  /** Wave 9 — the style ids a fill swapped over its target (absent when it
+   *  carried no format): what the undo journal restores. */
+  styles?: { range: string; before: number[]; after: number[] };
 }
 
 /** The rows a sheet's filter VIEW hides (0-based sheet rows, ascending). */
@@ -463,6 +466,12 @@ export interface SheetEngine {
   setStyle?(sheet: number, range: string, patch: CellStylePatch): { cells: number; styles: number };
   /** The full style of one cell. */
   getStyle?(sheet: number, row: number, col: number): CellStylePatch;
+  /** Wave 9 — the style ids of every cell of `range`, row-major: an exact
+   *  snapshot for `setStyleIds` (the in-session undo of a format change). */
+  getStyleIds?(sheet: number, range: string): number[];
+  /** Wave 9 — restore a `getStyleIds` snapshot (refused whole on a count
+   *  mismatch or an unknown id). */
+  setStyleIds?(sheet: number, range: string, ids: readonly number[]): void;
   /** Merge a range (top-left keeps its content; the rest is cleared). */
   merge?(sheet: number, range: string): { changed: CellChange[] };
   /** Remove every merge intersecting a range; how many. */
@@ -687,6 +696,8 @@ export interface SheetWasmEngine {
   // Wave 6.
   set_style?(sheet: number, range: string, patch: CellStylePatch): { cells: number; styles: number };
   get_style?(sheet: number, row: number, col: number): CellStylePatch;
+  get_style_ids?(sheet: number, range: string): Uint32Array;
+  set_style_ids?(sheet: number, range: string, ids: Uint32Array): void;
   merge?(sheet: number, range: string): { changed: CellChange[] };
   unmerge?(sheet: number, range: string): number;
   set_col_width?(sheet: number, first: number, last: number, width?: number): void;
@@ -822,6 +833,9 @@ export function wrapEngine(
     setStyle: (sheet, range, patch) =>
       need("set_style")(sheet, range, patch) as { cells: number; styles: number },
     getStyle: (sheet, row, col) => need("get_style")(sheet, row, col) as CellStylePatch,
+    getStyleIds: (sheet, range) => Array.from(need("get_style_ids")(sheet, range) as Uint32Array),
+    setStyleIds: (sheet, range, ids) =>
+      need("set_style_ids")(sheet, range, Uint32Array.from(ids)),
     merge: (sheet, range) => {
       tick();
       return need("merge")(sheet, range) as { changed: CellChange[] };
