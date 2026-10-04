@@ -817,7 +817,7 @@ tests:
 
 ### 12.4 Oracles and harnesses (`sheet-conformance`, test-only)
 
-*Status note (2026-10-02): this section predates the implementation; see [ADR 507](adr/507-golden-corpora-coverage-gate.md) (the LibreOffice oracle is an unimplemented skeleton in `sheet-conformance/tests/oracle.rs`; IronCalc is not used).*
+*Status note (2026-10-02): this section predates the implementation; see [ADR 507](adr/507-golden-corpora-coverage-gate.md) (the LibreOffice oracle skeleton was replaced by the Excel oracle in `sheet-conformance/tests/excel_oracle.rs`; IronCalc is not used).*
 
 - **LibreOffice Calc headless** (CI container): primary differential
   oracle — workbooks generated per function/feature, evaluated, values

@@ -50,13 +50,14 @@ binds every implemented registry row to tests that exist.
 - `registry/features/format.yaml:61-67` — a ruling row: `sheet.format.date.leap1900`, "Adopted bug-for-bug", with provenance and a test pointer
 - `corpus/xlsx-corpus/generate.py:2-12` — standard library only, fixed timestamp
 - `sheet-conformance/tests/real_xlsx_corpus.rs:26-42`, `:188-364` — the reason for the different bars; the four tests, each calling only `XlsxDocument::open`
-- `sheet-conformance/tests/oracle.rs:74-104` — both oracle tests: `#[ignore]`, an early return, then `todo!()`
+- `sheet-conformance/tests/excel_oracle.rs:36-72` — the Excel differential oracle that replaced the LibreOffice skeleton
 
 ## Alternatives considered
 
-A differential oracle: `sheet-conformance/tests/oracle.rs:33-53` describes running headless
-LibreOffice as an external process and comparing its values with the engine's. Only the
-skeleton exists. A comparison with tolerance is ruled out by the bit-stable claim above.
+A differential oracle against headless LibreOffice was drafted as a skeleton and never
+built. It was replaced by an Excel oracle (`sheet-conformance/tests/excel_oracle.rs:36-55`):
+values recorded once by desktop Excel and committed, compared with a 15-significant-digit
+tolerance in their own lane, so the bit-stable golden gate above is unchanged.
 
 ## Consequences
 

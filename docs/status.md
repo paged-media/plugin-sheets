@@ -13,12 +13,16 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
   document when the host supports container parts, and in the browser's per-plugin store when it
   has one. Every committed edit re-saves the workbook after a short quiet period, and
   deactivation flushes, so a reload restores the edited workbook.
-- **Calculation.** 259 registered functions, all implemented, among them `LET`, `LAMBDA` and its
+- **Calculation.** 263 registered functions, all implemented, among them `LET`, `LAMBDA` and its
   helpers; dynamic arrays that spill and nest; Excel tables with structured references;
   incremental recalculation with an interval index for range dependencies; dependents of
   volatile cells recalculate with them; iterative calculation when the workbook's `calcPr`
   asks for it; `NOW` and `TODAY` follow the host clock. Number formats render in five display
-  locales. Expected values are recorded from Excel and replayed in CI.
+  locales. Expected values are recorded from Excel and replayed in CI: 1,470 of 1,485 function
+  cases and 148 of 164 number-format cases agree, every disagreement a recorded ruling.
+  Recalculating real workbooks reproduces Excel's saved value in 92% of comparable formula cells
+  (55,765 of 60,580 over 201 workbooks): shared formulas, defined names of every kind, structured
+  references, legacy array formulas and element-wise array arguments evaluate as Excel does.
 - **Workbook panel.** Sheets (add, rename, delete), a range, placement on the page, sort (formula
   cells move with their row), find and replace, charts, cell styles, a Format & Layout section
   (number format, font, fill, borders, alignment, wrap, merge, column width, row height, freeze,
@@ -75,8 +79,10 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 - **One workbook** is stored at a time; importing another replaces it.
 - **Filter views** hide rows from the page lowering; they are not written into the xlsx and no
   panel calls them yet.
-- **Formulas** are the Excel en-US dialect only. On load, a formula with an unregistered function
-  keeps its cached value. `TREND` fits one regressor only. A typed date is stored as text.
+- **Formulas** are the Excel en-US dialect only. On load, a formula the parser does not read
+  keeps its cached value: an unregistered function, a whole-column or whole-row reference
+  (`A:A`), an omitted argument (`F(a,,b)`), an external defined name or DDE item (`[1]!Name`).
+  `TREND` fits one regressor only. A typed date is stored as text.
 - **Locale.** The display locale is taken from the workbook's number formats on load.
 - **Saving an edited sheet** drops unknown attributes on its rows and cells and unknown elements
   inside `<sheetData>`; unknown children of `<worksheet>` are kept.
@@ -88,7 +94,8 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 - **Exact decimal arithmetic:** a Cargo feature `sheet-js` does not enable
   ([ADR 501](adr/501-f64-numbers.md)).
 - **Interpreting pivot tables, data validation, external links or macros**
-  ([ADR 504](adr/504-publishing-first-scope.md)). External links are never followed.
+  ([ADR 504](adr/504-publishing-first-scope.md)). External links are never followed; a formula
+  over another workbook (`[1]Sheet1!A1`) evaluates from the values cached in the file.
 - **Other file formats.** `.xlsx`, CSV and TSV are read; `.xlsx` is written; a legacy `.xls` is
   refused.
 - **Localised function names and argument separators**, and CJK display locales.
