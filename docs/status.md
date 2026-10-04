@@ -10,7 +10,9 @@ in which they are closed, are in [`design/analysis-2026-10-04.md`](design/analys
 - **Open a workbook.** An `.xlsx` file reaches the plugin through the host's importer, the "Import workbook (.xlsx)" command
   (host file picker) or the Workbook panel's file input. The bytes are stored in the document when the host supports container
   parts, and also in the browser's per-plugin store when the host has one; `restore` loads them again when the plugin activates.
-- **Calculation.** 224 registered functions, all implemented; dynamic arrays that spill;
+- **Calculation.** 259 registered functions, all implemented, among them `LET`, `LAMBDA` and
+  its helpers (`MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL`, `MAKEARRAY`); dynamic arrays that spill
+  and that nest as arguments (`SUM(SEQUENCE(3))`, `INDEX(VSTACK(…),2,1)`);
   Excel tables with structured references; recalculation after every cell edit; the cells
   of a circular reference show `#REF!`. Number formats render in five display locales.
 - **Workbook panel.** Pick a sheet and a range, place the range on the page, sort a range,
@@ -55,16 +57,22 @@ in which they are closed, are in [`design/analysis-2026-10-04.md`](design/analys
 - **Undo** of cell edits is reachable only inside the `sheet` edit context; the journal is
   cleared on exit and on load. Placing a range is not one undo step in the document: the
   frame, the table, each cell's text and the cell decoration are separate writes.
-- **Sorting** refuses a range that contains formulas or spilled cells. **Cell style from
+- **Sorting** moves formula cells with their row, re-addressing relative references as Excel
+  does; it refuses a range holding spilled cells. **Filter views** (`set_filter` /
+  `clear_filter`: equals, contains, top, bottom) hide rows from the page lowering; they are not
+  written into the xlsx and no panel calls them yet. **Cell style from
   selection** creates and fills the style and applies it to the selected cell; the panel
   reports whether the host accepted the apply.
 - **Clock.** The engine takes the current time as an injected serial; the bundle never sets
   it, so `NOW` and `TODAY` evaluate from serial 0. The random seed is a fixed default.
 - **Formulas** are the Excel en-US dialect only. On load, a formula with an unregistered
-  function is not parsed and the cell keeps its cached value. A typed date is stored as text.
+  function is not parsed and the cell keeps its cached value; the `_xlfn.`/`_xlpm.` storage
+  prefixes are removed before parsing and written back on save. `TREND` fits one regressor
+  only. A typed date is stored as text.
 - **Locale.** The display locale is taken from the workbook's number formats on load; there is no setting for it.
 - **Saving an edited sheet** drops unknown attributes on its rows and cells and unknown
-  elements inside `<sheetData>`; unknown children of `<worksheet>` are kept.
+  elements inside `<sheetData>` (row heights and hidden rows are kept); unknown children of
+  `<worksheet>`, among them `<autoFilter>`, are kept.
 - **Verification.** Both LibreOffice oracle tests end in `todo!()`. The real-workbook tests
   are opt-in, need a corpus that is not in this repo, and assert that files open or are
   refused, not that values match. In the vitest workflow a failing spec does not fail the job.
