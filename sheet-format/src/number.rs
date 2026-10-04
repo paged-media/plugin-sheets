@@ -138,11 +138,10 @@ pub fn render_number(x: f64, section: &Section, force_minus: bool, loc: &LocaleD
     let decimals = section.decimals();
     let grouped = has_grouping(&section.tokens);
 
-    // Round to the section's decimal count, half away from zero.
-    let rounded = round_half_away(value, decimals);
-
-    // Split into integer and fractional digit strings.
-    let (int_digits, frac_digits) = split_digits(rounded, decimals);
+    // Round to the section's decimal count, half away from zero, from the
+    // value's 15-significant-digit DECIMAL form (Excel's display rule: 1.005
+    // is stored as 1.00499999999999989… yet shows 1.01).
+    let (int_digits, frac_digits) = decimal_digits(value, decimals);
 
     // Count integer-side placeholders to know min width and where to put the
     // first digit.
@@ -257,6 +256,62 @@ fn round_half_away(v: f64, decimals: usize) -> f64 {
     let factor = 10f64.powi(decimals as i32);
     let scaled = v * factor;
     (scaled + 0.5).floor() / factor
+}
+
+/// `v >= 0` rounded half away from zero to `decimals` places FROM ITS
+/// 15-SIGNIFICANT-DIGIT DECIMAL FORM, as (integer-digit string without
+/// leading zeros, fraction-digit string of exactly `decimals` chars).
+fn decimal_digits(v: f64, decimals: usize) -> (String, String) {
+    if !v.is_finite() || v <= 0.0 {
+        return split_digits(0.0, decimals);
+    }
+    // `d.dddddddddddddde±X`: the correctly rounded 15-digit decimal.
+    let sci = format!("{v:.14e}");
+    let (mant, exp) = sci.split_once('e').expect("{:e} has an exponent");
+    let exp: i64 = exp.parse().expect("integer exponent");
+    let d: Vec<u8> = mant.bytes().filter(u8::is_ascii_digit).map(|b| b - b'0').collect();
+    // v = 0.d1d2…d15 × 10^(exp+1); N = round(v × 10^decimals) has the
+    // first `k` digits of d.
+    let k = exp + 1 + decimals as i64;
+    let mut n: Vec<u8> = if k <= 0 {
+        if k == 0 && d[0] >= 5 {
+            vec![1]
+        } else {
+            vec![]
+        }
+    } else if k as usize >= d.len() {
+        let mut n = d.clone();
+        n.resize(k as usize, 0);
+        n
+    } else {
+        let k = k as usize;
+        let mut n = d[..k].to_vec();
+        if d[k] >= 5 {
+            let mut i = k;
+            loop {
+                if i == 0 {
+                    n.insert(0, 1);
+                    break;
+                }
+                i -= 1;
+                if n[i] == 9 {
+                    n[i] = 0;
+                } else {
+                    n[i] += 1;
+                    break;
+                }
+            }
+        }
+        n
+    };
+    if n.len() < decimals {
+        let mut padded = vec![0; decimals - n.len()];
+        padded.extend(n);
+        n = padded;
+    }
+    let cut = n.len() - decimals;
+    let text = |ds: &[u8]| ds.iter().map(|x| char::from(b'0' + x)).collect::<String>();
+    (strip_leading_zeros(&text(&n[..cut])), text(&n[cut..]))
 }
 
 /// Split a non-negative rounded value into (integer-digit string,

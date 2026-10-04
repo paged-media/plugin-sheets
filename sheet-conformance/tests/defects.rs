@@ -80,7 +80,6 @@ fn defect_cycle_settles_differently_after_reload__feat__sheet_calc_engine() {
 /// 1.01 — while the formatter rounds the binary value and shows 1.00. Every
 /// pair below is Excel's answer.
 #[test]
-#[should_panic(expected = "formatter rounds the binary value")]
 fn defect_fixed_decimals_round_the_binary_value__feat__sheet_format_engine() {
     use sheet_core::{CellValue, DateSystem, Locale};
     use sheet_format::{compile, format_value, FormatCtx};
