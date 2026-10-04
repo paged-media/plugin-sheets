@@ -120,12 +120,18 @@ impl Dirty {
         self.set.clone()
     }
 
-    /// Reseed the volatile cells into the dirty cut WITHOUT taking a snapshot
-    /// (spill fixpoint: volatiles reseed ONCE per recalc, not per sub-pass, so a
-    /// volatile cell does not keep the spill-reflow loop alive forever).
-    pub fn reseed_volatile(&mut self) {
-        for v in &self.volatile {
-            self.set.insert(*v);
+    /// Reseed the volatile cells — AND their transitive dependents — into the
+    /// dirty cut WITHOUT taking a snapshot (spill fixpoint: volatiles reseed
+    /// ONCE per recalc, not per sub-pass, so a volatile cell does not keep the
+    /// spill-reflow loop alive forever). Before 2026-10 only the volatile
+    /// cells themselves were reseeded, so `=A1*2` over `A1=RAND()` kept a
+    /// stale value after every recalc that the edit itself did not reach.
+    pub fn reseed_volatile(&mut self, graph: &DepGraph) {
+        let mut volatile: Vec<CellRef> = self.volatile.iter().copied().collect();
+        volatile.sort();
+        for v in volatile {
+            self.mark(v);
+            self.propagate_from(v, graph);
         }
     }
 

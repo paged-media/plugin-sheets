@@ -460,7 +460,7 @@ impl Engine {
 
         // Volatile cells reseed ONCE per recalc (not per spill sub-pass — that
         // would keep the fixpoint alive forever whenever any volatile exists).
-        self.dirty.reseed_volatile();
+        self.dirty.reseed_volatile(&self.graph);
         perf_count!(recalcs, 1);
 
         // Bounded fixpoint: each iteration drains the current dirty cut; spill
