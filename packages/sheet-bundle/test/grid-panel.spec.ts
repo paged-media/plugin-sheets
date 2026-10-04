@@ -101,7 +101,7 @@ function fakeEngine() {
       return { changed: [{ sheet, row, col, display: input }] };
     },
     getCellDisplay: () => "",
-    getCellInput: () => "",
+    getCellInput: (_sheet, row, col) => (row === 0 && col === 1 ? "100" : ""),
     sortRange: () => ({ changed: [], edits: [] }),
     findAll: () => [],
     replaceAll: () => ({ occurrences: 0, changed: [], edits: [], skipped: [] }),
@@ -212,12 +212,13 @@ describe("sheet_grid_panel_edit_contract: render", () => {
     expect(svgProps.height).toBe(40);
   });
 
-  it("shows the honest interim-grid notice (S-02 not in-frame yet)", () => {
+  it("shows the how-to notice (the grid also edits in-frame since Wave 5)", () => {
     const { tree } = mountPanel();
     const notice = byData(tree, "data-grid-honesty");
     expect(notice).toHaveLength(1);
     const text = JSON.stringify(notice[0].props.children);
-    expect(text).toContain("Interim panel grid");
+    expect(text).toContain("Click or drag to select");
+    expect(text).toContain("inside a placed sheet frame");
   });
 
   it("renders the honest empty state before a workbook is loaded", () => {
@@ -271,7 +272,7 @@ describe("sheet_grid_panel_edit_contract: select", () => {
 });
 
 describe("sheet_grid_panel_edit_contract: edit-commit", () => {
-  it("double-click opens the editor seeded with the cell text", () => {
+  it("double-click opens the editor seeded with the cell's re-enterable input", () => {
     const { tree } = mountPanel();
     const svg = byData(tree, "data-grid-svg-root")[0];
     act(() => {

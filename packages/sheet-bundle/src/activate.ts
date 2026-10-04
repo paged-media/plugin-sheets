@@ -61,6 +61,14 @@ const DATASETS_PANEL_ID = "media.paged.sheet.panel.datasets";
 
 /** The raw id string of a frame-like `ElementId` (textFrame / rectangle
  *  carry a string `id`), or null. Structural so it needs no wire import. */
+/** Whether keyboard focus is in a text field (keybindings stand down). */
+function editableFocus(): boolean {
+  const el = (globalThis as { document?: { activeElement?: unknown } }).document
+    ?.activeElement as { tagName?: string; isContentEditable?: boolean } | null | undefined;
+  if (!el) return false;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || !!el.isContentEditable;
+}
+
 function frameIdOf(id: unknown): string | null {
   if (typeof id === "object" && id !== null) {
     const e = id as { id?: unknown };
@@ -84,7 +92,10 @@ function frameIdOf(id: unknown): string | null {
  * at registration.
  */
 export function activate(host: BundleHost): BundleHandle {
-  const session = createWorkbookSession(host);
+  const session = createWorkbookSession(host, {
+    // Cmd+F on the grid: the find field lives in the grid panel.
+    onFindRequest: () => host.shell.openPanel(GRID_PANEL_ID),
+  });
   /** See the note above `activate`: a workbook must be open for the
    *  clipboard verbs to have anything to act on. */
   const workbookIsOpen = () => session.state().engine !== null;
@@ -329,6 +340,77 @@ export function activate(host: BundleHost): BundleHandle {
     },
   });
 
+  // Wave 5 — fill, clear and find verbs (palette + menu entries; the grid
+  // keys reach the same session verbs).
+  const inGrid = () => session.isInFrameActive() && !editableFocus();
+  host.contribute.command({
+    id: "media.paged.sheet.command.fillDown",
+    title: "Fill down",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: () => {
+      const r = session.fillDown();
+      if (!r.ok) host.log.warn(`fillDown: ${r.message}`);
+    },
+  });
+  host.contribute.command({
+    id: "media.paged.sheet.command.fillRight",
+    title: "Fill right",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: () => {
+      const r = session.fillRight();
+      if (!r.ok) host.log.warn(`fillRight: ${r.message}`);
+    },
+  });
+  host.contribute.command({
+    id: "media.paged.sheet.command.clearCells",
+    title: "Clear cells",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: () => {
+      const r = session.clearSelection();
+      if (!r.ok) host.log.warn(`clearCells: ${r.message}`);
+    },
+  });
+  host.contribute.command({
+    id: "media.paged.sheet.command.findInSheet",
+    title: "Find in sheet…",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: () => {
+      host.shell.openPanel(GRID_PANEL_ID);
+      session.requestFind();
+    },
+  });
+  host.contribute.command({
+    id: "media.paged.sheet.command.findNext",
+    title: "Find next in sheet",
+    category: "Sheet",
+    when: workbookIsOpen,
+    handler: () => {
+      if (!session.findAgain()) host.log.info("findNext: no match (or no search yet)");
+    },
+  });
+  // Keys while a sheet frame is entered and focus is not in a text field.
+  // Cmd+D is the editor's Place and Tab its chrome toggle (both registered
+  // first, so they win) — those reach the grid through the edit-context
+  // key forwarding instead (the editor shim in the Wave 5 report).
+  for (const [key, command] of [
+    ["cmd+c", "media.paged.sheet.command.copySelection"],
+    ["ctrl+c", "media.paged.sheet.command.copySelection"],
+    ["cmd+v", "media.paged.sheet.command.pasteSelection"],
+    ["ctrl+v", "media.paged.sheet.command.pasteSelection"],
+    ["cmd+d", "media.paged.sheet.command.fillDown"],
+    ["cmd+r", "media.paged.sheet.command.fillRight"],
+    ["ctrl+r", "media.paged.sheet.command.fillRight"],
+    ["cmd+f", "media.paged.sheet.command.findInSheet"],
+    ["ctrl+f", "media.paged.sheet.command.findInSheet"],
+  ] as const) {
+    if (typeof host.contribute.keybinding !== "function") break;
+    host.contribute.keybinding({ key, command, when: inGrid });
+  }
+
   // K-1 entry — double-click a lowered sheet frame to ENTER "sheet" mode:
   // the live in-frame grid renders (C-1 sceneLayer); Esc / exit clears it.
   // The objectType marks a frame as a sheet by its OWN binding metadata
@@ -378,18 +460,29 @@ export function activate(host: BundleHost): BundleHandle {
       // Map it to a cell + select it (re-renders the in-frame grid with
       // the selection chrome).
       onContentPointerDown: (e) => {
-        session.selectCellInFrame(e.contentPoint[0], e.contentPoint[1]);
+        if (e.button !== 0) return;
+        session.pointerDownInFrame(e.contentPoint[0], e.contentPoint[1], {
+          shift: e.modifiers.shift,
+        });
       },
-      // K-1 — a printable key types into the selected cell (an in-frame
-      // edit buffer the grid re-renders); Enter commits, Esc cancels,
-      // Backspace deletes. The shell routes Enter/Esc HERE (not to the
-      // context commit/cancel) while `isDirty` is true — so an in-progress
-      // cell edit owns those keys. Cmd/Ctrl combos never reach this.
+      // Wave 5 — drag extends the selection (or drags the fill handle);
+      // the release ends the gesture (a fill-handle release fills).
+      onContentPointerMove: (e) => {
+        session.pointerMoveInFrame(e.contentPoint[0], e.contentPoint[1]);
+      },
+      onContentPointerUp: (e) => {
+        session.pointerUpInFrame(e.contentPoint[0], e.contentPoint[1]);
+      },
+      // K-1 + Wave 5 — every key the shell forwards goes through the grid's
+      // key map (grid-nav.ts): typing edits the active cell, Enter/Tab
+      // commit and move, arrows move (shift extends), F2 edits in place,
+      // Delete/Backspace clear the selection, Cmd+C/V/D/R/A/F/Z. NOTE the
+      // editor forwards only printable keys, Backspace and Delete while no
+      // cell edit is open — arrows, Tab, Enter, F2 and Cmd combos reach
+      // here only mid-edit until the editor forwards them (shim recorded in
+      // the Wave 5 report); the keybindings below cover Cmd+C/V/F/R today.
       onContentKey: (e) => {
-        if (e.key === "Enter") session.commitCellEdit();
-        else if (e.key === "Escape") session.cancelCellEdit();
-        else if (e.key === "Backspace") session.backspaceCellEdit();
-        else if (e.key.length === 1) session.typeCellChar(e.key);
+        if (session.handleGridKey(e)) e.preventDefault?.();
       },
       // The context is "dirty" while a cell edit is open — gates the shell's
       // Enter/Esc routing (to the cell) + a future discard prompt (§8.0).

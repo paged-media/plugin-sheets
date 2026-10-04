@@ -299,7 +299,10 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "=engineCalls": 3,
       "=reads": 0,
       "=bytesWritten": 5293,
-      "=sceneItems": 282, // was 5922 (21 × the full grid)
+      // was 5922 (21 × the full grid). 282 → 283 in Wave 5: the selection
+      // now carries its fill-handle knob — one item per submit, new chrome
+      // the fill gesture needs, not new work per keystroke.
+      "=sceneItems": 283,
       "=rejected": 0,
     });
   });
@@ -346,7 +349,7 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "=engineCalls": 3,
       "=reads": 0,
       "=bytesWritten": 5293,
-      "=sceneItems": 5922,
+      "=sceneItems": 5943, // 5922 + the fill-handle knob × 21 submits (Wave 5)
       "=rejected": 0,
     });
   });
@@ -412,13 +415,16 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       // ONE setCells: one recalc, and its reply carries every prior input
       // for the undo journal (was 1000 getCellInput + 1000 setCell).
       "engine.setCells": 1,
+      // Wave 5: the pasted cells become the selection (one setGridSelection
+      // — Excel selects what it pasted).
+      "engine.setGridSelection": 1,
       "engine.saveXlsx": 1,
       "blob.write": 1,
       "parts.write": 2,
       "storage.set": 1,
       "supports": 2,
       "=mutations": 0,
-      "=engineCalls": 2, // was 2001
+      "=engineCalls": 3, // was 2001; 2 + the selection (Wave 5)
       "=reads": 0,
       "=bytesWritten": 9817,
       "=sceneItems": 0,
@@ -648,7 +654,8 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     // Was 15 / 15 — one each per signal (3 selections, 10 edits, the
     // paste, the inside edit). Now: 3 selection moves + the paste inside
     // its selection + the edit inside A1:B2 = 5 text re-reads; the palette
-    // never moved.
-    expect(counts).toEqual({ swatches: 0, text: 5 });
+    // never moved. Wave 5: +1 — a paste now SELECTS the pasted cells (Excel),
+    // a real selection move the Character panel must follow.
+    expect(counts).toEqual({ swatches: 0, text: 6 });
   });
 });

@@ -73,6 +73,11 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.command.insertColumns",
       "media.paged.sheet.command.deleteColumns",
       "media.paged.sheet.command.addSheet",
+      "media.paged.sheet.command.fillDown",
+      "media.paged.sheet.command.fillRight",
+      "media.paged.sheet.command.clearCells",
+      "media.paged.sheet.command.findInSheet",
+      "media.paged.sheet.command.findNext",
     ]);
   });
 

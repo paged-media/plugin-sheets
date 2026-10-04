@@ -79,10 +79,28 @@ export {
   regionsOf,
   type CellRegion,
   type SessionChange,
+  type SessionOptions,
   type SessionResult,
   type SessionState,
   type WorkbookSession,
 } from "./session";
+
+// Grid navigation (Wave 5) — the selection model + key map the panel and
+// the in-frame grid share.
+export {
+  advance,
+  collapsed,
+  extendTo,
+  fillTarget,
+  gridKeyAction,
+  modelOfRect,
+  moveBy,
+  rectOf,
+  scrollToShow,
+  type GridKeyAction,
+  type KeyLike,
+  type SelectionModel,
+} from "./grid-nav";
 
 // The native-table page lower (S-03 RESOLVED; tab-text lane retained as
 // the explicit fallback), exported for the flow spec.

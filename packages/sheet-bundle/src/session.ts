@@ -35,6 +35,7 @@ import type {
 import {
   gridSceneToSceneLayer,
   hitCell,
+  hitFillHandle,
   workbookPalette,
   type ChartGeometry,
   type FunctionEntry,
@@ -81,6 +82,22 @@ import {
   type PlacedChart,
 } from "./lower-chart";
 import { readWorkbookPart, writeWorkbookPart } from "./workbook-part";
+import {
+  advance,
+  collapsed,
+  extendTo,
+  fillTarget,
+  fullyVisible,
+  gridKeyAction,
+  modelOfRect,
+  moveBy,
+  rectOf,
+  scrollToShow,
+  type Cell,
+  type GridKeyAction,
+  type KeyLike,
+  type SelectionModel,
+} from "./grid-nav";
 import {
   planCellStyleFromEntries,
   tableCellPositionOf,
@@ -225,6 +242,9 @@ export interface SessionState {
    *  from XLSX (the snapshot is committed content either way — §1.1 honesty:
    *  no auto-refetch; a refresh is an explicit re-source). */
   dataSource: { providerId: string; revision: string; stale: boolean } | null;
+  /** Wave 5 — bumps on every Cmd+F / "Find in sheet": the grid panel
+   *  focuses its find field when it changes. */
+  findRequest: number;
 }
 
 export interface WorkbookSession {
@@ -576,6 +596,51 @@ export interface WorkbookSession {
   /** Place a defined name or a table into a frame (like Lower to frame);
    *  the placement keeps the NAME, so a redefinition moves it. */
   placeName(name: string): Promise<string | null>;
+
+  // ── Wave 5 — editing fundamentals ───────────────────────────────────
+
+  /** The active cell (where typing lands) — the selection's anchor, or
+   *  where Tab/Enter walked inside it. Null with no selection. */
+  activeCell(): { row: number; col: number } | null;
+  /** Select one cell (a click). */
+  selectCell(row: number, col: number): void;
+  /** Extend the selection from its anchor to `(row, col)` (shift-click,
+   *  drag). */
+  extendSelection(row: number, col: number): void;
+  /** A key on the grid (in-frame or the panel): navigation, editing,
+   *  clipboard, fill, clear, find, undo. Whether the grid took it. */
+  handleGridKey(e: KeyLike): boolean;
+  /** K-1 pointer in FRAME-CONTENT coordinates: a press selects (shift
+   *  extends) or grabs the fill handle; a move drags; a release ends the
+   *  gesture (a fill-handle release fills). Whether the grid took it. */
+  pointerDownInFrame(
+    contentX: number,
+    contentY: number,
+    mods?: { shift?: boolean },
+  ): boolean;
+  pointerMoveInFrame(contentX: number, contentY: number): boolean;
+  pointerUpInFrame(contentX: number, contentY: number): boolean;
+  /** Scroll the in-frame grid window by rows / columns (never above A1). */
+  scrollInFrame(dRows: number, dCols: number): boolean;
+  /** Whether the in-frame grid is showing (a sheet frame is entered). */
+  isInFrameActive(): boolean;
+  /** The fill handle: fill `target` (which extends the selection in one
+   *  direction) as a series. One undo step; `target` becomes the selection. */
+  fillSelectionTo(target: GridSelection, series?: boolean): SessionResult;
+  /** Cmd+D / Cmd+R: fill down / right from the selection's first row /
+   *  column (or the cell above / left of a single row / column). */
+  fillDown(): SessionResult;
+  fillRight(): SessionResult;
+  /** Delete: clear every populated cell of the selection (one undo step). */
+  clearSelection(): SessionResult;
+  /** Select + reveal the next (or previous) match after the active cell on
+   *  the active sheet; remembered for {@link findAgain}. Null when nothing
+   *  matches. */
+  findNext(needle: string, opts?: FindOptions, backwards?: boolean): FindMatch | null;
+  /** Repeat the last {@link findNext}. */
+  findAgain(backwards?: boolean): FindMatch | null;
+  /** Ask the grid panel to show its find field (bumps `findRequest`). */
+  requestFind(): void;
 }
 
 /** Which edges `setBorders` draws. */
@@ -665,7 +730,16 @@ export function tsvToRows(text: string): string[][] {
   return body.split("\n").map((line) => line.split("\t"));
 }
 
-export function createWorkbookSession(host: BundleHost): WorkbookSession {
+/** Session wiring the bundle supplies (all optional). */
+export interface SessionOptions {
+  /** Cmd+F on the grid: the host side opens the find UI (the grid panel). */
+  onFindRequest?: () => void;
+}
+
+export function createWorkbookSession(
+  host: BundleHost,
+  options: SessionOptions = {},
+): WorkbookSession {
   // Panel-facing engine READS, memoised until the next change signal
   // (every engine write is followed by one): a panel re-renders on every
   // keystroke in its own inputs, and each render used to re-window the
@@ -687,6 +761,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     bootError: null,
     gridSelection: null,
     dataSource: null,
+    findRequest: 0,
   };
 
   // S-15 — the live `onDidChange` subscription for the currently-linked
@@ -745,6 +820,30 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
   // re-renders with this text overlaid until commit (→ engine.setCell) or
   // cancel. `null` ⇒ not editing (the context is not "dirty").
   let cellEdit: { row: number; col: number; text: string } | null = null;
+  // Wave 5 — how the open edit began: typing ("enter": arrows commit and
+  // move, Excel's Enter mode) or F2 ("edit": arrows belong to the editor).
+  let cellEditMode: "enter" | "edit" = "enter";
+
+  // Wave 5 — the selection model behind `state.gridSelection` (anchor,
+  // moving focus, active cell; see grid-nav.ts), the pointer gesture in
+  // progress, the fill-handle drag's target (drawn in-frame), the last
+  // copy's input snapshot (a paste of our own copy carries formulas) and
+  // the last find.
+  let selModel: SelectionModel | null = null;
+  let drag:
+    | { kind: "select" }
+    | { kind: "fill"; source: GridSelection; target: GridSelection | null }
+    | null = null;
+  let fillPreview: GridSelection | null = null;
+  let copySource: {
+    sheet: number;
+    rect: GridSelection;
+    displays: string[][];
+    inputs: string[][];
+  } | null = null;
+  let lastFind: { needle: string; opts: FindOptions } | null = null;
+  // Whether the in-frame grid is showing (a sheet frame is entered).
+  let inFrameActive = false;
 
   // S-04 formula bar — the engine's function name table, cached after the
   // first read (the registry is build-time fixed; one wasm call suffices for
@@ -858,6 +957,385 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     markEdited();
   }
 
+  // ── K-1 in-frame cell editor (shared by the public verbs and the key
+  //    map). ────────────────────────────────────────────────────────────
+
+  /** A printable key: begin a fresh (replace-mode) edit on the ACTIVE
+   *  cell, or append to the open one. False when there is no selected
+   *  cell / not a single char. */
+  function typeChar(ch: string): boolean {
+    if (ch.length !== 1) return false;
+    if (!cellEdit) {
+      const at = activeOf();
+      if (!at) return false;
+      cellEdit = { row: at.row, col: at.col, text: ch };
+      cellEditMode = "enter";
+    } else {
+      cellEdit = { ...cellEdit, text: cellEdit.text + ch };
+    }
+    void submitInFrameGrid();
+    return true;
+  }
+
+  /** Backspace in an edit: open from the cell's current value if not
+   *  already open, then drop the last char. */
+  function backspaceEdit(): boolean {
+    if (!cellEdit) {
+      const at = activeOf();
+      if (!at) return false;
+      cellEdit = { row: at.row, col: at.col, text: cellDisplay(at.row, at.col) };
+      cellEditMode = "edit";
+    }
+    cellEdit = { ...cellEdit, text: cellEdit.text.slice(0, -1) };
+    void submitInFrameGrid();
+    return true;
+  }
+
+  /** F2: open an edit on the active cell with its re-enterable INPUT (the
+   *  formula, not its display). */
+  function openEdit(): boolean {
+    if (cellEdit) return true;
+    const at = activeOf();
+    if (!at || !state.engine || state.activeSheet === null) return false;
+    let text = "";
+    try {
+      text = state.engine.getCellInput(state.activeSheet, at.row, at.col) ?? "";
+    } catch {
+      text = cellDisplay(at.row, at.col);
+    }
+    cellEdit = { row: at.row, col: at.col, text };
+    cellEditMode = "edit";
+    void submitInFrameGrid();
+    return true;
+  }
+
+  /** Enter: write the buffer through the engine, clear the edit, re-render.
+   *  Whether an edit was committed. */
+  function commitEdit(): boolean {
+    if (!cellEdit) return false;
+    const { row, col, text } = cellEdit;
+    cellEdit = null;
+    const sheet = state.activeSheet;
+    if (state.engine && sheet !== null) {
+      journaledSetCell(sheet, row, col, text);
+      emitter.emit({ kind: "cells", regions: regionsOf([{ sheet, row, col }]) });
+    } else {
+      emitter.emit();
+    }
+    void submitInFrameGrid();
+    return true;
+  }
+
+  /** Esc: drop the buffer and re-render the committed value. */
+  function cancelEdit(): void {
+    if (!cellEdit) return;
+    cellEdit = null;
+    void submitInFrameGrid();
+  }
+
+  // ── Wave 5 — selection model, bulk writes, fill, clear, find, keys ──
+
+  /** The live selection model (rebuilt from `state.gridSelection` when
+   *  something else — a sheet switch, a panel call — replaced it). */
+  function currentModel(): SelectionModel | null {
+    const sel = state.gridSelection;
+    if (!sel) return null;
+    if (selModel) {
+      const r = rectOf(selModel);
+      if (
+        r.anchorRow === sel.anchorRow &&
+        r.anchorCol === sel.anchorCol &&
+        r.rows === sel.rows &&
+        r.cols === sel.cols
+      ) {
+        return selModel;
+      }
+    }
+    return modelOfRect(sel);
+  }
+
+  /** The active cell (where typing lands), or null with no selection. */
+  function activeOf(): Cell | null {
+    return currentModel()?.active ?? null;
+  }
+
+  /** Make `m` the selection: record it, scroll the in-frame grid so the
+   *  active cell shows, re-render. */
+  function applyModel(m: SelectionModel): void {
+    const r = rectOf(m);
+    applyGridSelection(r.anchorRow, r.anchorCol, r.rows, r.cols, m);
+    revealInFrame(m.active);
+    void submitInFrameGrid();
+  }
+
+  /** Move the in-frame window (as little as possible) so `cell` shows. */
+  function revealInFrame(cell: Cell): void {
+    if (!lastGridWindow || !lastGridScene) return;
+    const vis = fullyVisible(lastGridScene, lastGridWindow.wPt, lastGridWindow.hPt);
+    const next = scrollToShow(lastGridWindow, vis, cell);
+    if (next.firstRow !== lastGridWindow.firstRow || next.firstCol !== lastGridWindow.firstCol) {
+      lastGridWindow = { ...lastGridWindow, ...next };
+    }
+  }
+
+  /** Write `targets` (their `nextInput`): ONE write + ONE recalc through
+   *  the batch door, whose reply carries every cell's PRIOR input — the
+   *  journal's inverse, so nothing is read first. The door refuses the
+   *  whole batch on any bad input; then the cells go one by one (prior read
+   *  per cell), so a single bad cell is skipped, not the operation.
+   *  Returns the written cells with their priors; `journaled: false` when
+   *  an engine's reply predates `prevInputs` (written, priors unknown —
+   *  journal nothing rather than an undo that restores the wrong text). */
+  function writeTargets(
+    engine: SheetEngine,
+    targets: readonly CellEditRecord[],
+    what: string,
+  ): { written: CellEditRecord[]; journaled: boolean } {
+    if (engine.setCells && targets.length > 0) {
+      try {
+        const res = engine.setCells(
+          targets.map((t) => ({ sheet: t.sheet, row: t.row, col: t.col, input: t.nextInput })),
+        );
+        const prev = res.prevInputs;
+        if (prev && prev.length === targets.length) {
+          return {
+            written: targets.map((t, i) => ({ ...t, prevInput: prev[i] })),
+            journaled: true,
+          };
+        }
+        host.log.warn(`${what}: setCells reply has no prevInputs — not journaled`);
+        return { written: [...targets], journaled: false };
+      } catch (err) {
+        host.log.debug(`${what}: batch write refused — per cell`, err);
+      }
+    }
+    const written: CellEditRecord[] = [];
+    for (const t of targets) {
+      let prevInput: string;
+      try {
+        prevInput = engine.getCellInput(t.sheet, t.row, t.col);
+        engine.setCell(t.sheet, t.row, t.col, t.nextInput);
+      } catch (err) {
+        host.log.warn(`${what}: setCell(${t.sheet},${t.row},${t.col}) failed`, err);
+        continue;
+      }
+      written.push({ ...t, prevInput });
+    }
+    return { written, journaled: true };
+  }
+
+  /** Fill `target` from the current selection through the engine
+   *  (`series` = the fill handle; false = fill down / right). One undo
+   *  step; the filled range becomes the selection. */
+  function fillTo(
+    source: GridSelection,
+    target: GridSelection,
+    series: boolean,
+    select: GridSelection,
+  ): SessionResult {
+    const engine = state.engine;
+    const sheet = state.activeSheet;
+    if (!engine || sheet === null) return { ok: false, message: "no workbook / sheet" };
+    if (!engine.fillRange) {
+      return { ok: false, message: "engine wasm predates fill_range — rebuild it" };
+    }
+    if (cellEdit) commitEdit();
+    let res;
+    try {
+      res = engine.fillRange(
+        sheet,
+        selectionRangeA1(source.anchorRow, source.anchorCol, source.rows, source.cols),
+        selectionRangeA1(target.anchorRow, target.anchorCol, target.rows, target.cols),
+        series,
+      );
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+    journalBatch(res.edits); // one grouped Cmd-Z undoes the whole fill
+    emitter.emit({ kind: "cells", regions: regionsOf(res.edits) });
+    applyModel(modelOfRect(select));
+    return { ok: true };
+  }
+
+  /** Cmd+D / Cmd+R: fill the selection from its first row / column (a
+   *  one-row / one-column selection takes the cell above / to the left).
+   *  A plain repeat — never a series. */
+  function fillAlong(dir: "down" | "right"): SessionResult {
+    const sel = state.gridSelection;
+    if (!sel) return { ok: false, message: "select the cells to fill" };
+    const down = dir === "down";
+    const span = down ? sel.rows : sel.cols;
+    let source: GridSelection;
+    let target: GridSelection;
+    if (span > 1) {
+      source = down ? { ...sel, rows: 1 } : { ...sel, cols: 1 };
+      target = sel;
+    } else {
+      if ((down ? sel.anchorRow : sel.anchorCol) === 0) {
+        return { ok: false, message: `nothing ${down ? "above" : "to the left"} to fill from` };
+      }
+      source = down
+        ? { ...sel, anchorRow: sel.anchorRow - 1, rows: 1 }
+        : { ...sel, anchorCol: sel.anchorCol - 1, cols: 1 };
+      target = down ? { ...source, rows: 2 } : { ...source, cols: 2 };
+    }
+    return fillTo(source, target, false, sel);
+  }
+
+  /** Delete / Backspace on a selection: clear every populated cell in it
+   *  as ONE undo step. */
+  function clearSelection(): SessionResult {
+    const engine = state.engine;
+    const sheet = state.activeSheet;
+    const sel = state.gridSelection;
+    if (!engine || sheet === null) return { ok: false, message: "no workbook / sheet" };
+    if (!sel) return { ok: false, message: "select the cells to clear" };
+    // Every cell of the selection written "" in ONE batch; the reply's
+    // priors say which held something (only those journal).
+    const targets: CellEditRecord[] = [];
+    for (let r = 0; r < sel.rows; r++) {
+      for (let c = 0; c < sel.cols; c++) {
+        targets.push({
+          sheet,
+          row: sel.anchorRow + r,
+          col: sel.anchorCol + c,
+          prevInput: "",
+          nextInput: "",
+        });
+      }
+    }
+    const { written, journaled } = writeTargets(engine, targets, "clearSelection");
+    const cleared = written.filter((t) => t.prevInput !== "");
+    if (journaled) journalBatch(cleared);
+    else markEdited();
+    emitter.emit({ kind: "cells", regions: regionsOf(written) });
+    void submitInFrameGrid();
+    return { ok: true };
+  }
+
+  /** The next match of `needle` after the active cell (row-major, wrapping)
+   *  on the active sheet — selected and scrolled into view. Null when
+   *  nothing matches. Matching is the engine's (`findAll`). */
+  function findNext(
+    needle: string,
+    opts: FindOptions,
+    backwards: boolean,
+  ): FindMatch | null {
+    if (!needle || !state.engine || state.activeSheet === null) return null;
+    lastFind = { needle, opts };
+    let hits: FindMatch[];
+    try {
+      hits = state.engine.findAll(state.activeSheet, needle, opts);
+    } catch (err) {
+      host.log.warn("findNext failed", err);
+      return null;
+    }
+    if (hits.length === 0) return null;
+    const key = (h: { row: number; col: number }) => h.row * 16384 + h.col;
+    const sorted = [...hits].sort((a, b) => key(a) - key(b));
+    const at = activeOf();
+    const here = at ? key(at) : backwards ? Number.MAX_SAFE_INTEGER : -1;
+    const hit = backwards
+      ? ([...sorted].reverse().find((h) => key(h) < here) ?? sorted[sorted.length - 1])
+      : (sorted.find((h) => key(h) > here) ?? sorted[0]);
+    applyModel(collapsed({ row: hit.row, col: hit.col }));
+    return hit;
+  }
+
+  /** Run one grid key action (see grid-nav `gridKeyAction`). Whether the
+   *  key was the grid's. */
+  function runGridAction(a: GridKeyAction): boolean {
+    const m = currentModel();
+    switch (a.kind) {
+      case "move":
+        if (!m) return false;
+        applyModel(moveBy(m, a.dRow, a.dCol, a.extend));
+        return true;
+      case "advance":
+        if (!m) return false;
+        applyModel(advance(m, a.dir));
+        return true;
+      case "page": {
+        if (!m) return false;
+        const rows =
+          lastGridScene && lastGridWindow
+            ? fullyVisible(lastGridScene, lastGridWindow.wPt, lastGridWindow.hPt).rows
+            : 20;
+        if (lastGridWindow) {
+          lastGridWindow = {
+            ...lastGridWindow,
+            firstRow: Math.max(0, lastGridWindow.firstRow + a.dir * rows),
+          };
+        }
+        applyModel(moveBy(m, a.dir * rows, 0, a.extend));
+        return true;
+      }
+      case "home":
+        if (!m) return false;
+        applyModel(collapsed(a.origin ? { row: 0, col: 0 } : { row: m.active.row, col: 0 }));
+        return true;
+      case "edit":
+        return openEdit();
+      case "type":
+        return typeChar(a.ch);
+      case "backspace":
+        return backspaceEdit();
+      case "commit":
+        commitEdit();
+        if (m && a.then) applyModel(advance(m, a.then));
+        return true;
+      case "commitMove":
+        commitEdit();
+        if (m) applyModel(moveBy(m, a.dRow, a.dCol, false));
+        return true;
+      case "cancel":
+        cancelEdit();
+        return true;
+      case "clear": {
+        const r = clearSelection();
+        if (!r.ok) host.log.warn(`clear: ${r.message}`);
+        return true;
+      }
+      case "copy":
+        void api.copySelection().then((r) => {
+          if (!r.ok) host.log.warn(`copy: ${r.message}`);
+        });
+        return true;
+      case "paste":
+        void api.pasteAtSelection().then((r) => {
+          if (!r.ok) host.log.warn(`paste: ${r.message}`);
+        });
+        return true;
+      case "fill": {
+        const r = fillAlong(a.dir);
+        if (!r.ok) host.log.warn(`fill ${a.dir}: ${r.message}`);
+        return true;
+      }
+      case "selectAll": {
+        const info = api.sheets().find((x) => x.id === state.activeSheet);
+        const rows = Math.max(1, info?.rows ?? 1);
+        const cols = Math.max(1, info?.cols ?? 1);
+        applyModel({
+          anchor: { row: 0, col: 0 },
+          focus: { row: rows - 1, col: cols - 1 },
+          active: { row: 0, col: 0 },
+        });
+        return true;
+      }
+      case "find":
+        state.findRequest += 1;
+        emitter.emit();
+        options.onFindRequest?.();
+        return true;
+      case "undo":
+        return api.undoCellEdit();
+      case "redo":
+        return api.redoCellEdit();
+      case "none":
+        return false;
+    }
+  }
+
   /** Record the grid selection (engine + session) so the next windowing
    *  paints it. Shared by the panel's `setGridSelection` door and K-1's
    *  in-frame click-to-select. Pure state + signal — never throws. */
@@ -866,8 +1344,10 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     anchorCol: number,
     rows: number,
     cols: number,
+    model?: SelectionModel,
   ): void {
     state.gridSelection = { anchorRow, anchorCol, rows, cols };
+    selModel = model ?? modelOfRect(state.gridSelection);
     if (state.engine && state.activeSheet !== null) {
       try {
         state.engine.setGridSelection(
@@ -930,9 +1410,12 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     if (!base) return false;
     // K-1 — overlay the in-progress cell-edit text on its cell (the engine
     // scene still shows the COMMITTED value; the buffer is uncommitted).
-    const scene = cellEdit
+    const edited = cellEdit
       ? withCellText(base, cellEdit.row, cellEdit.col, cellEdit.text)
       : base;
+    // Wave 5 — a fill-handle drag shows its target (a copy: the engine
+    // window is memoised).
+    const scene = fillPreview ? { ...edited, fillPreview } : edited;
     lastGridScene = scene;
     try {
       await surface.submit(lastFrameId, gridSceneToSceneLayer(scene));
@@ -1348,7 +1831,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     return true;
   }
 
-  return {
+  const api: WorkbookSession = {
     state: () => state,
     onDidChange: (l) => emitter.on(l),
 
@@ -1448,6 +1931,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         host.log.warn("showGridInFrame: no target frame — lower a range first");
         return false;
       }
+      const prevFrame = lastFrameId;
       lastFrameId = target; // the in-frame grid + hide now track this frame
       const surface = sceneChannel();
       if (!surface) {
@@ -1476,7 +1960,15 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       } catch (err) {
         host.log.debug("showGridInFrame: frame geometry read failed", err);
       }
-      lastGridWindow = { firstRow: 0, firstCol: 0, wPt, hPt };
+      // Wave 5 — keep the window's scroll when re-showing the same frame.
+      const keep = lastGridWindow && prevFrame === target ? lastGridWindow : null;
+      lastGridWindow = {
+        firstRow: keep?.firstRow ?? 0,
+        firstCol: keep?.firstCol ?? 0,
+        wPt,
+        hPt,
+      };
+      inFrameActive = true;
       const ok = await submitInFrameGrid();
       if (!ok) host.log.warn("showGridInFrame: grid windowing failed");
       return ok;
@@ -1503,64 +1995,26 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     },
 
     typeCellChar(ch: string) {
-      // K-1 — a printable key in-frame: begin a fresh (replace-mode) edit on
-      // the selected cell, or append to the open one. Returns false when
-      // there's nothing to edit (no selected cell / not a single char).
-      if (ch.length !== 1) return false;
-      if (!cellEdit) {
-        const sel = state.gridSelection;
-        if (!sel) return false;
-        cellEdit = { row: sel.anchorRow, col: sel.anchorCol, text: ch };
-      } else {
-        cellEdit = { ...cellEdit, text: cellEdit.text + ch };
-      }
-      void submitInFrameGrid();
-      return true;
+      return typeChar(ch);
     },
 
     backspaceCellEdit() {
-      // Begin from the cell's current value (F2-like) if not already open,
-      // then drop the last char.
-      if (!cellEdit) {
-        const sel = state.gridSelection;
-        if (!sel) return false;
-        cellEdit = {
-          row: sel.anchorRow,
-          col: sel.anchorCol,
-          text: cellDisplay(sel.anchorRow, sel.anchorCol),
-        };
-      }
-      cellEdit = { ...cellEdit, text: cellEdit.text.slice(0, -1) };
-      void submitInFrameGrid();
-      return true;
+      return backspaceEdit();
     },
 
     commitCellEdit() {
-      // Write the buffer through the engine (it recomputes the dirty cut),
-      // clear the edit, re-render. Returns whether an edit was committed.
-      // Mirrors `editCell` rather than calling it (no reliance on `this`).
-      if (!cellEdit) return false;
-      const { row, col, text } = cellEdit;
-      cellEdit = null;
-      const sheet = state.activeSheet;
-      if (state.engine && sheet !== null) {
-        journaledSetCell(sheet, row, col, text);
-        emitter.emit({ kind: "cells", regions: regionsOf([{ sheet, row, col }]) });
-      } else {
-        emitter.emit();
-      }
-      void submitInFrameGrid();
-      return true;
+      return commitEdit();
     },
 
     cancelCellEdit() {
-      if (!cellEdit) return;
-      cellEdit = null;
-      void submitInFrameGrid();
+      cancelEdit();
     },
 
     hideGridInFrame() {
       cellEdit = null;
+      drag = null;
+      fillPreview = null;
+      inFrameActive = false;
       if (lastFrameId) void sceneSurface?.clear(lastFrameId);
     },
 
@@ -1730,6 +2184,21 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       if (grid.length === 0) {
         return { ok: false as const, message: "the selection is empty" };
       }
+      // Wave 5 — snapshot the INPUTS too: pasting our own copy carries
+      // formulas (re-addressed), Excel's in-app copy. Other apps get values.
+      copySource = null;
+      if (state.engine.getRangeInputs) {
+        try {
+          copySource = {
+            sheet: state.activeSheet,
+            rect: { ...sel },
+            displays: grid,
+            inputs: state.engine.getRangeInputs(state.activeSheet, range),
+          };
+        } catch (err) {
+          host.log.debug("copySelection: input snapshot failed (values only)", err);
+        }
+      }
       const tabular: TabularClipboard = { rows: grid };
       const text = grid.map((r) => r.join("\t")).join("\n");
       try {
@@ -1781,81 +2250,75 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
           message: "nothing tabular on the clipboard",
         };
       }
-      // Write each cell through the engine, capturing prev/next inputs so the
-      // whole paste journals as ONE grouped ADR-012 undo step. A per-cell write
-      // failure is tolerated (logged + skipped) — never half a crash.
+      // Our own copy still on the clipboard (same cells, same displays) →
+      // paste its INPUTS, formulas re-addressed by the engine for the paste
+      // offset. Anything else is text the engine re-types per cell.
       const sheet = state.activeSheet;
       const engine = state.engine;
-      const edits: CellEditRecord[] = [];
-      let written = 0;
-      const cells: { row: number; col: number; next: string }[] = [];
-      for (let r = 0; r < grid.length; r++) {
-        const row = grid[r];
-        for (let c = 0; c < row.length; c++) {
-          cells.push({ row: sel.anchorRow + r, col: sel.anchorCol + c, next: row[c] });
-        }
-      }
-      // ONE write + ONE recalc through the batch door when the engine has
-      // it; its reply carries every cell's prior input (the journal's
-      // inverse), so nothing is read first. It refuses the whole batch on
-      // any bad input — then the cells go one by one (prior read per cell),
-      // so a single bad cell is skipped, not the paste.
-      let batched = false;
-      if (engine.setCells && cells.length > 0) {
-        try {
-          const res = engine.setCells(
-            cells.map((t) => ({ sheet, row: t.row, col: t.col, input: t.next })),
+      const own =
+        copySource &&
+        engine.shiftFormulas &&
+        JSON.stringify(copySource.displays) === JSON.stringify(grid)
+          ? copySource
+          : null;
+      const block = own ? own.inputs : grid;
+      const bRows = block.length;
+      const bCols = Math.max(...block.map((r) => r.length));
+      // A selection that is a whole multiple of the block tiles it (copy one
+      // cell, select a column, paste — Excel).
+      const tile =
+        sel.rows % bRows === 0 &&
+        sel.cols % bCols === 0 &&
+        (sel.rows > bRows || sel.cols > bCols);
+      const area: GridSelection = tile
+        ? { ...sel }
+        : { anchorRow: sel.anchorRow, anchorCol: sel.anchorCol, rows: bRows, cols: bCols };
+      const targets: CellEditRecord[] = [];
+      for (let tr = 0; tr < area.rows; tr += bRows) {
+        for (let tc = 0; tc < area.cols; tc += bCols) {
+          const top = area.anchorRow + tr;
+          const left = area.anchorCol + tc;
+          let rows = block;
+          if (own) {
+            try {
+              rows = engine.shiftFormulas!(
+                sheet,
+                own.inputs,
+                top - own.rect.anchorRow,
+                left - own.rect.anchorCol,
+              );
+            } catch (err) {
+              host.log.warn("pasteAtSelection: formula adjust failed", err);
+              return { ok: false as const, message: "the paste could not adjust its formulas" };
+            }
+          }
+          rows.forEach((row, r) =>
+            row.forEach((next, c) => {
+              targets.push({
+                sheet,
+                row: top + r,
+                col: left + c,
+                prevInput: "",
+                nextInput: next,
+              });
+            }),
           );
-          batched = true;
-          written = cells.length;
-          const prev = res.prevInputs;
-          if (prev && prev.length === cells.length) {
-            cells.forEach((t, i) =>
-              edits.push({ sheet, row: t.row, col: t.col, prevInput: prev[i], nextInput: t.next }),
-            );
-          } else {
-            // An engine whose reply predates `prevInputs`: the cells are
-            // written but their priors are gone — journal nothing rather
-            // than an undo that would restore the wrong text.
-            host.log.warn("pasteAtSelection: setCells reply has no prevInputs — paste not journaled");
-          }
-        } catch (err) {
-          host.log.debug("pasteAtSelection: batch write refused — per cell", err);
         }
       }
-      if (!batched) {
-        for (const t of cells) {
-          let prev: string;
-          try {
-            prev = engine.getCellInput(sheet, t.row, t.col);
-          } catch (err) {
-            host.log.warn(`pasteAtSelection: read (${sheet},${t.row},${t.col}) failed`, err);
-            continue;
-          }
-          try {
-            engine.setCell(sheet, t.row, t.col, t.next);
-          } catch (err) {
-            host.log.warn(`pasteAtSelection: setCell(${sheet},${t.row},${t.col}) failed`, err);
-            continue;
-          }
-          edits.push({ sheet, row: t.row, col: t.col, prevInput: prev, nextInput: t.next });
-          written += 1;
-        }
-      }
-      if (written === 0) {
+      const { written: edits, journaled } = writeTargets(engine, targets, "pasteAtSelection");
+      if (edits.length === 0) {
         return { ok: false as const, message: "the paste wrote no cells" };
       }
-      journalBatch(edits); // one grouped Cmd-Z undoes the whole paste
-      const touched: CellEditRecord[] =
-        edits.length > 0
-          ? edits
-          : cells.map((t) => ({ sheet, row: t.row, col: t.col, prevInput: "", nextInput: t.next }));
-      emitter.emit({ kind: "cells", regions: regionsOf(touched) });
+      if (journaled) journalBatch(edits); // one grouped Cmd-Z undoes the whole paste
+      else markEdited();
+      emitter.emit({ kind: "cells", regions: regionsOf(edits) });
+      // The pasted cells become the selection (Excel).
+      if (area.rows > 1 || area.cols > 1) applyModel(modelOfRect(area));
       void submitInFrameGrid();
       return {
         ok: true as const,
-        rows: grid.length,
-        cols: Math.max(...grid.map((r) => r.length)),
+        rows: area.rows,
+        cols: area.cols,
       };
     },
 
@@ -2037,7 +2500,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         state.activeSheet = sheet;
         defaultRangeForActive();
       }
-      applyGridSelection(row, col, 1, 1);
+      applyModel(collapsed({ row, col }));
     },
 
     async newCellStyleFromSelection(name: string) {
@@ -2680,6 +3143,129 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       return this.lowerSelection();
     },
 
+    // ── Wave 5 ──────────────────────────────────────────────────────────
+
+    activeCell() {
+      const a = activeOf();
+      return a ? { ...a } : null;
+    },
+
+    selectCell(row, col) {
+      applyModel(collapsed({ row, col }));
+    },
+
+    extendSelection(row, col) {
+      const m = currentModel();
+      applyModel(m ? extendTo(m, { row, col }) : collapsed({ row, col }));
+    },
+
+    handleGridKey(e) {
+      return runGridAction(gridKeyAction(e, cellEdit ? cellEditMode : null));
+    },
+
+    pointerDownInFrame(contentX, contentY, mods) {
+      if (!lastGridScene) return false;
+      const sel = state.gridSelection;
+      if (sel && hitFillHandle(lastGridScene, contentX, contentY)) {
+        if (cellEdit) commitEdit();
+        drag = { kind: "fill", source: sel, target: null };
+        return true;
+      }
+      const hit = hitCell(lastGridScene, contentX, contentY);
+      if (!hit) return false;
+      // A click elsewhere COMMITS the open edit (Excel).
+      if (cellEdit) commitEdit();
+      const m = currentModel();
+      applyModel(mods?.shift && m ? extendTo(m, hit) : collapsed(hit));
+      drag = { kind: "select" };
+      return true;
+    },
+
+    pointerMoveInFrame(contentX, contentY) {
+      if (!drag || !lastGridScene) return false;
+      const hit = hitCell(lastGridScene, contentX, contentY);
+      if (!hit) return false;
+      if (drag.kind === "select") {
+        const m = currentModel();
+        if (!m || (m.focus.row === hit.row && m.focus.col === hit.col)) return true;
+        applyModel(extendTo(m, hit));
+        return true;
+      }
+      const target = fillTarget(drag.source, hit);
+      drag = { ...drag, target };
+      fillPreview = target;
+      void submitInFrameGrid();
+      return true;
+    },
+
+    pointerUpInFrame() {
+      const d = drag;
+      drag = null;
+      if (!d) return false;
+      if (d.kind === "fill") {
+        fillPreview = null;
+        if (d.target) {
+          const r = fillTo(d.source, d.target, true, d.target);
+          if (!r.ok) host.log.warn(`fill: ${r.message}`);
+        } else {
+          void submitInFrameGrid();
+        }
+      }
+      return true;
+    },
+
+    scrollInFrame(dRows, dCols) {
+      if (!lastGridWindow) return false;
+      const firstRow = Math.max(0, lastGridWindow.firstRow + dRows);
+      const firstCol = Math.max(0, lastGridWindow.firstCol + dCols);
+      if (firstRow === lastGridWindow.firstRow && firstCol === lastGridWindow.firstCol) {
+        return false;
+      }
+      lastGridWindow = { ...lastGridWindow, firstRow, firstCol };
+      void submitInFrameGrid();
+      return true;
+    },
+
+    isInFrameActive() {
+      return inFrameActive;
+    },
+
+    fillSelectionTo(target, series = true) {
+      const sel = state.gridSelection;
+      if (!sel) return { ok: false, message: "select the cells to fill from" };
+      return fillTo(sel, target, series, target);
+    },
+
+    fillDown() {
+      return fillAlong("down");
+    },
+
+    fillRight() {
+      return fillAlong("right");
+    },
+
+    clearSelection() {
+      return clearSelection();
+    },
+
+    findNext(needle, opts, backwards = false) {
+      return findNext(
+        needle,
+        opts ?? { matchCase: false, entireCell: false, inFormulas: false },
+        backwards,
+      );
+    },
+
+    findAgain(backwards = false) {
+      if (!lastFind) return null;
+      return findNext(lastFind.needle, lastFind.opts, backwards);
+    },
+
+    requestFind() {
+      state.findRequest += 1;
+      emitter.emit();
+    },
+
     dispose() {
       forgetPlacements();
       // Flush unsaved edits BEFORE the engine is freed: the bytes are
@@ -2711,4 +3297,5 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       emitter.clear();
     },
   };
+  return api;
 }

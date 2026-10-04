@@ -50,12 +50,21 @@ import {
   completionTokenAt,
   gridSceneToSvg,
   hitCell,
+  hitFillHandle,
   matchFunctions,
   type FunctionEntry,
   type GridScene,
+  type GridSelection,
 } from "../../../sheet-host-model/src";
 
 import { columnLabel, type WorkbookSession } from "../session";
+import {
+  fillTarget,
+  fullyVisible,
+  gridKeyAction,
+  scrollToShow,
+  type AdvanceDir,
+} from "../grid-nav";
 
 // ---------------------------------------------------------------- styles
 
@@ -173,14 +182,33 @@ export function makeGridPanel(
 
     const st = session.state();
 
+    // Wave 5 — find in the sheet: the field Cmd+F / "Find in sheet…" focus
+    // (they bump `findRequest`); Enter / Next select + reveal the next
+    // match after the active cell (in this grid AND in-frame).
+    const [findText, setFindText] = useState("");
+    const [findStatus, setFindStatus] = useState<string | null>(null);
+    const findInputRef = useRef<HTMLInputElement | null>(null);
+    useEffect(() => {
+      if (st.findRequest > 0) findInputRef.current?.focus();
+    }, [st.findRequest]);
+    const runFind = (backwards: boolean) => {
+      const hit = session.findNext(findText, undefined, backwards);
+      setFindStatus(
+        hit ? `${columnLabel(hit.col)}${hit.row + 1}` : findText ? "no match" : null,
+      );
+    };
+
     // ── Formula bar (S-04) — bound to the selected cell. The bar shows the
     // cell's re-enterable INPUT (formula or literal) and commits through the
     // journaled editCell lane. Autocomplete proposes engine-registry function
     // names for the token under the caret (no spreadsheet semantics in TS —
     // the names ARE the engine's, the matching is pure prefix). ──────────────
     const sel = st.gridSelection;
-    const fbRow = sel?.anchorRow ?? null;
-    const fbCol = sel?.anchorCol ?? null;
+    // Wave 5 — the bar follows the ACTIVE cell (Tab/Enter walk inside a
+    // multi-cell selection), not the selection's top-left.
+    const active = sel ? session.activeCell() : null;
+    const fbRow = active?.row ?? null;
+    const fbCol = active?.col ?? null;
     // The bar tracks the selected cell unless the user is actively editing it
     // (`fbDraft` non-null). Switching cells discards an uncommitted draft —
     // the documented "adjust state while rendering" pattern: `draftCell`
@@ -307,19 +335,130 @@ export function makeGridPanel(
       if (editor) editorRef.current?.focus();
     }, [editor?.row, editor?.col]);
 
+    // Wave 5 — pointer gestures: press selects (shift extends) or grabs
+    // the fill handle; a drag extends the selection / sizes the fill; the
+    // release fills. The grid surface takes keyboard focus on press.
+    const surfaceRef = useRef<HTMLDivElement | null>(null);
+    const [fillDrag, setFillDrag] = useState<{
+      source: GridSelection;
+      target: GridSelection | null;
+    } | null>(null);
+    const selectDrag = useRef(false);
+    const lastDragCell = useRef("");
+    const pressed = useRef(false);
+    const toPt = (e: React.MouseEvent<SVGSVGElement>): [number, number] => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      // Pixel → content-space pt (the SVG viewBox is pt; it renders at
+      // PX_PER_PT, so divide back out).
+      return [(e.clientX - rect.left) / PX_PER_PT, (e.clientY - rect.top) / PX_PER_PT];
+    };
+
+    const onSvgMouseDown = useCallback(
+      (e: React.MouseEvent<SVGSVGElement>) => {
+        if (!scene || e.button !== 0) return;
+        pressed.current = true;
+        surfaceRef.current?.focus();
+        const [xPt, yPt] = toPt(e);
+        if (sel && hitFillHandle(scene, xPt, yPt)) {
+          setFillDrag({ source: sel, target: null });
+          return;
+        }
+        const hit = hitCell(scene, xPt, yPt);
+        if (!hit) return;
+        if (e.shiftKey && sel) session.extendSelection(hit.row, hit.col);
+        else session.selectCell(hit.row, hit.col);
+        selectDrag.current = true;
+        lastDragCell.current = `${hit.row}:${hit.col}`;
+      },
+      [scene, sel],
+    );
+
+    const onSvgMouseMove = useCallback(
+      (e: React.MouseEvent<SVGSVGElement>) => {
+        if (!scene || (!fillDrag && !selectDrag.current)) return;
+        const [xPt, yPt] = toPt(e);
+        const hit = hitCell(scene, xPt, yPt);
+        if (!hit) return;
+        if (fillDrag) {
+          setFillDrag({ ...fillDrag, target: fillTarget(fillDrag.source, hit) });
+        } else if (lastDragCell.current !== `${hit.row}:${hit.col}`) {
+          lastDragCell.current = `${hit.row}:${hit.col}`;
+          session.extendSelection(hit.row, hit.col);
+        }
+      },
+      [scene, fillDrag],
+    );
+
+    const endGesture = useCallback(() => {
+      selectDrag.current = false;
+      if (fillDrag) {
+        setFillDrag(null);
+        if (fillDrag.target) {
+          const r = session.fillSelectionTo(fillDrag.target, true);
+          if (!r.ok) host.log.warn(`fill: ${r.message}`);
+        }
+      }
+    }, [fillDrag]);
+
+    // A click with no press before it (keyboard-less harnesses) still selects.
     const onSvgClick = useCallback(
       (e: React.MouseEvent<SVGSVGElement>) => {
+        if (pressed.current) {
+          pressed.current = false;
+          return;
+        }
         if (!scene) return;
-        const rect = e.currentTarget.getBoundingClientRect();
-        // Pixel → content-space pt (the SVG viewBox is pt; it renders at
-        // PX_PER_PT, so divide back out).
-        const xPt = (e.clientX - rect.left) / PX_PER_PT;
-        const yPt = (e.clientY - rect.top) / PX_PER_PT;
+        const [xPt, yPt] = toPt(e);
         const hit = hitCell(scene, xPt, yPt);
         if (!hit) return;
         session.setGridSelection(hit.row, hit.col, 1, 1);
       },
       [scene],
+    );
+
+    // Keep the active cell in the panel window.
+    useEffect(() => {
+      if (!active || !scene) return;
+      const next = scrollToShow(
+        { firstRow, firstCol },
+        fullyVisible(scene, VIEWPORT_W_PT, VIEWPORT_H_PT),
+        active,
+      );
+      if (next.firstRow !== firstRow) setFirstRow(next.firstRow);
+      if (next.firstCol !== firstCol) setFirstCol(next.firstCol);
+    }, [active?.row, active?.col]);
+
+    // Keys on the focused grid surface: the shared key map. Typing / F2
+    // open the panel's own cell editor; everything else is the session's
+    // (moves, Tab/Enter, Delete, Cmd+C/V/D/R/A/Z). A key the grid takes
+    // stops here, so the host's shortcuts (Cmd+Z = document undo) do not
+    // also fire.
+    const onSurfaceKey = useCallback(
+      (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (editor || e.target !== e.currentTarget) return;
+        const action = gridKeyAction(e, null);
+        if (action.kind === "type" && active) {
+          e.preventDefault();
+          e.stopPropagation();
+          setEditor({ row: active.row, col: active.col, value: action.ch });
+          return;
+        }
+        if (action.kind === "edit" && active) {
+          e.preventDefault();
+          e.stopPropagation();
+          setEditor({
+            row: active.row,
+            col: active.col,
+            value: session.cellInputAt(active.row, active.col),
+          });
+          return;
+        }
+        if (session.handleGridKey(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      [editor, active],
     );
 
     const onSvgDoubleClick = useCallback(
@@ -331,15 +470,13 @@ export function makeGridPanel(
         const hit = hitCell(scene, xPt, yPt);
         if (!hit) return;
         session.setGridSelection(hit.row, hit.col, 1, 1);
-        const current =
-          scene.cells.find((c) => c.row === hit.row && c.col === hit.col)
-            ?.text ?? "";
-        setEditor({ row: hit.row, col: hit.col, value: current });
+        // The re-enterable input (a formula shows as its formula).
+        setEditor({ row: hit.row, col: hit.col, value: session.cellInputAt(hit.row, hit.col) });
       },
       [scene, st.activeSheet],
     );
 
-    const commitEditor = useCallback(() => {
+    const commitEditor = useCallback((then?: AdvanceDir) => {
       if (!editor || st.activeSheet === null) {
         setEditor(null);
         return;
@@ -352,16 +489,27 @@ export function makeGridPanel(
       );
       if (!ok) host.log.warn("grid: cell edit was not committed");
       setEditor(null);
+      if (then) {
+        session.handleGridKey({
+          key: then === "right" || then === "left" ? "Tab" : "Enter",
+          shiftKey: then === "left" || then === "up",
+        });
+        surfaceRef.current?.focus();
+      }
     }, [editor, st.activeSheet]);
 
     const onEditorKey = useCallback(
       (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          commitEditor();
+          commitEditor(e.shiftKey ? "up" : "down");
+        } else if (e.key === "Tab") {
+          e.preventDefault();
+          commitEditor(e.shiftKey ? "left" : "right");
         } else if (e.key === "Escape") {
           e.preventDefault();
           setEditor(null);
+          surfaceRef.current?.focus();
         }
       },
       [commitEditor],
@@ -384,7 +532,7 @@ export function makeGridPanel(
       );
     }
 
-    const svg = svgOf(scene);
+    const svg = svgOf(fillDrag?.target ? { ...scene, fillPreview: fillDrag.target } : scene);
     const wPx = (scene.viewport.xOffsets.at(-1) ?? 0) * PX_PER_PT;
     const hPx = (scene.viewport.yOffsets.at(-1) ?? 0) * PX_PER_PT;
 
@@ -473,6 +621,61 @@ export function makeGridPanel(
           )}
         </div>
 
+        {/* Find in sheet (Wave 5). */}
+        <div data-sheet-find style={{ display: "flex", gap: "var(--space-1, 4px)" }}>
+          <input
+            ref={findInputRef}
+            data-find-input
+            type="text"
+            value={findText}
+            placeholder="Find in sheet"
+            onChange={(e) => {
+              setFindText(e.target.value);
+              setFindStatus(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                runFind(e.shiftKey);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                surfaceRef.current?.focus();
+              }
+            }}
+            style={{ ...formulaInput, flex: 1 }}
+          />
+          <button
+            type="button"
+            data-find-prev
+            disabled={!findText}
+            onClick={() => runFind(true)}
+            style={scrollBtn}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            data-find-next
+            disabled={!findText}
+            onClick={() => runFind(false)}
+            style={scrollBtn}
+          >
+            Next
+          </button>
+          {findStatus && (
+            <span
+              data-find-status
+              style={{
+                alignSelf: "center",
+                font: "11px var(--font-mono, monospace)",
+                color: "var(--pg-muted-fg)",
+              }}
+            >
+              {findStatus}
+            </span>
+          )}
+        </div>
+
         {/* Scroll controls — one row/col per step; the engine re-windows. */}
         <div style={{ display: "flex", gap: "var(--space-1, 4px)" }}>
           <button
@@ -551,6 +754,9 @@ export function makeGridPanel(
         {/* The grid surface: the engine-windowed SVG + the cell editor. */}
         <div
           data-grid-surface
+          ref={surfaceRef}
+          tabIndex={0}
+          onKeyDown={onSurfaceKey}
           style={{
             position: "relative",
             width: wPx,
@@ -569,6 +775,10 @@ export function makeGridPanel(
               scene.viewport.yOffsets.at(-1) ?? 0
             }`}
             onClick={onSvgClick}
+            onMouseDown={onSvgMouseDown}
+            onMouseMove={onSvgMouseMove}
+            onMouseUp={endGesture}
+            onMouseLeave={endGesture}
             onDoubleClick={onSvgDoubleClick}
             style={{ display: "block", cursor: "cell" }}
             // The pure helper already produced the inner SVG; we re-host its
@@ -588,7 +798,7 @@ export function makeGridPanel(
                 )
               }
               onKeyDown={onEditorKey}
-              onBlur={commitEditor}
+              onBlur={() => commitEditor()}
               style={{
                 ...editorInput,
                 left: edRect[0] * PX_PER_PT,
@@ -603,8 +813,10 @@ export function makeGridPanel(
         {/* S-01/S-02 honesty: this is the interim panel grid, not the
             in-frame sheets-mode surface (still SDK-blocked). */}
         <p data-grid-honesty style={note}>
-          Interim panel grid — double-click a cell to edit, Enter to commit.
-          In-frame sheets mode awaits the SDK rendering surface (S-02).
+          Click or drag to select (shift extends), type or F2 to edit, Enter /
+          Tab to commit and move, Delete to clear, drag the corner handle to
+          fill. The same grid edits in place inside a placed sheet frame
+          (double-click the frame).
         </p>
       </div>
     );

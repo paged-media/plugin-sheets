@@ -15,6 +15,7 @@
       "consume": ["dataset"]
     },
     "clipboard": "full",
+    "keybindings": true,
     "storage": {
       "blob": true,
       "quotaBytes": 33554432
@@ -53,7 +54,12 @@
       "media.paged.sheet.command.deleteRows",
       "media.paged.sheet.command.insertColumns",
       "media.paged.sheet.command.deleteColumns",
-      "media.paged.sheet.command.addSheet"
+      "media.paged.sheet.command.addSheet",
+      "media.paged.sheet.command.fillDown",
+      "media.paged.sheet.command.fillRight",
+      "media.paged.sheet.command.clearCells",
+      "media.paged.sheet.command.findInSheet",
+      "media.paged.sheet.command.findNext"
     ],
     "importers": [
       "media.paged.sheet.importer.xlsx",

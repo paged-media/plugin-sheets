@@ -177,10 +177,11 @@ describe("sheet_scene_layer_in_frame: K-1 click-to-select", () => {
     await nextFrame();
     // The cell was selected (engine told + session state).
     expect(setSelCalls).toContainEqual([0, 0, 1, 1, 1]);
-    // A re-render was submitted (now WITH the selection wash + stroke).
+    // A re-render was submitted (now WITH the selection wash + stroke, and
+    // the Wave 5 fill-handle knob at the selection's bottom-right corner).
     expect(submits).toHaveLength(2);
-    const last = submits[1].layer.items.slice(-2);
-    expect(last.map((i) => i.kind)).toEqual(["fillPath", "strokePath"]);
+    const last = submits[1].layer.items.slice(-3);
+    expect(last.map((i) => i.kind)).toEqual(["fillPath", "strokePath", "fillPath"]);
   });
 
   it("returns false (no extra submit) for a point outside the windowed cells", async () => {
