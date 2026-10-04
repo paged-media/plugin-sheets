@@ -120,7 +120,7 @@ fn collect_numbers(args: &[Arg], acc: &mut Vec<f64>) -> Option<CellError> {
 
 /// Collect into a fresh vector, returning either the numbers or the propagated
 /// error. The spine of the order-statistic + summary kernels.
-fn numbers_or_error(args: &[Arg]) -> Result<Vec<f64>, CellError> {
+pub(super) fn numbers_or_error(args: &[Arg]) -> Result<Vec<f64>, CellError> {
     let mut v = Vec::new();
     match collect_numbers(args, &mut v) {
         Some(e) => Err(e),
@@ -144,7 +144,7 @@ fn mean(values: &[f64]) -> f64 {
 
 /// A sorted ascending copy of `values` (total order; values never NaN since
 /// they came from stored [`CellValue::Number`]s / coercion).
-fn sorted(values: &[f64]) -> Vec<f64> {
+pub(super) fn sorted(values: &[f64]) -> Vec<f64> {
     let mut v = values.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v
@@ -153,7 +153,7 @@ fn sorted(values: &[f64]) -> Vec<f64> {
 /// Map a non-finite outcome to `#NUM!` (overflow / domain), keeping kernels
 /// total. Real in-domain results are finite.
 #[inline]
-fn finite(n: f64) -> CellValue {
+pub(super) fn finite(n: f64) -> CellValue {
     if n.is_finite() {
         CellValue::Number(n)
     } else {
@@ -220,7 +220,7 @@ pub fn mode(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// The inclusive linear-interpolation percentile of a sorted slice for
 /// `k` in `0..=1` (Excel `PERCENTILE.INC`): rank `= k * (n - 1)`, interpolate
 /// between the floor and ceil ranks. `s` MUST be non-empty and sorted.
-fn percentile_of_sorted(s: &[f64], k: f64) -> f64 {
+pub(super) fn percentile_of_sorted(s: &[f64], k: f64) -> f64 {
     let n = s.len();
     if n == 1 {
         return s[0];
@@ -434,7 +434,7 @@ pub fn rank(args: &[Arg], ctx: &EvalCtx) -> CellValue {
 // ---- COUNTIFS / SUMIFS / AVERAGEIFS / MAXIFS / MINIFS -----------------------
 
 /// Borrow an arg as a [`RangeView`] (scalars / missing → `None`).
-fn as_view<'a, 'b>(arg: Option<&'a Arg<'b>>) -> Option<&'a RangeView<'b>> {
+pub(super) fn as_view<'a, 'b>(arg: Option<&'a Arg<'b>>) -> Option<&'a RangeView<'b>> {
     match arg {
         Some(Arg::Range(v)) => Some(v),
         _ => None,
@@ -719,7 +719,7 @@ pub fn devsq(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// dropped when EITHER side is non-numeric; an error cell on either side
 /// propagates. Mismatched shape → `#N/A` (Excel's array-mismatch ruling for
 /// these functions).
-fn paired(args: &[Arg]) -> Result<Vec<(f64, f64)>, CellError> {
+pub(super) fn paired(args: &[Arg]) -> Result<Vec<(f64, f64)>, CellError> {
     let ys = as_view(args.first());
     let xs = as_view(args.get(1));
     let (yr, yc) = ys.map_or((0, 0), |v| (v.rows(), v.cols()));
@@ -836,7 +836,7 @@ pub fn rsq(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// Coerce one trailing scalar arg to a number, propagating errors. A range in
 /// the slot reads its top-left cell (the implicit-intersection fallback the
 /// math family uses), so `k`/`order`/`quart`/`needle` arrive uniformly.
-fn scalar_number(arg: Option<&Arg>) -> Result<f64, CellError> {
+pub(super) fn scalar_number(arg: Option<&Arg>) -> Result<f64, CellError> {
     match arg {
         Some(Arg::Scalar(v)) => coerce::to_number(v),
         Some(Arg::Range(r)) => coerce::to_number(&r.get(0, 0)),

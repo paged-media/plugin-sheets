@@ -92,3 +92,18 @@
   tests:
     rust: ["sheet-conformance/tests/fn_lookup.rs::sheet_fn_lookup_column"]
     corpus: ["corpus/fn-corpus/lookup/column.golden.tsv"]
+
+# ---- Wave 7 (data & functions) additions ----
+
+- id: sheet.fn.lookup.lookup
+  name: LOOKUP
+  family: lookup
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: lookup::lookup_fn
+  status: implemented
+  provenance: ["Microsoft LOOKUP (public docs) — vector form (lookup_vector, result_vector) and array form; approximate match, largest value <= key"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_lookup_lookup"]
+    corpus: ["corpus/fn-corpus/lookup/lookup.golden.tsv"]

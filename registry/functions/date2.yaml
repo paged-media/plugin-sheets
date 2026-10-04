@@ -161,3 +161,31 @@
   tests:
     rust: ["sheet-conformance/tests/fn_date2.rs::sheet_fn_date_isoweeknum"]
     corpus: ["corpus/fn-corpus/date2/isoweeknum.golden.tsv"]
+
+# ---- Wave 7 (data & functions) additions ----
+
+- id: sheet.fn.date.networkdays-intl
+  name: NETWORKDAYS.INTL
+  family: date
+  arity: { min: 2, max: 4 }
+  volatility: none
+  range_aware: true
+  rust: date2::networkdays_intl
+  status: implemented
+  provenance: ["Microsoft NETWORKDAYS.INTL (public docs) — start, end, [weekend number/mask], [holidays]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_date_networkdays_intl"]
+    corpus: ["corpus/fn-corpus/date2/networkdays_intl.golden.tsv"]
+
+- id: sheet.fn.date.workday-intl
+  name: WORKDAY.INTL
+  family: date
+  arity: { min: 2, max: 4 }
+  volatility: none
+  range_aware: true
+  rust: date2::workday_intl
+  status: implemented
+  provenance: ["Microsoft WORKDAY.INTL (public docs) — start, days, [weekend number/mask], [holidays]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_date_workday_intl"]
+    corpus: ["corpus/fn-corpus/date2/workday_intl.golden.tsv"]

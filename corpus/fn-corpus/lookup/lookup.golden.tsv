@@ -1,0 +1,12 @@
+# sheet.fn.lookup.lookup golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# LOOKUP(lookup_value, lookup_vector, [result_vector]) / LOOKUP(lookup_value, array).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-exact	=LOOKUP(4.19,A1:A5,B1:B5)	A1=4.14;A2=4.19;A3=5.17;A4=5.77;A5=6.39;B1=red;B2=orange;B3=yellow;B4=green;B5=blue	orange
+doc-floor	=LOOKUP(5.75,A1:A5,B1:B5)	A1=4.14;A2=4.19;A3=5.17;A4=5.77;A5=6.39;B1=red;B2=orange;B3=yellow;B4=green;B5=blue	yellow
+doc-above-all	=LOOKUP(7.66,A1:A5,B1:B5)	A1=4.14;A2=4.19;A3=5.17;A4=5.77;A5=6.39;B1=red;B2=orange;B3=yellow;B4=green;B5=blue	blue
+doc-below-all-na	=LOOKUP(0,A1:A5,B1:B5)	A1=4.14;A2=4.19;A3=5.17;A4=5.77;A5=6.39;B1=red;B2=orange;B3=yellow;B4=green;B5=blue	#N/A
+doc-array-wide	=LOOKUP("C",A1:D2)	A1=a;B1=b;C1=c;D1=d;A2=1;B2=2;C2=3;D2=4	3
+doc-array-tall	=LOOKUP("bump",A1:B3)	A1=a;B1=1;A2=b;B2=2;A3=c;B3=3	2

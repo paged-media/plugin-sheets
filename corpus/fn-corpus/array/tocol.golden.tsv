@@ -1,0 +1,9 @@
+# sheet.fn.array.tocol golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# TOCOL(array, [ignore], [scan_by_column]).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+by-row	=INDEX(TOCOL(A1:B2),2,1)	A1=1;B1=2;A2=3;B2=4	2
+by-col	=INDEX(TOCOL(A1:B2,0,TRUE),2,1)	A1=1;B1=2;A2=3;B2=4	3
+ignore-blanks	=ROWS(TOCOL(A1:B2,1))	A1=1;A2=2;B2=4	3

@@ -1,0 +1,11 @@
+# sheet.fn.agg.averageif golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# AVERAGEIF(range, criteria, [average_range]) — numeric targets only; no match -> #DIV/0!.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-lt-23000	=AVERAGEIF(B1:B4,"<23000")	A1=100000;A2=200000;A3=300000;A4=400000;B1=7000;B2=14000;B3=21000;B4=28000	14000
+doc-lt-250000	=AVERAGEIF(A1:A4,"<250000")	A1=100000;A2=200000;A3=300000;A4=400000;B1=7000;B2=14000;B3=21000;B4=28000	150000
+doc-lt-95000-div0	=AVERAGEIF(A1:A4,"<95000")	A1=100000;A2=200000;A3=300000;A4=400000;B1=7000;B2=14000;B3=21000;B4=28000	#DIV/0!
+doc-avg-range	=AVERAGEIF(A1:A4,">250000",B1:B4)	A1=100000;A2=200000;A3=300000;A4=400000;B1=7000;B2=14000;B3=21000;B4=28000	24500
+text-target-ignored	=AVERAGEIF(A1:A3,"x",B1:B3)	A1=x;A2=x;A3=y;B1=10;B2=abc;B3=4	10

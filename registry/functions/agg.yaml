@@ -103,3 +103,18 @@
   tests:
     rust: ["sheet-conformance/tests/fn_agg.rs::sheet_fn_agg_countif"]
     corpus: ["corpus/fn-corpus/agg/countif.golden.tsv"]
+
+# ---- Wave 7 (data & functions) additions ----
+
+- id: sheet.fn.agg.averageif
+  name: AVERAGEIF
+  family: agg
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: agg::averageif
+  status: implemented
+  provenance: ["Microsoft AVERAGEIF (public docs) — range, criteria, [average_range]; numeric targets only; no match -> #DIV/0!"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_agg_averageif"]
+    corpus: ["corpus/fn-corpus/agg/averageif.golden.tsv"]

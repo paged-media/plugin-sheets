@@ -1,0 +1,9 @@
+# sheet.fn.stat.norm-inv golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# NORM.INV(probability, mean, standard_dev) — doc example rounded as documented.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc	=ROUND(NORM.INV(0.908789,40,1.5),6)	-	42.000002
+p-zero-num	=NORM.INV(0,40,1.5)	-	#NUM!
+median	=NORM.INV(0.5,40,1.5)	-	40

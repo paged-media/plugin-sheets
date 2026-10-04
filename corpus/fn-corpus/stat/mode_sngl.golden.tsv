@@ -1,0 +1,8 @@
+# sheet.fn.stat.mode-sngl golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# MODE.SNGL(number1, …) — most frequent value; none repeats -> #N/A.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc	=MODE.SNGL(A1:A6)	A1=5.6;A2=4;A3=4;A4=3;A5=2;A6=4	4
+no-repeat-na	=MODE.SNGL({1,2,3})	-	#N/A

@@ -62,3 +62,7 @@ pub mod text2;
 // M2 T2 families.
 pub mod database;
 pub mod t2misc;
+
+// Wave-7 additions (data & functions).
+pub mod array2;
+pub mod stat2;

@@ -1,0 +1,10 @@
+# sheet.fn.date.workday-intl golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# WORKDAY.INTL(start_date, days, [weekend], [holidays]) — doc examples (serials).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-weekend-zero	=WORKDAY.INTL(DATE(2012,1,1),30,0)	-	#NUM!
+doc-sunday-only	=WORKDAY.INTL(DATE(2012,1,1),90,11)	-	41013
+doc-saturday-only	=WORKDAY.INTL(DATE(2012,1,1),30,17)	-	40944
+all-weekend	=WORKDAY.INTL(DATE(2012,1,1),1,"1111111")	-	#VALUE!

@@ -1,0 +1,9 @@
+# sheet.fn.array.chooserows golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# CHOOSEROWS(array, row_num1, …).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+pick	=CHOOSEROWS(A1:C3,3,1)	A1=1;B1=2;C1=3;A2=4;B2=5;C2=6;A3=7;B3=8;C3=9	7
+second	=INDEX(CHOOSEROWS(A1:C3,3,1),2,3)	A1=1;B1=2;C1=3;A2=4;B2=5;C2=6;A3=7;B3=8;C3=9	3
+zero	=CHOOSEROWS(A1:C3,0)	A1=1;B1=2;C1=3;A2=4;B2=5;C2=6;A3=7;B3=8;C3=9	#VALUE!

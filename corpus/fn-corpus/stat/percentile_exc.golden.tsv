@@ -1,0 +1,9 @@
+# sheet.fn.stat.percentile-exc golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# PERCENTILE.EXC(array, k) — exclusive; rank k*(n+1) outside 1..n -> #NUM!.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-quarter	=PERCENTILE.EXC({1,2,3,6,6,6,7,8,9},0.25)	-	2.5
+doc-too-small	=PERCENTILE.EXC({1,2,3,6,6,6,7,8,9},0.01)	-	#NUM!
+doc-k-above-one	=PERCENTILE.EXC({1,2,3,6,6,6,7,8,9},2)	-	#NUM!

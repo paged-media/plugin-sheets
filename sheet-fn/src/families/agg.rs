@@ -292,6 +292,58 @@ pub fn sumif(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
     CellValue::Number(sum.to_f64())
 }
 
+/// `AVERAGEIF(range, criteria, [average_range])` (registry
+/// `sheet.fn.agg.averageif`). The mean of the `average_range` cells (default
+/// `range`) whose offset-aligned `range` cell satisfies `criteria` — the
+/// [`sumif`] alignment rule. Only NUMERIC target cells participate (text,
+/// logical and blank matches are ignored, not counted as 0); an error in a
+/// participating cell propagates; no participating cell → `#DIV/0!`
+/// (Microsoft AVERAGEIF docs).
+pub fn averageif(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    let crit = match args.get(1) {
+        Some(Arg::Scalar(v)) => criteria::parse_criteria(v),
+        Some(Arg::Range(view)) => criteria::parse_criteria(&view.get(0, 0)),
+        None => return CellValue::Error(CellError::Value),
+    };
+    let crit_arg = args.first();
+    let avg_arg = args.get(2).or(crit_arg);
+    let crit_view = as_view(crit_arg);
+    let avg_view = as_view(avg_arg);
+    let (rows, cols) = match (crit_view, crit_arg) {
+        (Some(v), _) => (v.rows(), v.cols()),
+        // A scalar `range` is a one-cell window.
+        (None, Some(_)) => (1, 1),
+        (None, None) => (0, 0),
+    };
+    let at = |view: Option<&RangeView>, arg: Option<&Arg>, r: u32, c: u32| match (view, arg) {
+        (Some(v), _) => v.get(r, c),
+        (None, Some(Arg::Scalar(v))) if r == 0 && c == 0 => v.clone(),
+        _ => CellValue::Empty,
+    };
+    let mut sum = F64::from_f64(0.0);
+    let mut n = 0u64;
+    for r in 0..rows {
+        for c in 0..cols {
+            let cand = at(crit_view, crit_arg, r, c);
+            if !criteria::matches(&crit, &cand) {
+                continue;
+            }
+            match at(avg_view, avg_arg, r, c) {
+                CellValue::Number(x) => {
+                    sum = sum.add(F64::from_f64(x));
+                    n += 1;
+                }
+                CellValue::Error(e) => return CellValue::Error(e),
+                _ => {}
+            }
+        }
+    }
+    if n == 0 {
+        return CellValue::Error(CellError::Div0);
+    }
+    CellValue::Number(sum.to_f64() / n as f64)
+}
+
 // ---- small helpers ----------------------------------------------------------
 
 /// Borrow an [`Arg`] as a [`RangeView`] when it is a range; scalars (and a

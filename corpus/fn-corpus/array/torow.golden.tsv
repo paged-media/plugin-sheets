@@ -1,0 +1,8 @@
+# sheet.fn.array.torow golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# TOROW(array, [ignore], [scan_by_column]).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+by-row	=INDEX(TOROW(A1:B2),1,3)	A1=1;B1=2;A2=3;B2=4	3
+ignore-errors	=COLUMNS(TOROW(A1:A3,2))	A1=1;A2=#N/A;A3=3	2

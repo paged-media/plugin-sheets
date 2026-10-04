@@ -521,6 +521,103 @@ fn approximate_pos_desc(key: &CellValue, len: u32, at: &dyn Fn(u32) -> CellValue
 }
 
 // ---------------------------------------------------------------------------
+// LOOKUP (vector + array forms)
+// ---------------------------------------------------------------------------
+
+/// The comparison class LOOKUP matches within: a number key only meets
+/// numbers, a text key only text, a logical key only logicals (Microsoft
+/// LOOKUP docs — mixed-type cells are skipped, never a cross-type floor).
+fn same_class(a: &CellValue, b: &CellValue) -> bool {
+    matches!(
+        (a, b),
+        (CellValue::Number(_), CellValue::Number(_))
+            | (CellValue::Text(_), CellValue::Text(_))
+            | (CellValue::Bool(_), CellValue::Bool(_))
+    )
+}
+
+/// `LOOKUP(lookup_value, lookup_vector, [result_vector])` /
+/// `LOOKUP(lookup_value, array)` (registry `sheet.fn.lookup.lookup`).
+///
+/// Approximate match over data assumed sorted ascending: the position of the
+/// largest same-class value `<=` the key (text compares case-insensitively);
+/// none → `#N/A`. **Vector form**: `lookup_vector` is one row or column and
+/// the answer is read at the same offset of `result_vector` (any orientation).
+/// **Array form** (no `result_vector`): a wider-than-tall array searches its
+/// first row and returns from its last row, otherwise the first column / last
+/// column. A key error propagates.
+pub fn lookup_fn(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
+    let key = match &args[0] {
+        Arg::Scalar(v) => v.clone(),
+        Arg::Range(r) => r.get(0, 0),
+    };
+    if let CellValue::Error(e) = key {
+        return CellValue::Error(e);
+    }
+    if matches!(key, CellValue::Empty) {
+        return CellValue::Error(CellError::Na);
+    }
+    type Getter<'g> = Box<dyn Fn(u32, u32) -> CellValue + 'g>;
+    let (rows, cols, get): (u32, u32, Getter<'_>) = match &args[1] {
+        Arg::Scalar(v) => {
+            let v = v.clone();
+            (1, 1, Box::new(move |_, _| v.clone()))
+        }
+        Arg::Range(r) => (r.rows(), r.cols(), Box::new(move |rr, cc| r.get(rr, cc))),
+    };
+    let horizontal = cols > rows;
+    let len = if horizontal { cols } else { rows };
+    let at = |i: u32| if horizontal { get(0, i) } else { get(i, 0) };
+    let mut best: Option<u32> = None;
+    for i in 0..len {
+        let cand = at(i);
+        if !same_class(&key, &cand) {
+            continue;
+        }
+        // Text compares case-insensitively with NO byte tie-break ("c" equals
+        // "C" here; `coerce::compare` orders them for a total sort).
+        let ord = match (&cand, &key) {
+            (CellValue::Text(a), CellValue::Text(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+            _ => coerce::compare(&cand, &key),
+        };
+        match ord {
+            std::cmp::Ordering::Greater => break,
+            _ => best = Some(i),
+        }
+    }
+    let Some(pos) = best else {
+        return CellValue::Error(CellError::Na);
+    };
+    match args.get(2) {
+        Some(Arg::Range(res)) => {
+            if res.rows() == 1 && res.cols() > 1 {
+                res.get(0, pos)
+            } else if res.cols() == 1 {
+                res.get(pos, 0)
+            } else {
+                // A 2-D result_vector reads down its first column (Excel
+                // treats it as a vector of its leading axis).
+                res.get(pos, 0)
+            }
+        }
+        Some(Arg::Scalar(v)) => {
+            if pos == 0 {
+                v.clone()
+            } else {
+                CellValue::Error(CellError::Na)
+            }
+        }
+        None => {
+            if horizontal {
+                get(rows - 1, pos)
+            } else {
+                get(pos, cols - 1)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Scalar-argument coercion helpers (route through `coerce`)
 // ---------------------------------------------------------------------------
 

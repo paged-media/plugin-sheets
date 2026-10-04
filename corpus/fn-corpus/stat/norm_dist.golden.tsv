@@ -1,0 +1,9 @@
+# sheet.fn.stat.norm-dist golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# NORM.DIST(x, mean, standard_dev, cumulative) — doc examples rounded as documented.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-cdf	=ROUND(NORM.DIST(42,40,1.5,TRUE),7)	-	0.9087888
+doc-pdf	=ROUND(NORM.DIST(42,40,1.5,FALSE),8)	-	0.10934005
+sd-zero-num	=NORM.DIST(42,40,0,TRUE)	-	#NUM!

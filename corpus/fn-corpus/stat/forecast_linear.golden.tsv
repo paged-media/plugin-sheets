@@ -1,0 +1,8 @@
+# sheet.fn.stat.forecast-linear golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# FORECAST.LINEAR(x, known_ys, known_xs) — same as FORECAST.
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc	=ROUND(FORECAST.LINEAR(30,{6,7,9,15,21},{20,28,31,38,40}),6)	-	10.607253
+exact-line	=FORECAST.LINEAR(4,{2,4,6},{1,2,3})	-	8

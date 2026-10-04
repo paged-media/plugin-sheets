@@ -116,3 +116,131 @@
   tests:
     rust: ["sheet-conformance/tests/fn_array.rs::sheet_fn_array_randarray"]
     corpus: []
+
+# ---- Wave 7 (data & functions) additions ----
+
+- id: sheet.fn.array.vstack
+  name: VSTACK
+  family: array
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::vstack
+  status: implemented
+  provenance: ["Microsoft VSTACK (public docs) — append arrays vertically, pad with #N/A"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_vstack"]
+    corpus: ["corpus/fn-corpus/array/vstack.golden.tsv"]
+
+- id: sheet.fn.array.hstack
+  name: HSTACK
+  family: array
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::hstack
+  status: implemented
+  provenance: ["Microsoft HSTACK (public docs) — append arrays horizontally, pad with #N/A"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_hstack"]
+    corpus: ["corpus/fn-corpus/array/hstack.golden.tsv"]
+
+- id: sheet.fn.array.take
+  name: TAKE
+  family: array
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::take
+  status: implemented
+  provenance: ["Microsoft TAKE (public docs) — rows, [columns]; negative counts from the end"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_take"]
+    corpus: ["corpus/fn-corpus/array/take.golden.tsv"]
+
+- id: sheet.fn.array.drop
+  name: DROP
+  family: array
+  arity: { min: 2, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::drop
+  status: implemented
+  provenance: ["Microsoft DROP (public docs) — rows, [columns]; negative counts from the end"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_drop"]
+    corpus: ["corpus/fn-corpus/array/drop.golden.tsv"]
+
+- id: sheet.fn.array.choosecols
+  name: CHOOSECOLS
+  family: array
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::choosecols
+  status: implemented
+  provenance: ["Microsoft CHOOSECOLS (public docs) — 1-based, negative from the end, 0/out of range -> #VALUE!"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_choosecols"]
+    corpus: ["corpus/fn-corpus/array/choosecols.golden.tsv"]
+
+- id: sheet.fn.array.chooserows
+  name: CHOOSEROWS
+  family: array
+  arity: { min: 2, max: null }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::chooserows
+  status: implemented
+  provenance: ["Microsoft CHOOSEROWS (public docs) — 1-based, negative from the end, 0/out of range -> #VALUE!"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_chooserows"]
+    corpus: ["corpus/fn-corpus/array/chooserows.golden.tsv"]
+
+- id: sheet.fn.array.tocol
+  name: TOCOL
+  family: array
+  arity: { min: 1, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::tocol
+  status: implemented
+  provenance: ["Microsoft TOCOL (public docs) — array, [ignore 0-3], [scan_by_column]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_tocol"]
+    corpus: ["corpus/fn-corpus/array/tocol.golden.tsv"]
+
+- id: sheet.fn.array.torow
+  name: TOROW
+  family: array
+  arity: { min: 1, max: 3 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::torow
+  status: implemented
+  provenance: ["Microsoft TOROW (public docs) — array, [ignore 0-3], [scan_by_column]"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_torow"]
+    corpus: ["corpus/fn-corpus/array/torow.golden.tsv"]
+
+- id: sheet.fn.array.mmult
+  name: MMULT
+  family: math
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: array2::mmult
+  status: implemented
+  provenance: ["Microsoft MMULT (public docs) — matrix product; cols(a) != rows(b) or a non-number -> #VALUE!"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_array_mmult"]
+    corpus: ["corpus/fn-corpus/array/mmult.golden.tsv"]

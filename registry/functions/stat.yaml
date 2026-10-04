@@ -394,3 +394,176 @@
   tests:
     rust: ["sheet-conformance/tests/fn_stat.rs::sheet_fn_stat_rsq"]
     corpus: ["corpus/fn-corpus/stat/rsq.golden.tsv"]
+
+# ---- Wave 7 (data & functions) additions ----
+
+- id: sheet.fn.stat.percentile
+  name: PERCENTILE
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::percentile_inc
+  status: implemented
+  provenance: ["Microsoft PERCENTILE (public docs) — legacy alias of PERCENTILE.INC"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_percentile"]
+    corpus: ["corpus/fn-corpus/stat/percentile.golden.tsv"]
+
+- id: sheet.fn.stat.quartile
+  name: QUARTILE
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat::quartile_inc
+  status: implemented
+  provenance: ["Microsoft QUARTILE (public docs) — legacy alias of QUARTILE.INC"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_quartile"]
+    corpus: ["corpus/fn-corpus/stat/quartile.golden.tsv"]
+
+- id: sheet.fn.stat.percentile-exc
+  name: PERCENTILE.EXC
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat2::percentile_exc
+  status: implemented
+  provenance: ["Microsoft PERCENTILE.EXC (public docs) — exclusive k in (0,1), rank k*(n+1)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_percentile_exc"]
+    corpus: ["corpus/fn-corpus/stat/percentile_exc.golden.tsv"]
+
+- id: sheet.fn.stat.quartile-exc
+  name: QUARTILE.EXC
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  rust: stat2::quartile_exc
+  status: implemented
+  provenance: ["Microsoft QUARTILE.EXC (public docs) — quart 1..3 = PERCENTILE.EXC(quart/4)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_quartile_exc"]
+    corpus: ["corpus/fn-corpus/stat/quartile_exc.golden.tsv"]
+
+- id: sheet.fn.stat.mode-sngl
+  name: MODE.SNGL
+  family: stat
+  arity: { min: 1, max: null }
+  volatility: none
+  range_aware: true
+  rust: stat::mode
+  status: implemented
+  provenance: ["Microsoft MODE.SNGL (public docs) — most frequent value; none repeats -> #N/A"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_mode_sngl"]
+    corpus: ["corpus/fn-corpus/stat/mode_sngl.golden.tsv"]
+
+- id: sheet.fn.stat.forecast
+  name: FORECAST
+  family: stat
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat2::forecast
+  status: implemented
+  provenance: ["Microsoft FORECAST (public docs) — x, known_ys, known_xs; least-squares a + b*x"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_forecast"]
+    corpus: ["corpus/fn-corpus/stat/forecast.golden.tsv"]
+
+- id: sheet.fn.stat.forecast-linear
+  name: FORECAST.LINEAR
+  family: stat
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: true
+  rust: stat2::forecast
+  status: implemented
+  provenance: ["Microsoft FORECAST.LINEAR (public docs) — same as FORECAST"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_forecast_linear"]
+    corpus: ["corpus/fn-corpus/stat/forecast_linear.golden.tsv"]
+
+- id: sheet.fn.stat.frequency
+  name: FREQUENCY
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: stat2::frequency
+  status: implemented
+  provenance: ["Microsoft FREQUENCY (public docs) — vertical bins+1 count array"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_frequency"]
+    corpus: ["corpus/fn-corpus/stat/frequency.golden.tsv"]
+
+- id: sheet.fn.stat.trend
+  name: TREND
+  family: stat
+  arity: { min: 1, max: 4 }
+  volatility: none
+  range_aware: true
+  returns_array: true
+  rust: stat2::trend
+  status: implemented
+  provenance: ["Microsoft TREND (public docs) — known_ys, [known_xs], [new_xs], [const]; single-regressor fit (multiple regression is a recorded #VALUE! scope limit)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_trend"]
+    corpus: ["corpus/fn-corpus/stat/trend.golden.tsv"]
+
+- id: sheet.fn.stat.norm-dist
+  name: NORM.DIST
+  family: stat
+  arity: { min: 4, max: 4 }
+  volatility: none
+  range_aware: false
+  rust: stat2::norm_dist
+  status: implemented
+  provenance: ["Microsoft NORM.DIST (public docs) — x, mean, standard_dev, cumulative; sd <= 0 -> #NUM!"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_norm_dist"]
+    corpus: ["corpus/fn-corpus/stat/norm_dist.golden.tsv"]
+
+- id: sheet.fn.stat.norm-inv
+  name: NORM.INV
+  family: stat
+  arity: { min: 3, max: 3 }
+  volatility: none
+  range_aware: false
+  rust: stat2::norm_inv
+  status: implemented
+  provenance: ["Microsoft NORM.INV (public docs) — probability in (0,1), mean, standard_dev > 0"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_norm_inv"]
+    corpus: ["corpus/fn-corpus/stat/norm_inv.golden.tsv"]
+
+- id: sheet.fn.stat.norm-s-dist
+  name: NORM.S.DIST
+  family: stat
+  arity: { min: 2, max: 2 }
+  volatility: none
+  range_aware: false
+  rust: stat2::norm_s_dist
+  status: implemented
+  provenance: ["Microsoft NORM.S.DIST (public docs) — z, cumulative"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_norm_s_dist"]
+    corpus: ["corpus/fn-corpus/stat/norm_s_dist.golden.tsv"]
+
+- id: sheet.fn.stat.norm-s-inv
+  name: NORM.S.INV
+  family: stat
+  arity: { min: 1, max: 1 }
+  volatility: none
+  range_aware: false
+  rust: stat2::norm_s_inv
+  status: implemented
+  provenance: ["Microsoft NORM.S.INV (public docs) — probability in (0,1)"]
+  tests:
+    rust: ["sheet-conformance/tests/fn_wave7.rs::sheet_fn_stat_norm_s_inv"]
+    corpus: ["corpus/fn-corpus/stat/norm_s_inv.golden.tsv"]

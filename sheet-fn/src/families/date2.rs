@@ -581,6 +581,145 @@ pub fn workday(args: &[Arg], ctx: &crate::ctx::EvalCtx) -> CellValue {
     CellValue::Number(serial as f64)
 }
 
+// ---- NETWORKDAYS.INTL / WORKDAY.INTL ---------------------------------------
+
+/// Parse the `.INTL` weekend argument into a Monday-first non-working mask.
+/// A number `1..=7` names a two-day weekend (`1` Sat+Sun, `2` Sun+Mon, … `7`
+/// Fri+Sat); `11..=17` a single day (`11` Sunday, `12` Monday, … `17`
+/// Saturday); a 7-character `0`/`1` string is the mask itself (Monday first,
+/// `1` = non-working). An unknown number → `#NUM!`; a malformed string →
+/// `#VALUE!` (Microsoft WORKDAY.INTL / NETWORKDAYS.INTL docs). A missing
+/// argument is the standard Sat+Sun weekend.
+fn weekend_mask(arg: Option<&Arg>) -> Result<[bool; 7], CellError> {
+    let v = match arg {
+        None => return Ok([false, false, false, false, false, true, true]),
+        Some(Arg::Scalar(v)) => v.clone(),
+        Some(Arg::Range(r)) => r.get(0, 0),
+    };
+    match v {
+        CellValue::Error(e) => Err(e),
+        CellValue::Empty => Ok([false, false, false, false, false, true, true]),
+        CellValue::Text(t) => {
+            let b = t.as_bytes();
+            if b.len() != 7 || !b.iter().all(|c| *c == b'0' || *c == b'1') {
+                return Err(CellError::Value);
+            }
+            let mut m = [false; 7];
+            for (i, c) in b.iter().enumerate() {
+                m[i] = *c == b'1';
+            }
+            Ok(m)
+        }
+        other => {
+            let n = coerce::to_number(&other)?.trunc() as i64;
+            let mut m = [false; 7];
+            match n {
+                1..=7 => {
+                    m[((n + 4) % 7) as usize] = true;
+                    m[((n + 5) % 7) as usize] = true;
+                }
+                11..=17 => m[((n - 11 + 6) % 7) as usize] = true,
+                _ => return Err(CellError::Num),
+            }
+            Ok(m)
+        }
+    }
+}
+
+/// Whether `serial` is a working day under `mask` and not a holiday.
+fn is_workday_mask(
+    serial: i64,
+    mask: &[bool; 7],
+    holidays: &[i64],
+    sys: DateSystem,
+) -> Option<bool> {
+    let (y, m, d) = serial_to_ymd(serial as f64, sys)?;
+    Some(!mask[weekday_mon0(y, m, d) as usize] && !holidays.contains(&serial))
+}
+
+/// `NETWORKDAYS.INTL(start_date, end_date, [weekend], [holidays])` — the
+/// [`networkdays`] count under a custom weekend (registry
+/// `sheet.fn.date.networkdays-intl`). An all-weekend mask counts `0`.
+pub fn networkdays_intl(args: &[Arg], ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = coerce::first_error(&args[..2.min(args.len())]) {
+        return CellValue::Error(e);
+    }
+    let a = match arg_serial(&args[0]) {
+        Ok(s) => s,
+        Err(e) => return CellValue::Error(e),
+    };
+    let b = match arg_serial(&args[1]) {
+        Ok(s) => s,
+        Err(e) => return CellValue::Error(e),
+    };
+    let mask = match weekend_mask(args.get(2)) {
+        Ok(m) => m,
+        Err(e) => return CellValue::Error(e),
+    };
+    let sys = ctx.date_system;
+    let holidays = match collect_holidays(args.get(3), sys) {
+        Ok(h) => h,
+        Err(e) => return CellValue::Error(e),
+    };
+    let (lo, hi, sign) = if a <= b { (a, b, 1i64) } else { (b, a, -1i64) };
+    let mut count = 0i64;
+    for serial in lo..=hi {
+        match is_workday_mask(serial, &mask, &holidays, sys) {
+            Some(true) => count += 1,
+            Some(false) => {}
+            None => return CellValue::Error(CellError::Num),
+        }
+    }
+    CellValue::Number((count * sign) as f64)
+}
+
+/// `WORKDAY.INTL(start_date, days, [weekend], [holidays])` — the [`workday`]
+/// walk under a custom weekend (registry `sheet.fn.date.workday-intl`). An
+/// all-weekend mask (`"1111111"`) is `#VALUE!` (no working day exists).
+pub fn workday_intl(args: &[Arg], ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = coerce::first_error(&args[..2.min(args.len())]) {
+        return CellValue::Error(e);
+    }
+    let start = match arg_serial(&args[0]) {
+        Ok(s) => s,
+        Err(e) => return CellValue::Error(e),
+    };
+    let days = match arg_number(&args[1]) {
+        Ok(n) => n.trunc() as i64,
+        Err(e) => return CellValue::Error(e),
+    };
+    let mask = match weekend_mask(args.get(2)) {
+        Ok(m) => m,
+        Err(e) => return CellValue::Error(e),
+    };
+    if mask.iter().all(|w| *w) {
+        return CellValue::Error(CellError::Value);
+    }
+    let sys = ctx.date_system;
+    let holidays = match collect_holidays(args.get(3), sys) {
+        Ok(h) => h,
+        Err(e) => return CellValue::Error(e),
+    };
+    if days == 0 {
+        return CellValue::Number(start as f64);
+    }
+    let step = if days > 0 { 1 } else { -1 };
+    let mut remaining = days.abs();
+    let mut serial = start;
+    while remaining > 0 {
+        serial += step;
+        if serial < 0 {
+            return CellValue::Error(CellError::Num);
+        }
+        match is_workday_mask(serial, &mask, &holidays, sys) {
+            Some(true) => remaining -= 1,
+            Some(false) => {}
+            None => return CellValue::Error(CellError::Num),
+        }
+    }
+    CellValue::Number(serial as f64)
+}
+
 // ---- YEARFRAC --------------------------------------------------------------
 
 /// `YEARFRAC(start_date, end_date, [basis])` — the fraction of a year between

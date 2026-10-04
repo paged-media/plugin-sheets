@@ -1,0 +1,10 @@
+# sheet.fn.date.networkdays-intl golden corpus (Wave 7).
+# Format: id<TAB>formula<TAB>setup<TAB>expected (see stat/median.golden.tsv header).
+# NETWORKDAYS.INTL(start_date, end_date, [weekend], [holidays]) — doc examples; holidays 2006-01-02 (38719) and 2006-01-16 (38733).
+# Expected values: the worked examples of the public Microsoft documentation for
+# this function (or derived from its documented definition) — DOCUMENTED, PENDING
+# EXCEL RECORDING by the Excel-recorded oracle lane (Wave 3).
+doc-default	=NETWORKDAYS.INTL(DATE(2006,1,1),DATE(2006,1,31))	-	22
+doc-reversed	=NETWORKDAYS.INTL(DATE(2006,2,28),DATE(2006,1,31))	-	-21
+doc-fri-sat	=NETWORKDAYS.INTL(DATE(2006,1,1),DATE(2006,2,1),7,A1:A2)	A1=38719;A2=38733	22
+doc-mask	=NETWORKDAYS.INTL(DATE(2006,1,1),DATE(2006,2,1),"0010001",A1:A2)	A1=38719;A2=38733	20

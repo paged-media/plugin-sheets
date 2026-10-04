@@ -361,6 +361,20 @@ fn sheet_calc_corpus_t2misc() {
     run_family("t2misc");
 }
 
+// ── Wave 7 — the dynamic-array family (now that a nested array reaches its
+// caller, INDEX/ROWS/SUM over an array result project a checkable scalar) and
+// the LET/LAMBDA family.
+
+#[test]
+fn sheet_calc_corpus_array() {
+    run_family("array");
+}
+
+#[test]
+fn sheet_calc_corpus_lambda() {
+    run_family("lambda");
+}
+
 #[cfg(test)]
 mod unit {
     use super::*;
