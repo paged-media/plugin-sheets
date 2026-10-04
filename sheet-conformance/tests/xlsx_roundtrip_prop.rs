@@ -30,6 +30,9 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
+// Test names end in `__feat__<cockpit id>` (the cockpit linking convention).
+#![allow(non_snake_case)]
+
 //! XLSX round-trip PROPERTY: a generated workbook written by the engine and
 //! read back is the same workbook (spec §10.2, "Paged never destroys a
 //! workbook"). The hand fixtures in `xlsx_roundtrip.rs` pin byte identity for
@@ -155,7 +158,8 @@ fn xlsx_hard_text_survives_roundtrip__feat__sheet_xlsx_roundtrip() {
     ];
     let mut s = SheetSession::new();
     for (i, t) in hard.iter().enumerate() {
-        s.set_cell(0, i as u32, 0, t).expect("set_cell accepts the text");
+        s.set_cell(0, i as u32, 0, t)
+            .expect("set_cell accepts the text");
     }
     let bytes = s.save_xlsx().expect("save");
     let r = SheetSession::load_xlsx(&bytes).expect("reload");

@@ -30,6 +30,9 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
+// Test names end in `__feat__<cockpit id>` (the cockpit linking convention).
+#![allow(non_snake_case)]
+
 //! Number-format PROPERTIES (spec §9) — what must hold for EVERY value, where
 //! the golden corpora (and the Excel oracle over them) pin chosen points.
 //!
@@ -107,7 +110,11 @@ fn format_fixed(int_len: usize, kept: &[u8], d: usize, neg: bool) -> String {
     let (i, f) = digits.split_at(digits.len() - d);
     let mut int: String = i.iter().map(|x| (b'0' + x) as char).collect();
     let int_trim = int.trim_start_matches('0');
-    int = if int_trim.is_empty() { "0".into() } else { int_trim.into() };
+    int = if int_trim.is_empty() {
+        "0".into()
+    } else {
+        int_trim.into()
+    };
     let frac: String = f.iter().map(|x| (b'0' + x) as char).collect();
     let mut out = String::new();
     if neg {
@@ -134,11 +141,35 @@ fn value() -> impl Strategy<Value = f64> {
 /// Codes from the grammar's token alphabet — valid or not.
 fn any_code() -> impl Strategy<Value = String> {
     let tok = prop_oneof![
-        Just("0"), Just("#"), Just("?"), Just("."), Just(","), Just("%"), Just("E+"),
-        Just("E-"), Just(";"), Just("\"x\""), Just("@"), Just("_)"), Just("*-"),
-        Just("[Red]"), Just("[>=100]"), Just("[$€-407]"), Just("yyyy"), Just("mm"),
-        Just("dd"), Just("hh"), Just("ss"), Just("AM/PM"), Just("[h]"), Just("/"),
-        Just("General"), Just("\\"), Just(" "), Just("00"), Just(".0"),
+        Just("0"),
+        Just("#"),
+        Just("?"),
+        Just("."),
+        Just(","),
+        Just("%"),
+        Just("E+"),
+        Just("E-"),
+        Just(";"),
+        Just("\"x\""),
+        Just("@"),
+        Just("_)"),
+        Just("*-"),
+        Just("[Red]"),
+        Just("[>=100]"),
+        Just("[$€-407]"),
+        Just("yyyy"),
+        Just("mm"),
+        Just("dd"),
+        Just("hh"),
+        Just("ss"),
+        Just("AM/PM"),
+        Just("[h]"),
+        Just("/"),
+        Just("General"),
+        Just("\\"),
+        Just(" "),
+        Just("00"),
+        Just(".0"),
     ];
     prop::collection::vec(tok, 0..10).prop_map(|v| v.concat())
 }
@@ -216,4 +247,3 @@ proptest! {
         prop_assert!((back - v).abs() <= v.abs() * 0.006, "{} -> {:?}", v, out);
     }
 }
-

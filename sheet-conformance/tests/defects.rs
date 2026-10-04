@@ -30,6 +30,9 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
+// Test names end in `__feat__<cockpit id>` (the cockpit linking convention).
+#![allow(non_snake_case)]
+
 //! Defects found by the oracle/property lanes that are NOT a row of the Excel
 //! oracle's `divergences.tsv` (those are listed there, checked both ways).
 //!

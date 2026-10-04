@@ -30,6 +30,9 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
+// Test names end in `__feat__<cockpit id>` (the cockpit linking convention).
+#![allow(non_snake_case)]
+
 //! RECALC lane over real workbooks: recompute every formula and compare with
 //! the value Excel cached in the file (`sheet_conformance::recalc`).
 //!
@@ -92,7 +95,6 @@ fn token(v: &CellValue) -> String {
         CellValue::Text(t) => format!("s:{t}"),
         CellValue::Bool(b) => format!("b:{b}"),
         CellValue::Error(e) => format!("e:{}", e.as_str()),
-        other => format!("{other:?}"),
     }
 }
 
@@ -169,7 +171,10 @@ fn xlsx_recalc_matches_excel_cached_values_ci_subset__feat__sheet_calc_engine() 
         total.unparsed += c.unparsed;
         total.volatile += c.volatile;
         total.no_cache += c.no_cache;
-        assert!(c.formulas > 0, "{name}: no formula cells — not a recalc fixture");
+        assert!(
+            c.formulas > 0,
+            "{name}: no formula cells — not a recalc fixture"
+        );
         match expected.get(&name) {
             None => problems.push(format!("no expected.tsv row: {}", row(&name, &c))),
             Some(e) if *e != c => problems.push(format!(
@@ -183,7 +188,9 @@ fn xlsx_recalc_matches_excel_cached_values_ci_subset__feat__sheet_calc_engine() 
     }
     for name in expected.keys() {
         if !seen.contains(name) {
-            problems.push(format!("expected.tsv lists {name}, which is not in the subset"));
+            problems.push(format!(
+                "expected.tsv lists {name}, which is not in the subset"
+            ));
         }
     }
     let comparable = total.agree + total.differs + total.unparsed;
@@ -228,8 +235,13 @@ fn xlsx_recalc_full_corpus_report() {
         return;
     };
     // An ABSENT corpus is a skip; a set PATH that is wrong is a failure.
-    assert!(root.is_dir(), "PAGED_XLSX_CORPUS points at {}, which has no xlsx/", root.display());
-    let mut report: Vec<String> = vec!["source\tfile\tsheet\tcell\tclass\tformula\tcached\tengine".into()];
+    assert!(
+        root.is_dir(),
+        "PAGED_XLSX_CORPUS points at {}, which has no xlsx/",
+        root.display()
+    );
+    let mut report: Vec<String> =
+        vec!["source\tfile\tsheet\tcell\tclass\tformula\tcached\tengine".into()];
     let mut by_src: BTreeMap<String, (usize, Counts)> = BTreeMap::new();
     let mut differs_by_fn: BTreeMap<String, usize> = BTreeMap::new();
     let mut unparsed_by_fn: BTreeMap<String, usize> = BTreeMap::new();
@@ -274,9 +286,10 @@ fn xlsx_recalc_full_corpus_report() {
                 }
                 if matches!(o.class, Class::Differs | Class::Unparsed) {
                     report.push(format!(
-                        "{src}\t{name}\t{}\t{}\t{:?}\t{}\t{}\t{}",
+                        "{src}\t{name}\t{}\t{}{}\t{:?}\t{}\t{}\t{}",
                         o.sheet,
-                        format!("{}{}", sheet_core::col_to_a1(o.at.1), o.at.0 + 1),
+                        sheet_core::col_to_a1(o.at.1),
+                        o.at.0 + 1,
                         o.class,
                         o.formula.replace('\t', " "),
                         token(&o.cached).replace(['\t', '\n'], " "),
@@ -306,7 +319,7 @@ fn xlsx_recalc_full_corpus_report() {
         all.differs += c.differs;
         all.unparsed += c.unparsed;
     }
-    let mut top = |label: &str, m: &BTreeMap<String, usize>| {
+    let top = |label: &str, m: &BTreeMap<String, usize>| {
         let mut v: Vec<_> = m.iter().collect();
         v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
         println!("  top {label}:");
@@ -320,5 +333,8 @@ fn xlsx_recalc_full_corpus_report() {
         std::fs::write(&path, report.join("\n") + "\n").expect("write report");
         println!("  per-cell report: {}", PathBuf::from(path).display());
     }
-    assert!(all.formulas > 0, "the full corpus produced zero formula cells");
+    assert!(
+        all.formulas > 0,
+        "the full corpus produced zero formula cells"
+    );
 }

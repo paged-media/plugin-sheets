@@ -30,6 +30,9 @@
  *  @license    MPL-2.0 OR Paged Media Enterprise License (PMEL)
  */
 
+// Test names end in `__feat__<cockpit id>` (the cockpit linking convention).
+#![allow(non_snake_case)]
+
 //! The EXCEL differential oracle (spec §12.4) — replaces the LibreOffice
 //! `todo!()` skeleton that `tests/oracle.rs` used to carry.
 //!
@@ -180,7 +183,6 @@ fn engine_token(v: &Result<CellValue, String>) -> String {
         Ok(CellValue::Text(t)) => format!("s:{t}"),
         Ok(CellValue::Bool(b)) => format!("b:{}", if *b { "TRUE" } else { "FALSE" }),
         Ok(CellValue::Error(e)) => format!("e:{}", e.as_str()),
-        Ok(other) => format!("other:{other:?}"),
     }
 }
 
@@ -300,11 +302,16 @@ fn excel_recordings_match_the_live_corpus__feat__sheet_fn_library() {
         }
         for key in rec.keys() {
             if !seen.contains(key) {
-                problems.push(format!("{fam}: recorded {key:?} is no longer in the corpus"));
+                problems.push(format!(
+                    "{fam}: recorded {key:?} is no longer in the corpus"
+                ));
             }
         }
     }
-    assert!(total > 1000, "only {total} golden cases found — corpus walk broken?");
+    assert!(
+        total > 1000,
+        "only {total} golden cases found — corpus walk broken?"
+    );
     assert!(
         problems.is_empty(),
         "{} recording problem(s) — re-run oracle/excel (generate.py, drive.sh, read.py):\n{}",
@@ -397,7 +404,9 @@ fn compare(label: &str, list: &str, cases: Vec<Compared>) -> Vec<String> {
     }
     for key in listed.keys() {
         if !used.contains(key) {
-            problems.push(format!("{list} lists {key:?}, which is not a compared case"));
+            problems.push(format!(
+                "{list} lists {key:?}, which is not a compared case"
+            ));
         }
     }
     let pct = if compared == 0 {
@@ -416,7 +425,9 @@ fn compare(label: &str, list: &str, cases: Vec<Compared>) -> Vec<String> {
         }
     }
     if compared < 100 {
-        problems.push(format!("only {compared} cases compared — recordings missing?"));
+        problems.push(format!(
+            "only {compared} cases compared — recordings missing?"
+        ));
     }
     problems
 }
@@ -551,7 +562,11 @@ fn excel_oracle_format_corpus__feat__sheet_format_engine() {
             }
         })
         .collect();
-    let problems = compare("excel oracle (format-corpus)", "format-divergences.tsv", cases);
+    let problems = compare(
+        "excel oracle (format-corpus)",
+        "format-divergences.tsv",
+        cases,
+    );
     assert!(
         problems.is_empty(),
         "{} oracle problem(s):\n{}",

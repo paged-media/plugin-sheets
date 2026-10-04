@@ -54,7 +54,15 @@ use sheet_xlsx::XlsxDocument;
 
 /// Functions whose cached value is not reproducible by recomputation.
 pub const VOLATILE: &[&str] = &[
-    "NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY", "OFFSET", "INDIRECT", "CELL", "INFO",
+    "NOW",
+    "TODAY",
+    "RAND",
+    "RANDBETWEEN",
+    "RANDARRAY",
+    "OFFSET",
+    "INDIRECT",
+    "CELL",
+    "INFO",
 ];
 
 struct Ctx<'a> {

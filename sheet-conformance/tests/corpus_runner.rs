@@ -86,10 +86,7 @@ fn run_case(case: &CorpusCase) -> Outcome {
     let value = match replay(case) {
         Ok(v) => v,
         Err(err) => {
-            return Outcome::Fail(format!(
-                "[{}] formula {:?} {err}",
-                case.id, case.formula
-            ))
+            return Outcome::Fail(format!("[{}] formula {:?} {err}", case.id, case.formula))
         }
     };
     let got = project(&value);
