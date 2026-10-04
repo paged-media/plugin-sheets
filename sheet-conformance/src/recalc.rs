@@ -72,7 +72,8 @@ pub enum Class {
     Differs,
     /// The parser refused the formula text.
     Unparsed,
-    /// A volatile function — not comparable.
+    /// A volatile function, or a value that moves with the clock through
+    /// any chain of cells and names — not comparable.
     Volatile,
     /// The file has no cached value for the cell.
     NoCache,
@@ -159,6 +160,11 @@ pub fn functions_in(formula: &str) -> Vec<String> {
 pub fn recalc_workbook(bytes: &[u8]) -> Result<Vec<CellOutcome>, String> {
     let doc = XlsxDocument::open(bytes).map_err(|e| e.to_string())?;
     let session = SheetSession::load_xlsx(bytes).map_err(|e| e.to_string())?;
+    // The same load under another clock: a cell whose value moves with
+    // NOW/TODAY — directly or through any chain of cells and names — is
+    // volatile, its cached value a moment (the name test below only sees
+    // the volatile call written in the cell itself).
+    let shifted = SheetSession::load_xlsx_at(bytes, 54_321.25).map_err(|e| e.to_string())?;
     let texts: Vec<((SheetId, u32, u32), String)> = doc
         .formula_texts
         .iter()
@@ -191,10 +197,13 @@ pub fn recalc_workbook(bytes: &[u8]) -> Result<Vec<CellOutcome>, String> {
             .and_then(|ws| ws.cell(row, col))
             .map(|c| c.value.clone())
             .unwrap_or(CellValue::Empty);
+        let moves_with_clock = cell(shifted.model(), key)
+            .map(|c| c.value)
+            .is_some_and(|v| !values_agree(&v, &engine_v));
         let fns = functions_in(&text);
         let class = if unparsed.contains(&key) {
             Class::Unparsed
-        } else if fns.iter().any(|f| VOLATILE.contains(&f.as_str())) {
+        } else if moves_with_clock || fns.iter().any(|f| VOLATILE.contains(&f.as_str())) {
             Class::Volatile
         } else if matches!(cached_v, CellValue::Empty) {
             Class::NoCache
