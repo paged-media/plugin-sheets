@@ -79,7 +79,7 @@ fn descending_with_sum() -> SheetSession {
 
 // COVERS: sort_range's apply lane (core.rs) — every moved cell re-enters
 // through Engine::enter, so the SUM over the sorted column recalcs once PER
-// MOVED CELL, copying the whole column each time. Inherent: 0 evaluations
+// MOVED CELL, reading the whole column each time. Inherent: 0 evaluations
 // (the sum of a permutation is unchanged — but whole-range invalidation
 // must evaluate it once). Batched: 1 recalc, 1 evaluation, 1000 cells.
 #[test]
@@ -101,10 +101,9 @@ fn perf_sort_1k_rows_with_sum__feat__sheet_edit_ops() {
             range_keys_scanned: 2_000,
             precedent_candidates_scanned: 1_000,
             ranges_materialized: 1_000,
-            cells_materialized: 1_000_000, // the column once per moved cell — batched → 1_000
-            evaluations: 1_000,            // the SUM once per moved cell — batched → 1
-            ast_clones: 1_000,
-            recalcs: 1_000, // one per moved cell — batched → 1
+            cells_read: 1_000_000, // the column once per moved cell — batched → 1_000
+            evaluations: 1_000,    // the SUM once per moved cell — batched → 1
+            recalcs: 1_000,        // one per moved cell — batched → 1
             recalc_passes: 1_000,
             cells_marked_dirty: 1_000,
         },
@@ -139,10 +138,9 @@ fn perf_paste_100x10_under_totals__feat__sheet_edit_ops() {
             range_keys_scanned: 20_000,
             precedent_candidates_scanned: 1_000,
             ranges_materialized: 1_000,
-            cells_materialized: 100_000,
+            cells_read: 100_000,
             evaluations: 1_000, // each total once per cell in its column — batched → 10
-            ast_clones: 1_000,
-            recalcs: 1_000, // one per pasted cell — batched → 1
+            recalcs: 1_000,     // one per pasted cell — batched → 1
             recalc_passes: 1_000,
             cells_marked_dirty: 1_000,
         },
@@ -180,9 +178,8 @@ fn perf_replace_500_under_sum__feat__sheet_edit_ops() {
             range_keys_scanned: 1_000,
             precedent_candidates_scanned: 500,
             ranges_materialized: 500,
-            cells_materialized: 250_000, // N²/2-shaped — batched → 500
+            cells_read: 250_000, // N²/2-shaped — batched → 500
             evaluations: 500,
-            ast_clones: 500,
             recalcs: 500, // one per replaced cell — batched → 1
             recalc_passes: 500,
             cells_marked_dirty: 500,
@@ -215,9 +212,8 @@ fn perf_save_then_edit__feat__sheet_xlsx_roundtrip() {
             range_keys_scanned: 0,
             precedent_candidates_scanned: 0,
             ranges_materialized: 0,
-            cells_materialized: 0,
+            cells_read: 0,
             evaluations: 500, // the whole workbook: save left every formula dirty → 0
-            ast_clones: 500,
             recalcs: 1,
             recalc_passes: 1,
             cells_marked_dirty: 500, // Engine::new's mark_all inside save → 0

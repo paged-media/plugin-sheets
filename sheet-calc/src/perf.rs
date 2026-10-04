@@ -60,15 +60,18 @@ pub struct PerfCounters {
     /// Range-box × dirty-candidate containment tests in
     /// `DepGraph::precedents_in` (`graph.rs`, per dirty cell from `topo`).
     pub precedent_candidates_scanned: u64,
-    /// `materialize_range*` calls (`argview.rs`) — one per range argument
-    /// per evaluation.
+    /// Range views built (`argview.rs` `materialize_range*`) — one per range
+    /// argument per evaluation.
     pub ranges_materialized: u64,
-    /// Cells COPIED by those calls, blanks included (`argview.rs`).
-    pub cells_materialized: u64,
+    /// Cells a kernel READ through those views inside the sheet's populated
+    /// rows (`argview.rs`). Views borrow the model, so this is the kernel's
+    /// own work (a SUM reads its range, a VLOOKUP reads until it matches);
+    /// nothing is copied up front. (The `cells_materialized` copy counter and
+    /// the per-evaluation `ast_clones` counter were retired 2026-10 when the
+    /// copy and the clone they counted were removed.)
+    pub cells_read: u64,
     /// Formula evaluations, scalar and rich door (`lib.rs`).
     pub evaluations: u64,
-    /// Formula-tree deep clones (`f.root.clone()` per evaluation, `lib.rs`).
-    pub ast_clones: u64,
     /// `Engine::recalc_dirty` invocations — one per committed edit today.
     pub recalcs: u64,
     /// Fixpoint passes inside those recalcs (more than `recalcs` only when a
@@ -85,9 +88,8 @@ thread_local! {
             range_keys_scanned: 0,
             precedent_candidates_scanned: 0,
             ranges_materialized: 0,
-            cells_materialized: 0,
+            cells_read: 0,
             evaluations: 0,
-            ast_clones: 0,
             recalcs: 0,
             recalc_passes: 0,
             cells_marked_dirty: 0,

@@ -559,15 +559,15 @@ fn cell_is_subtotal_result(model: &SheetModel, cell: CellRef) -> bool {
 /// parallel [`ArgPlan`] list. Shared by [`eval_func`] and [`eval_func_rich`] so
 /// the scalar and array doors build their `&[Arg]` slice identically. The caller
 /// lends views from `bufs` in a second pass (so `bufs` outlives every `Arg`).
-fn plan_args(
-    model: &SheetModel,
+fn plan_args<'m>(
+    model: &'m SheetModel,
     fid: FuncId,
     args: &[Expr],
     ctx: &EvalCtx,
     spills: &SpillState,
-) -> (Vec<RangeBuf>, Vec<ArgPlan>) {
+) -> (Vec<RangeBuf<'m>>, Vec<ArgPlan>) {
     let meta = sheet_core::funcs::meta(fid);
-    let mut bufs: Vec<RangeBuf> = Vec::new();
+    let mut bufs: Vec<RangeBuf<'m>> = Vec::new();
     let mut plans: Vec<ArgPlan> = Vec::with_capacity(args.len());
 
     // SUBTOTAL / AGGREGATE EXCLUDE nested SUBTOTAL/AGGREGATE results from their
@@ -582,11 +582,9 @@ fn plan_args(
     // Materialize a range, masking nested subtotal cells iff this is a
     // SUBTOTAL/AGGREGATE call. (A non-subtotal caller never pays the per-cell
     // formula lookup.)
-    let materialize = |model: &SheetModel, r: RangeRef| -> RangeBuf {
+    let materialize = |model: &'m SheetModel, r: RangeRef| -> RangeBuf<'m> {
         if exclude_subtotals {
-            argview::materialize_range_masked(model, r, &mut |cell| {
-                cell_is_subtotal_result(model, cell)
-            })
+            argview::materialize_range_masked(model, r, cell_is_subtotal_result)
         } else {
             argview::materialize_range(model, r)
         }
@@ -699,7 +697,7 @@ fn plan_args(
 
 /// Lend the borrowing `&[Arg]` slice from `bufs`/`plans` (the second pass — see
 /// [`plan_args`]). `bufs` MUST outlive the returned `Vec<Arg>`.
-fn build_args<'a>(bufs: &'a [RangeBuf], plans: &[ArgPlan]) -> Vec<Arg<'a>> {
+fn build_args<'a>(bufs: &'a [RangeBuf<'_>], plans: &[ArgPlan]) -> Vec<Arg<'a>> {
     plans
         .iter()
         .map(|p| match p {

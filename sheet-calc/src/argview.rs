@@ -36,38 +36,53 @@
 //! [`sheet_fn::RangeView`] that reads the **already-computed** cell values
 //! out of the model. `topo` order guarantees those values are fresh.
 //!
-//! A `RangeView` borrows its backing for `'a` (it never owns the cells), so a
-//! `from_fn` view would need a closure that outlives the dispatch call but
-//! borrows the model immutably. Inside [`crate::eval`] we already hold a
-//! `&SheetModel`, so the simplest correct construction is to **materialize**
-//! the range into an owned row-major `Vec<CellValue>` and lend a
-//! [`RangeView::from_slice`] over it. This module is the one place that
-//! materialization lives, with the `origin` set to the range's top-left
-//! [`CellRef`] so `ROW`/`COLUMN`/`OFFSET`-style kernels recover real
-//! addresses.
+//! ## Borrowed, not copied
 //!
-//! T0 ruling — a `RangeView` is capped at the sheet's populated bounding box
-//! intersected with the requested range, so a "whole-column" style reference
-//! does not allocate a million empty cells; out-of-box reads still resolve to
-//! [`CellValue::Empty`] through the `RangeView`'s own out-of-bounds clamp.
+//! A [`RangeBuf`] does NOT copy the range. It holds a lazy getter that reads
+//! the model's sparse grid on demand, and lends it to the kernel through
+//! [`sheet_fn::RangeView::from_fn`]. A kernel that reads three cells of a
+//! 10 000-cell lookup table reads three cells; nothing is allocated per cell
+//! and a blank is never stored. (Before 2026-10, every evaluation copied
+//! every cell of every range argument, blanks included — a VLOOKUP over a
+//! 1000×2 table copied 2000 cells per evaluation.)
+//!
+//! ## Used-range cap
+//!
+//! The view's GEOMETRY is the full requested range (`rows`/`cols` are what
+//! the kernel expects — `ROWS`, `INDEX`, `COUNTBLANK` and `MATCH` positions
+//! depend on it), but READS are capped at the sheet's populated rows: a read
+//! above the first or below the last populated row answers
+//! [`CellValue::Empty`] without touching the grid. The row bounds are the
+//! sparse map's first and last keys (`O(log n)`, computed once per view), so
+//! a whole-column reference costs nothing beyond the populated rows' lookups.
+//! Columns are not capped (a column bound needs a full scan of the grid).
+//!
+//! `materialize_*` keep their names — they are what the evaluator calls — but
+//! they build views, and the `cells_materialized` work counter (cells COPIED)
+//! stays at zero; the cells a kernel actually reads are counted as
+//! `cells_read`.
 
-use sheet_core::{CellRef, CellValue, RangeRef, SheetModel};
+use sheet_core::{CellRef, CellValue, RangeRef, SheetModel, Worksheet};
 
-/// An owned, row-major snapshot of a range's current cell values plus the
-/// geometry a [`sheet_fn::RangeView`] needs. Build with [`materialize_range`],
-/// then call [`RangeBuf::view`] to lend a borrowing view to a kernel.
-pub struct RangeBuf {
+/// A lazy getter over relative `(row, col)` coordinates.
+type Getter<'m> = Box<dyn Fn(u32, u32) -> CellValue + 'm>;
+
+/// A borrowed range argument: the geometry a [`sheet_fn::RangeView`] needs
+/// plus a getter that reads the model on demand. Build with
+/// [`materialize_range`], then call [`RangeBuf::view`] to lend a view to a
+/// kernel. Borrows the model for `'m`.
+pub struct RangeBuf<'m> {
     origin: CellRef,
     rows: u32,
     cols: u32,
-    cells: Vec<CellValue>,
+    get: Getter<'m>,
 }
 
-impl RangeBuf {
-    /// Lend a [`sheet_fn::RangeView`] over this buffer. The view borrows the
+impl<'m> RangeBuf<'m> {
+    /// Lend a [`sheet_fn::RangeView`] over this range. The view borrows the
     /// buffer for as long as the returned value lives.
     pub fn view(&self) -> sheet_fn::RangeView<'_> {
-        sheet_fn::RangeView::from_slice(self.origin, self.rows, self.cols, &self.cells)
+        sheet_fn::RangeView::from_fn(self.origin, self.rows, self.cols, &*self.get)
     }
 
     /// Geometry accessors (used by `ROW`/`COLUMN` materialization in eval).
@@ -85,7 +100,7 @@ impl RangeBuf {
     /// literal used as an argument) so a kernel reads it through the same
     /// [`sheet_fn::RangeView`] door as a sheet range. Ragged rows pad with
     /// `Empty`; `origin` is only an anchor (the block has no sheet address).
-    pub fn from_grid(origin: CellRef, grid: Vec<Vec<CellValue>>) -> RangeBuf {
+    pub fn from_grid(origin: CellRef, grid: Vec<Vec<CellValue>>) -> RangeBuf<'m> {
         let rows = grid.len() as u32;
         let cols = grid.iter().map(|r| r.len()).max().unwrap_or(0) as u32;
         let mut cells = Vec::with_capacity(rows as usize * cols as usize);
@@ -93,11 +108,19 @@ impl RangeBuf {
             row.resize(cols as usize, CellValue::Empty);
             cells.extend(row);
         }
+        // The block is owned by the getter (it is a computed value, not a
+        // sheet range — there is no model to borrow).
+        let get: Getter<'m> = Box::new(move |r: u32, c: u32| -> CellValue {
+            cells
+                .get(r as usize * cols as usize + c as usize)
+                .cloned()
+                .unwrap_or(CellValue::Empty)
+        });
         RangeBuf {
             origin,
             rows,
             cols,
-            cells,
+            get,
         }
     }
 }
@@ -113,92 +136,95 @@ pub fn cell_value(model: &SheetModel, cell: CellRef) -> CellValue {
         .unwrap_or(CellValue::Empty)
 }
 
-/// Materialize a (possibly un-normalized) range into a [`RangeBuf`]. The
-/// geometry is the FULL requested range (so `rows`/`cols` match what the
-/// kernel expects), but only populated cells are read from the model — blanks
-/// stay [`CellValue::Empty`]. The `origin` is the normalized top-left.
-pub fn materialize_range(model: &SheetModel, range: RangeRef) -> RangeBuf {
-    let n = range.normalized();
-    let rows = n.rows();
-    let cols = n.cols();
-    let mut cells = Vec::with_capacity(rows.saturating_mul(cols) as usize);
+/// The populated row span of a worksheet (`None` when it has no cells): the
+/// first and last keys of the row-major sparse map, `O(log n)`.
+fn populated_rows(ws: &Worksheet) -> Option<(u32, u32)> {
+    let first = ws.cells.keys().next()?.0;
+    let last = ws.cells.keys().next_back()?.0;
+    Some((first, last))
+}
+
+/// Build the lazy getter for the normalized range `n`, optionally masking
+/// cells (read as blank) for which `mask` answers `true`.
+fn window<'m>(
+    model: &'m SheetModel,
+    n: RangeRef,
+    mask: Option<fn(&SheetModel, CellRef) -> bool>,
+) -> RangeBuf<'m> {
     perf_count!(ranges_materialized, 1);
-    perf_count!(cells_materialized, u64::from(rows) * u64::from(cols));
-    for r in n.start.row..=n.end.row {
-        for c in n.start.col..=n.end.col {
-            cells.push(cell_value(
-                model,
-                CellRef {
-                    sheet: n.start.sheet,
-                    row: r,
-                    col: c,
-                    row_abs: false,
-                    col_abs: false,
-                },
-            ));
+    let (sheet, row0, col0) = (n.start.sheet, n.start.row, n.start.col);
+    let ws = model.sheet(sheet);
+    // Reads outside the populated rows answer Empty without a lookup.
+    let bounds = ws.and_then(populated_rows);
+    let get: Getter<'m> = Box::new(move |r: u32, c: u32| -> CellValue {
+        let (Some(ws), Some((lo, hi))) = (ws, bounds) else {
+            return CellValue::Empty;
+        };
+        let (row, col) = (row0.saturating_add(r), col0.saturating_add(c));
+        if row < lo || row > hi {
+            return CellValue::Empty;
         }
-    }
+        perf_count!(cells_read, 1);
+        let Some(cell) = ws.cell(row, col) else {
+            return CellValue::Empty;
+        };
+        if let Some(mask) = mask {
+            let at = CellRef {
+                sheet,
+                row,
+                col,
+                row_abs: false,
+                col_abs: false,
+            };
+            if mask(model, at) {
+                return CellValue::Empty;
+            }
+        }
+        cell.value.clone()
+    });
     RangeBuf {
         origin: n.start,
-        rows,
-        cols,
-        cells,
+        rows: n.rows(),
+        cols: n.cols(),
+        get,
     }
 }
 
-/// Materialize a range like [`materialize_range`], but MASK each cell for which
+/// View a (possibly un-normalized) range as a [`RangeBuf`]. The geometry is
+/// the FULL requested range (so `rows`/`cols` match what the kernel expects);
+/// cells are read from the model on demand, blanks as [`CellValue::Empty`].
+/// The `origin` is the normalized top-left.
+pub fn materialize_range(model: &SheetModel, range: RangeRef) -> RangeBuf<'_> {
+    window(model, range.normalized(), None)
+}
+
+/// View a range like [`materialize_range`], but MASK each cell for which
 /// `mask` returns `true` to [`CellValue::Empty`]. Used by SUBTOTAL / AGGREGATE
 /// to EXCLUDE cells that are themselves nested SUBTOTAL/AGGREGATE results
 /// (ECMA-376 §18.17.7 — a SUBTOTAL never re-aggregates another SUBTOTAL inside
 /// its range). A masked cell reads as blank, so every inner aggregate skips it
 /// (value aggregates and COUNTA alike — `scan_refs` treats `Empty` as blank).
-/// `mask` is called with the cell's absolute [`CellRef`]; the geometry is still
-/// the FULL requested range (the kernel's row/col expectations are unchanged).
+/// `mask` is called with the model and the cell's absolute [`CellRef`], for
+/// populated cells only (a blank reads blank either way); the geometry is
+/// still the FULL requested range.
 pub fn materialize_range_masked(
     model: &SheetModel,
     range: RangeRef,
-    mask: &mut dyn FnMut(CellRef) -> bool,
-) -> RangeBuf {
-    let n = range.normalized();
-    let rows = n.rows();
-    let cols = n.cols();
-    let mut cells = Vec::with_capacity(rows.saturating_mul(cols) as usize);
-    perf_count!(ranges_materialized, 1);
-    perf_count!(cells_materialized, u64::from(rows) * u64::from(cols));
-    for r in n.start.row..=n.end.row {
-        for c in n.start.col..=n.end.col {
-            let cell = CellRef {
-                sheet: n.start.sheet,
-                row: r,
-                col: c,
-                row_abs: false,
-                col_abs: false,
-            };
-            cells.push(if mask(cell) {
-                CellValue::Empty
-            } else {
-                cell_value(model, cell)
-            });
-        }
-    }
-    RangeBuf {
-        origin: n.start,
-        rows,
-        cols,
-        cells,
-    }
+    mask: fn(&SheetModel, CellRef) -> bool,
+) -> RangeBuf<'_> {
+    window(model, range.normalized(), Some(mask))
 }
 
-/// Materialize a single cell as a 1×1 [`RangeBuf`] carrying its origin — used
-/// for `ref_args` functions (`ROW`/`COLUMN`) handed a bare cell reference: the
+/// View a single cell as a 1×1 [`RangeBuf`] carrying its origin — used for
+/// `ref_args` functions (`ROW`/`COLUMN`) handed a bare cell reference: the
 /// kernel needs the *reference*, not the value.
-pub fn materialize_ref_1x1(model: &SheetModel, cell: CellRef) -> RangeBuf {
-    RangeBuf {
-        origin: cell,
-        rows: 1,
-        cols: 1,
-        cells: vec![cell_value(model, cell)],
-    }
+pub fn materialize_ref_1x1(model: &SheetModel, cell: CellRef) -> RangeBuf<'_> {
+    let n = RangeRef {
+        start: cell,
+        end: cell,
+    };
+    // Not normalized: the origin keeps the caller's reference flags.
+    window(model, n, None)
 }
 
 #[cfg(test)]

@@ -120,9 +120,9 @@ const N: u32 = 2000;
 // COVERS: the range-dependency walk (graph.rs dependents_of / precedents_in,
 // the M1 interval-index seam) and range materialization (argview.rs).
 // Editing A1 of a 2000-row running total: 2000 evaluations are inherent
-// (every total changes); the 4 000 000 box scans and the 2 001 000 copied
-// cells are not — an interval index makes the probes ~n log n, and a
-// prefix-aware or borrowed range view makes the copies ~n.
+// (every total changes); the 4 000 000 box scans are not — an interval
+// index makes the probes ~n log n. The range views borrow the model (no
+// copies); the N²/2 cells READ are SUM's own scan.
 #[test]
 fn perf_running_total_edit_head__feat__sheet_calc_engine() {
     let mut e = running_total(N);
@@ -139,9 +139,8 @@ fn perf_running_total_edit_head__feat__sheet_calc_engine() {
             range_keys_scanned: 4_002_000, // N² — interval index → ~n log n
             precedent_candidates_scanned: 4_000_000, // N² — keys × dirty cut
             ranges_materialized: 2_000,
-            cells_materialized: 2_001_000, // N²/2 — borrowed view → 0 copies
+            cells_read: 2_001_000, // N²/2 — inherent for SUM-by-scan (was 2_001_000 cells COPIED; views copy 0)
             evaluations: 2_000,
-            ast_clones: 2_000, // → 0 (evaluate by reference)
             recalcs: 1,
             recalc_passes: 1,
             cells_marked_dirty: 2_000,
@@ -167,9 +166,8 @@ fn perf_running_total_edit_tail__feat__sheet_calc_engine() {
             range_keys_scanned: 4_000, // 2 probes × 2000 boxes — interval index → ~2 log n
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
-            cells_materialized: 2_000,
+            cells_read: 2_000,
             evaluations: 1,
-            ast_clones: 1,
             recalcs: 1,
             recalc_passes: 1,
             cells_marked_dirty: 1,
@@ -200,9 +198,8 @@ fn perf_running_total_build__feat__sheet_calc_engine() {
             range_keys_scanned: 2_001_000, // N²/2
             precedent_candidates_scanned: 2_000,
             ranges_materialized: 2_000,
-            cells_materialized: 2_001_000, // N²/2 — inherent for SUM-by-copy; a borrowed view → 0
+            cells_read: 2_001_000, // N²/2 — inherent for SUM-by-scan (copies: 2_001_000 → 0)
             evaluations: 2_000,
-            ast_clones: 2_000,
             recalcs: 4_000, // one per entry — a batch setCells door → 1
             recalc_passes: 2_000,
             cells_marked_dirty: 2_000,
@@ -235,8 +232,8 @@ fn vlookup_sheet() -> Engine {
 
 // COVERS: one shared range box read by 1000 formulas. A write into the
 // table dirties all 1000 lookups (inherent under whole-range invalidation)
-// and each copies the full 2000-cell table (not inherent: a borrowed view
-// copies nothing).
+// and each reads its key column until it matches (the views borrow the
+// table; before 2026-10 each evaluation copied all 2000 cells).
 #[test]
 fn perf_vlookup_edit_table__feat__sheet_calc_engine() {
     let mut e = vlookup_sheet();
@@ -252,9 +249,8 @@ fn perf_vlookup_edit_table__feat__sheet_calc_engine() {
             range_keys_scanned: 1_001,
             precedent_candidates_scanned: 1_000_000, // 1000 dirty × 1000 candidates — interval index → ~0
             ranges_materialized: 1_000,
-            cells_materialized: 2_000_000, // 1000 × the whole table — borrowed view → 0
+            cells_read: 501_500, // each lookup reads keys until it matches + 1 value (was 2_000_000 COPIED)
             evaluations: 1_000,
-            ast_clones: 1_000,
             recalcs: 1,
             recalc_passes: 1,
             cells_marked_dirty: 1_000,
@@ -263,7 +259,7 @@ fn perf_vlookup_edit_table__feat__sheet_calc_engine() {
 }
 
 // COVERS: editing one lookup KEY — the cheap path. One evaluation, one
-// table copy; the dirty walk is a single cell edge.
+// lookup scan; the dirty walk is a single cell edge.
 #[test]
 fn perf_vlookup_edit_key__feat__sheet_calc_engine() {
     let mut e = vlookup_sheet();
@@ -277,9 +273,8 @@ fn perf_vlookup_edit_key__feat__sheet_calc_engine() {
             range_keys_scanned: 2,
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
-            cells_materialized: 2_000, // one table copy — borrowed view → 0
+            cells_read: 8, // the lookup reads 7 keys + 1 value (was 2_000 COPIED)
             evaluations: 1,
-            ast_clones: 1,
             recalcs: 1,
             recalc_passes: 1,
             cells_marked_dirty: 1,
@@ -313,9 +308,8 @@ fn perf_insert_row__feat__sheet_calc_engine() {
             range_keys_scanned: 0,
             precedent_candidates_scanned: 1_000_000, // N² — the topo sort over the rebuilt all-dirty graph
             ranges_materialized: 1_000,
-            cells_materialized: 501_000,
+            cells_read: 501_000,
             evaluations: 1_000, // every formula, whatever the edit touched — only the shifted ones need it
-            ast_clones: 1_000,
             recalcs: 1,
             recalc_passes: 1,
             cells_marked_dirty: 1_000,

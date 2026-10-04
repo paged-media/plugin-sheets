@@ -546,8 +546,7 @@ impl Engine {
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
         perf_count!(evaluations, 1);
-        perf_count!(ast_clones, 1);
-        eval::eval_expr(&self.model, &f.root.clone(), &ctx, &self.spills)
+        eval::eval_expr(&self.model, &f.root, &ctx, &self.spills)
     }
 
     /// Drive iterative (circular) calculation over one cycle (spec §6.2, D-7;
@@ -686,8 +685,7 @@ impl Engine {
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
         perf_count!(evaluations, 1);
-        perf_count!(ast_clones, 1);
-        eval::eval_expr_rich(&self.model, &f.root.clone(), &ctx, &self.spills)
+        eval::eval_expr_rich(&self.model, &f.root, &ctx, &self.spills)
     }
 
     /// Materialize a `rows × cols` array block anchored at `anchor` (spec §6.4).
