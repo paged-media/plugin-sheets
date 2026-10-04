@@ -345,8 +345,8 @@ impl SheetSession {
             plan
         };
 
-        // ── formats first (Excel's fill carries them). Only when a target's
-        //    style differs — the model surgery rebuilds the engine.
+        // ── formats first (Excel's fill carries them), where a target's
+        //    style differs — a style-id swap, no recalc.
         let restyle: Vec<(u32, u32, StyleId)> = {
             let ws = self.engine().model().sheet(sheet);
             plan.iter()
@@ -360,15 +360,9 @@ impl SheetSession {
                 .collect()
         };
         if !restyle.is_empty() {
-            self.with_model(false, |model| {
-                if let Some(ws) = model.sheet_mut(sheet) {
-                    for &(row, col, style) in &restyle {
-                        ws.cells.entry((row, col)).or_default().style = style;
-                    }
-                }
-            });
-            for &(row, col, _) in &restyle {
-                self.edited.insert((sheet, row, col));
+            let engine = self.engine_mut();
+            for &(row, col, style) in &restyle {
+                engine.set_cell_style(sheet, row, col, style);
             }
             self.extra_dirty.insert(sheet);
         }

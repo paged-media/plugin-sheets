@@ -149,6 +149,11 @@ fn sheet_edit_fill_dates() {
     let apr30 = s.get_cell_input(0, 3, 1).parse::<f64>().unwrap();
     assert_eq!(feb29 - dec31, 60.0, "Dec 31 → Feb 29 (clamped)");
     assert_eq!(apr30 - feb29, 61.0, "Feb 29 → Apr 30 (clamped)");
+    // The carried date format survives a save.
+    let shown = s.get_cell_display(0, 3, 1);
+    let bytes = s.save_xlsx().unwrap();
+    let back = SheetSession::load_xlsx(&bytes).unwrap();
+    assert_eq!(back.get_cell_display(0, 3, 1), shown);
 }
 
 // ── sheet.edit.fill.names ───────────────────────────────────────────────────
