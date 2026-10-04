@@ -459,6 +459,12 @@ impl SheetSession {
             .expect("engine present outside save_xlsx")
     }
 
+    /// The live workbook model, read-only (oracle lanes compare it with the
+    /// values a file cached; nothing outside the session may write it).
+    pub fn model(&self) -> &sheet_core::SheetModel {
+        self.engine().model()
+    }
+
     /// Mutable twin of [`SheetSession::engine`].
     fn engine_mut(&mut self) -> &mut Engine {
         self.engine

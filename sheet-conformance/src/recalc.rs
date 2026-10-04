@@ -35,10 +35,9 @@
 //!
 //! Shared by the CI lane over the committed subset (`corpus/xlsx-recalc/`)
 //! and the opt-in full lane over the private corpus (`PAGED_XLSX_CORPUS`),
-//! both in `tests/xlsx_recalc_corpus.rs`. The load path mirrors
-//! `sheet-js`'s `SheetSession::load_xlsx` (open → strip the storage prefixes
-//! → parse every formula text with a model-backed context → `Engine::new` → `recalc_all`); this module
-//! keeps the cached values that path overwrites.
+//! both in `tests/xlsx_recalc_corpus.rs`. The engine values come from the
+//! product loader itself (`sheet-js`'s `SheetSession::load_xlsx`); this
+//! module keeps the cached values that load overwrites.
 //!
 //! Every formula cell lands in exactly one class, so a report adds up:
 //! `agree`, `differs`, `unparsed` (the parser refused the text), `volatile`
@@ -47,9 +46,8 @@
 
 use std::collections::BTreeMap;
 
-use sheet_calc::{Engine, EngineConfig};
-use sheet_core::{CellValue, NameId, SheetId, SheetModel};
-use sheet_parser::{parse, strip_storage_prefixes, ParseCtx};
+use sheet_core::{CellValue, SheetId, SheetModel};
+use sheet_js::core::SheetSession;
 use sheet_xlsx::XlsxDocument;
 
 /// Functions whose cached value is not reproducible by recomputation.
@@ -64,23 +62,6 @@ pub const VOLATILE: &[&str] = &[
     "CELL",
     "INFO",
 ];
-
-struct Ctx<'a> {
-    model: &'a SheetModel,
-    current: SheetId,
-}
-
-impl ParseCtx for Ctx<'_> {
-    fn sheet_id(&self, name: &str) -> Option<SheetId> {
-        self.model.sheet_id(name)
-    }
-    fn name_id(&self, name: &str) -> Option<NameId> {
-        self.model.names.resolve(name, self.current)
-    }
-    fn current_sheet(&self) -> SheetId {
-        self.current
-    }
-}
 
 /// The outcome class of one formula cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -170,58 +151,36 @@ pub fn functions_in(formula: &str) -> Vec<String> {
 
 /// Recalculate `bytes` and classify every formula cell. `Err` = the package
 /// does not open (a separate lane's concern).
+///
+/// The engine side is the PRODUCT load path, `SheetSession::load_xlsx`
+/// (formula parse, name-target resolution, recalc) — a lane with its own
+/// copy of that path measured a loader nobody ships. The cached side is the
+/// same package opened once more by the xlsx reader, before any recalc.
 pub fn recalc_workbook(bytes: &[u8]) -> Result<Vec<CellOutcome>, String> {
-    let mut doc = XlsxDocument::open(bytes).map_err(|e| e.to_string())?;
-    let mut model = std::mem::take(&mut doc.model);
+    let doc = XlsxDocument::open(bytes).map_err(|e| e.to_string())?;
+    let session = SheetSession::load_xlsx(bytes).map_err(|e| e.to_string())?;
     let texts: Vec<((SheetId, u32, u32), String)> = doc
         .formula_texts
         .iter()
         .map(|(k, v)| (*k, v.clone()))
         .collect();
-
-    // Snapshot the cached values BEFORE the engine overwrites them.
+    let cell = |m: &SheetModel, (s, r, c): (SheetId, u32, u32)| {
+        m.sheet(s).and_then(|ws| ws.cell(r, c)).cloned()
+    };
     let cached: BTreeMap<(SheetId, u32, u32), CellValue> = texts
         .iter()
-        .map(|((s, r, c), _)| {
-            let v = model
-                .sheet(*s)
-                .and_then(|ws| ws.cell(*r, *c))
-                .map(|cell| cell.value.clone())
-                .unwrap_or(CellValue::Empty);
-            ((*s, *r, *c), v)
+        .map(|(k, _)| {
+            let v = cell(&doc.model, *k).map(|c| c.value).unwrap_or(CellValue::Empty);
+            (*k, v)
         })
         .collect();
-
-    let mut unparsed = std::collections::BTreeSet::new();
-    for ((sheet, row, col), text) in &texts {
-        let parsed = {
-            let ctx = Ctx {
-                model: &model,
-                current: *sheet,
-            };
-            // The `<f>` text is the OOXML storage dialect (`_xlfn.`,
-            // `_xlpm.`, `A1#`) — strip it exactly as `load_xlsx` does.
-            parse(&strip_storage_prefixes(text), &ctx)
-        };
-        match parsed {
-            Ok(f) => {
-                let fid = model.intern_formula(f);
-                if let Some(cell) = model
-                    .sheet_mut(*sheet)
-                    .and_then(|ws| ws.cells.get_mut(&(*row, *col)))
-                {
-                    cell.formula = Some(fid);
-                }
-            }
-            Err(_) => {
-                unparsed.insert((*sheet, *row, *col));
-            }
-        }
-    }
-
-    let mut engine = Engine::new(model, EngineConfig::default());
-    engine.recalc_all();
-    let model = engine.model();
+    let model = session.model();
+    // A formula text the loader could not parse leaves a value cell.
+    let unparsed: std::collections::BTreeSet<(SheetId, u32, u32)> = texts
+        .iter()
+        .map(|(k, _)| *k)
+        .filter(|k| cell(model, *k).is_none_or(|c| c.formula.is_none()))
+        .collect();
 
     let mut out = Vec::with_capacity(texts.len());
     for ((sheet, row, col), text) in texts {

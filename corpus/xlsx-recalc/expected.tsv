@@ -12,7 +12,7 @@ DateTimeToNumberTestCases.xls.xlsx	30	12	18	0	0	0
 FormatChoiceTests.xls.xlsx	51	41	10	0	0	0
 FormulaEvalTestData.xls.xlsx	1416	1088	185	133	10	0
 IfFunctionTestCaseData.xls.xlsx	32	17	13	2	0	0
-IndexFunctionTestCaseData.xls.xlsx	98	2	86	10	0	0
+IndexFunctionTestCaseData.xls.xlsx	98	38	50	10	0	0
 IrrNpvTestCaseData.xls.xlsx	29	12	14	0	3	0
 LookupFunctionsTestCaseData.xls.xlsx	214	171	41	2	0	0
 MatchFunctionTestCaseData.xls.xlsx	53	41	12	0	0	0
@@ -20,7 +20,7 @@ MatrixFormulaEvalTestData.xls.xlsx	36	8	16	12	0	0
 NewStyleConditionalFormattings.xls.xlsx	304	304	0	0	0	0
 RomanFunctionTestCaseData.xls.xlsx	36	8	28	0	0	0
 SharedFormulaTest.xls.xlsx	32	32	0	0	0	0
-Trend.xls.xlsx	98	27	64	7	0	0
+Trend.xls.xlsx	98	30	61	7	0	0
 countifExamples.xls.xlsx	64	50	14	0	0	0
 ex47747-sharedFormula.xls.xlsx	20	20	0	0	0	0
 overlapSharedFormula.xls.xlsx	56	56	0	0	0	0
