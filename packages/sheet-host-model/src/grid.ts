@@ -152,6 +152,9 @@ export interface GridScene {
    *  `dataBar` rule covers (spec §8.2/§10.4 — drawn geometry, not a fill).
    *  Absent/empty when none. */
   databars?: GridDataBar[];
+  /** Wave 5 — the target of a fill-handle drag in progress (drawn as an
+   *  outline). Absent/null when no drag. Session-side, never from Rust. */
+  fillPreview?: GridSelection | null;
 }
 
 /** Tunable geometry for `gridSceneToSvg` — paint-time constants the panel
@@ -388,6 +391,39 @@ export function selectionRect(scene: GridScene): [number, number, number, number
   return [x, y, w, h];
 }
 
+/** The side of the fill-handle square (pt) — the small knob at the
+ *  selection's bottom-right corner (Wave 5). */
+export const FILL_HANDLE_PT = 5;
+
+/** The fill handle's viewport-local rect `[x, y, w, h]`: a square centred
+ *  on the selection's bottom-right corner, or `null` when there is no
+ *  selection or that corner is outside the window. */
+export function fillHandleRect(scene: GridScene): [number, number, number, number] | null {
+  const sel = scene.selection;
+  if (!sel) return null;
+  const vp = scene.viewport;
+  const ci = sel.anchorCol + sel.cols - vp.firstCol; // band index past the corner
+  const ri = sel.anchorRow + sel.rows - vp.firstRow;
+  if (ci < 1 || ci > vp.cols || ri < 1 || ri > vp.rows) return null;
+  const h = FILL_HANDLE_PT;
+  return [vp.xOffsets[ci] - h / 2, vp.yOffsets[ri] - h / 2, h, h];
+}
+
+/** Whether `(x, y)` (viewport-local pt) grabs the fill handle — the square
+ *  plus a 2 pt tolerance. */
+export function hitFillHandle(scene: GridScene, x: number, y: number): boolean {
+  const r = fillHandleRect(scene);
+  if (!r) return false;
+  const tol = 2;
+  return x >= r[0] - tol && x <= r[0] + r[2] + tol && y >= r[1] - tol && y <= r[1] + r[3] + tol;
+}
+
+/** The fill-drag target outline rect (clamped to the window), or null. */
+function fillPreviewRect(scene: GridScene): [number, number, number, number] | null {
+  if (!scene.fillPreview) return null;
+  return selectionRect({ ...scene, selection: scene.fillPreview });
+}
+
 /** Build the frozen-pane split `<line>`s (spec §8.1): a heavier rule at the
  *  bottom edge of the frozen row band and the right edge of the frozen column
  *  band. v1 draws the split only when the viewport shows the sheet origin
@@ -470,8 +506,28 @@ function selectionSvg(scene: GridScene, o: GridSvgOptions): string {
   return (
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" ` +
     `fill="${o.selectionFill}" stroke="${o.selectionColor}" ` +
-    `stroke-width="${o.selectionWidth}"/>`
+    `stroke-width="${o.selectionWidth}"/>` +
+    fillChromeSvg(scene, o)
   );
+}
+
+/** The fill handle square + a fill drag's target outline (Wave 5). */
+function fillChromeSvg(scene: GridScene, o: GridSvgOptions): string {
+  let out = "";
+  const p = fillPreviewRect(scene);
+  if (p) {
+    out +=
+      `<rect data-fill-preview x="${p[0]}" y="${p[1]}" width="${p[2]}" height="${p[3]}" ` +
+      `fill="none" stroke="${o.selectionColor}" stroke-width="${o.selectionWidth}" ` +
+      `stroke-dasharray="3 2"/>`;
+  }
+  const h = fillHandleRect(scene);
+  if (h) {
+    out +=
+      `<rect data-fill-handle x="${h[0]}" y="${h[1]}" width="${h[2]}" height="${h[3]}" ` +
+      `fill="${o.selectionColor}"/>`;
+  }
+  return out;
 }
 
 /**
@@ -680,6 +736,28 @@ export function gridSceneToSceneLayer(
       path: seg,
       paint: cssColorToScenePaint(o.selectionColor),
       width: o.selectionWidth,
+    });
+  }
+
+  // 5 — Wave 5: a fill drag's target outline, then the fill handle knob.
+  const fp = fillPreviewRect(scene);
+  if (fp) {
+    const [px, py, pw, ph] = fp;
+    const paint = cssColorToScenePaint(o.selectionColor);
+    items.push({
+      kind: "strokePath",
+      path: rectPath(px, py, px + pw, py + ph),
+      paint: { ...paint, a: paint.a * 0.6 },
+      width: o.selectionWidth,
+    });
+  }
+  const knob = sel ? fillHandleRect(scene) : null;
+  if (knob) {
+    const [kx, ky, kw, kh] = knob;
+    items.push({
+      kind: "fillPath",
+      path: rectPath(kx, ky, kx + kw, ky + kh),
+      paint: cssColorToScenePaint(o.selectionColor),
     });
   }
 

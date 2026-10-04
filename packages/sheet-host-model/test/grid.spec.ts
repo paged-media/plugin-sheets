@@ -29,6 +29,8 @@ import {
   DEFAULT_GRID_SVG_OPTIONS,
   cellEditorRect,
   cssColorToScenePaint,
+  fillHandleRect,
+  hitFillHandle,
   gridSceneToSceneLayer,
   gridSceneToSvg,
   hitCell,
@@ -484,9 +486,9 @@ describe("sheet_grid_scene_to_scene_layer: in-frame C-1 lowering", () => {
     const scene = scene2x2();
     scene.selection = { anchorRow: 0, anchorCol: 1, rows: 1, cols: 1 };
     const layer = gridSceneToSceneLayer(scene);
-    // selectionRect for col1 = [40, 0, 40, 20]; the wash + stroke are the
-    // LAST two items (drawn over cell content).
-    const sel = layer.items.slice(-2);
+    // selectionRect for col1 = [40, 0, 40, 20]; the wash + stroke come
+    // last (drawn over cell content), followed only by the fill-handle knob.
+    const sel = layer.items.slice(-3, -1);
     expect(sel.map((i) => i.kind)).toEqual(["fillPath", "strokePath"]);
     const [wash, stroke] = sel;
     if (wash.kind === "fillPath" && stroke.kind === "strokePath") {
@@ -497,6 +499,25 @@ describe("sheet_grid_scene_to_scene_layer: in-frame C-1 lowering", () => {
       expect(wash.paint.a).toBeCloseTo(0.12, 3);
       expect(stroke.width).toBe(DEFAULT_GRID_SVG_OPTIONS.selectionWidth);
     }
+  });
+
+  it("draws the fill handle at the selection's bottom-right corner and hit-tests it [sheet.edit.fill]", () => {
+    const scene = scene2x2();
+    scene.selection = { anchorRow: 0, anchorCol: 0, rows: 1, cols: 1 };
+    // Cell A1 spans [0,40]×[0,20] — the knob is centred on (40, 20).
+    expect(fillHandleRect(scene)).toEqual([40 - 2.5, 20 - 2.5, 5, 5]);
+    expect(hitFillHandle(scene, 41, 21)).toBe(true);
+    expect(hitFillHandle(scene, 20, 10)).toBe(false);
+    const knob = gridSceneToSceneLayer(scene).items.at(-1)!;
+    expect(knob.kind).toBe("fillPath");
+    expect(gridSceneToSvg(scene)).toContain("data-fill-handle");
+    // A selection whose corner is off-window has no knob.
+    scene.selection = { anchorRow: 0, anchorCol: 0, rows: 5, cols: 1 };
+    expect(fillHandleRect(scene)).toBeNull();
+    // A fill drag's target draws as an outline.
+    scene.selection = { anchorRow: 0, anchorCol: 0, rows: 1, cols: 1 };
+    scene.fillPreview = { anchorRow: 0, anchorCol: 0, rows: 2, cols: 1 };
+    expect(gridSceneToSvg(scene)).toContain("data-fill-preview");
   });
 
   it("emits no selection items when the scene carries no selection", () => {
