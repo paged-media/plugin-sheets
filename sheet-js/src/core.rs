@@ -104,6 +104,28 @@ pub struct SetCellResult {
     pub circular: Vec<CircularRef>,
 }
 
+/// One input of a [`SheetSession::set_cells`] batch (`{sheet,row,col,input}`
+/// on the wire).
+#[derive(serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct CellInput {
+    pub sheet: u16,
+    pub row: u32,
+    pub col: u32,
+    pub input: String,
+}
+
+/// The result of [`SheetSession::set_cells`] — deliberately slim: the count
+/// of cells whose stored value changed (written cells + recomputed
+/// formulas) and the circular set. No per-cell displays are formatted (the
+/// bundle reads displays per visible cell; formatting thousands of changed
+/// cells it never shows was the bulk of a big write's result).
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCellsResult {
+    pub changed_count: u32,
+    pub circular: Vec<CircularRef>,
+}
+
 /// One cell rewritten by a bulk edit op (sort / replace), carrying BOTH
 /// re-enterable INPUT texts (`get_cell_input` semantics — the ADR-012
 /// journal's faithful inverse pair). The bundle journals these so a sort or
@@ -650,6 +672,48 @@ impl SheetSession {
         Ok(SetCellResult { changed, circular })
     }
 
+    /// Commit a batch of cell inputs with ONE recalc (spec §6.2 batch door,
+    /// `Engine::set_cells`). Every input is validated (sheet id) and parsed
+    /// BEFORE anything is mutated: a bad sheet id or a parse error rejects
+    /// the whole batch as a boundary error naming the offending cell, and
+    /// the workbook is untouched. Inputs apply in order (a later input for
+    /// the same cell wins). Returns the slim [`SetCellsResult`].
+    pub fn set_cells(&mut self, inputs: &[CellInput]) -> Result<SetCellsResult, SessionError> {
+        let engine = self.engine();
+        let sheet_count = engine.model().sheets.len();
+        let mut parsed = Vec::with_capacity(inputs.len());
+        for c in inputs {
+            if (c.sheet as usize) >= sheet_count {
+                return Err(SessionError(format!(
+                    "sheet id {} out of range ({sheet_count} sheets)",
+                    c.sheet
+                )));
+            }
+            let input = engine.parse_input(c.sheet, &c.input).map_err(|e| {
+                SessionError(format!("{} does not parse: {e}", a1_of(c.row, c.col)))
+            })?;
+            parsed.push((c.sheet, c.row, c.col, input));
+        }
+        let written: BTreeSet<(u16, u32, u32)> =
+            inputs.iter().map(|c| (c.sheet, c.row, c.col)).collect();
+        let res = self.engine_mut().set_cells(parsed);
+        self.edited.extend(written.iter().copied());
+        let mut changed = written;
+        changed.extend(res.changed.iter().map(|c| (c.sheet, c.row, c.col)));
+        Ok(SetCellsResult {
+            changed_count: changed.len() as u32,
+            circular: res
+                .circular
+                .iter()
+                .map(|c| CircularRef {
+                    sheet: c.sheet,
+                    row: c.row,
+                    col: c.col,
+                })
+                .collect(),
+        })
+    }
+
     /// The current formatted display of one cell (spec §9). `""` for an empty
     /// cell or an out-of-range address.
     pub fn get_cell_display(&self, sheet: u16, row: u32, col: u32) -> String {
@@ -698,10 +762,10 @@ impl SheetSession {
     /// Engine-owned spill output (and so a spilling anchor's region) still
     /// REFUSES with a boundary error — part of an array cannot move.
     ///
-    /// Rows re-enter through the NORMAL `Engine::enter` lane (each moved
-    /// cell's re-enterable input, `get_cell_input` semantics), so the
+    /// Rows re-enter through the batch entry lane (`Engine::set_cells`, each
+    /// moved cell's re-enterable input, `get_cell_input` semantics), so the
     /// dependency graph, dirty propagation, and external formula dependents
-    /// stay coherent. Returns the changed-cell displays + circular set like
+    /// stay coherent — with one recalc for the whole sort. Returns the changed-cell displays + circular set like
     /// [`set_cell`](Self::set_cell), plus the per-cell input rewrites for
     /// the bundle's ADR-012 journal.
     pub fn sort_range(
@@ -843,9 +907,12 @@ impl SheetSession {
             out
         };
 
-        // ── apply through the NORMAL entry lane (graph/dirty/spill
-        //    bookkeeping intact; external dependents recalc as usual).
+        // ── apply through the batch entry lane (graph/dirty/spill bookkeeping
+        //    intact; external dependents recalc ONCE for the whole sort, not
+        //    once per moved cell). Every input is parsed before anything is
+        //    written, so a failure leaves the range untouched.
         let mut edits: Vec<CellEdit> = Vec::new();
+        let mut batch = Vec::new();
         let mut changed_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
         let mut circular_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
         for i in 0..order.len() {
@@ -856,17 +923,16 @@ impl SheetSession {
                 if next == prev {
                     continue;
                 }
-                let engine = self.engine_mut();
                 // Inputs are engine-printed (`get_cell_input` round-trips by
                 // construction), so a parse error here is a bug — surface it
                 // as a boundary error rather than half-apply silently.
-                let res = engine.enter(sheet, dst_row, col, next).map_err(|e| {
+                let input = self.engine().parse_input(sheet, next).map_err(|e| {
                     SessionError(format!(
                         "sort re-entry failed at {}: {e}",
                         a1_of(dst_row, col)
                     ))
                 })?;
-                self.edited.insert((sheet, dst_row, col));
+                batch.push((sheet, dst_row, col, input));
                 edits.push(CellEdit {
                     sheet,
                     row: dst_row,
@@ -875,12 +941,18 @@ impl SheetSession {
                     next_input: next.clone(),
                 });
                 changed_set.insert((sheet, dst_row, col));
-                for c in &res.changed {
-                    changed_set.insert((c.sheet, c.row, c.col));
-                }
-                for c in &res.circular {
-                    circular_set.insert((c.sheet, c.row, c.col));
-                }
+            }
+        }
+        if !batch.is_empty() {
+            let res = self.engine_mut().set_cells(batch);
+            for c in &res.changed {
+                changed_set.insert((c.sheet, c.row, c.col));
+            }
+            for c in &res.circular {
+                circular_set.insert((c.sheet, c.row, c.col));
+            }
+            for e in &edits {
+                self.edited.insert((e.sheet, e.row, e.col));
             }
         }
 
@@ -1180,7 +1252,8 @@ impl SheetSession {
     ///   formatted display — replace edits the edit surface.
     /// - Formula cells are only touched when `opts.in_formulas`; otherwise
     ///   they are excluded from the scan entirely.
-    /// - Every rewritten input re-enters through the NORMAL `set_cell` lane.
+    /// - Every rewritten input re-enters through the batch entry lane
+    ///   (`Engine::set_cells`: one recalc for the whole replace).
     ///   A replacement that fails to parse (e.g. it breaks a formula) SKIPS
     ///   that cell — reported on `skipped`, the cell untouched, never
     ///   half-applied (`Engine::enter` parses before mutating).
@@ -1272,10 +1345,14 @@ impl SheetSession {
             }
         }
 
-        // ── phase 2: apply through the normal entry lane; skip-not-corrupt.
+        // ── phase 2: parse every candidate (a replacement that does not
+        //    parse SKIPS that cell — never half-applied), then apply the
+        //    survivors through the batch entry lane: ONE recalc for the whole
+        //    replace, not one per replaced cell.
         let mut result = ReplaceResult::default();
         let mut changed_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
         let mut circular_set: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+        let mut batch = Vec::new();
         for cand in candidates {
             if cand.spilled {
                 result.skipped.push(SkippedCell {
@@ -1286,18 +1363,12 @@ impl SheetSession {
                 });
                 continue;
             }
-            let engine = self.engine_mut();
-            match engine.enter(cand.sheet, cand.row, cand.col, &cand.next) {
-                Ok(res) => {
+            match self.engine().parse_input(cand.sheet, &cand.next) {
+                Ok(input) => {
+                    batch.push((cand.sheet, cand.row, cand.col, input));
                     self.edited.insert((cand.sheet, cand.row, cand.col));
                     result.occurrences += cand.occurrences;
                     changed_set.insert((cand.sheet, cand.row, cand.col));
-                    for c in &res.changed {
-                        changed_set.insert((c.sheet, c.row, c.col));
-                    }
-                    for c in &res.circular {
-                        circular_set.insert((c.sheet, c.row, c.col));
-                    }
                     result.edits.push(CellEdit {
                         sheet: cand.sheet,
                         row: cand.row,
@@ -1316,6 +1387,15 @@ impl SheetSession {
                         reason: format!("replacement does not parse: {e}"),
                     });
                 }
+            }
+        }
+        if !batch.is_empty() {
+            let res = self.engine_mut().set_cells(batch);
+            for c in &res.changed {
+                changed_set.insert((c.sheet, c.row, c.col));
+            }
+            for c in &res.circular {
+                circular_set.insert((c.sheet, c.row, c.col));
             }
         }
 

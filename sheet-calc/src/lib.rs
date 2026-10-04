@@ -291,17 +291,29 @@ impl Engine {
         col: u32,
         raw: &str,
     ) -> Result<RecalcResult, sheet_parser::ParseError> {
-        let input = if let Some(body) = raw.strip_prefix('=') {
+        let input = self.parse_input(sheet, raw)?;
+        Ok(self.set_cell(sheet, row, col, input))
+    }
+
+    /// Parse raw cell text the way [`Engine::enter`] does — `'='` starts a
+    /// formula, anything else is literal-detected — WITHOUT committing it.
+    /// Bulk callers parse every input first, so a parse error rejects (or
+    /// skips) a cell before anything in the batch is mutated, then commit
+    /// the survivors with one [`Engine::set_cells`].
+    pub fn parse_input(
+        &self,
+        sheet: SheetId,
+        raw: &str,
+    ) -> Result<SetInput, sheet_parser::ParseError> {
+        Ok(if let Some(body) = raw.strip_prefix('=') {
             let ctx = ModelParseCtx {
                 model: &self.model,
                 current: sheet,
             };
-            let formula = sheet_parser::parse(body, &ctx)?;
-            SetInput::Formula(formula)
+            SetInput::Formula(sheet_parser::parse(body, &ctx)?)
         } else {
             SetInput::Value(literal_of(raw))
-        };
-        Ok(self.set_cell(sheet, row, col, input))
+        })
     }
 
     /// The structured cell-entry door. Commits the input, updates the graph
@@ -313,6 +325,30 @@ impl Engine {
         col: u32,
         input: SetInput,
     ) -> RecalcResult {
+        self.stage_cell(sheet, row, col, input);
+        self.redirty_blocked_spills();
+        self.recalc_dirty()
+    }
+
+    /// The batch door: commit every input in order (exactly as a sequence of
+    /// [`Engine::set_cell`] calls would leave the model and graph), then run
+    /// ONE recalc over the union of their dirty cuts. A formula read by many
+    /// of the written cells evaluates once, not once per write — what sort,
+    /// replace-all, paste and dataset seeding need. A later input for the
+    /// same cell wins.
+    pub fn set_cells(
+        &mut self,
+        inputs: impl IntoIterator<Item = (SheetId, u32, u32, SetInput)>,
+    ) -> RecalcResult {
+        for (sheet, row, col, input) in inputs {
+            self.stage_cell(sheet, row, col, input);
+        }
+        self.redirty_blocked_spills();
+        self.recalc_dirty()
+    }
+
+    /// Commit one input to the model, graph and dirty set — no recalc.
+    fn stage_cell(&mut self, sheet: SheetId, row: u32, col: u32, input: SetInput) {
         let cref = CellRef {
             sheet,
             row,
@@ -384,9 +420,12 @@ impl Engine {
 
         // A write at this cell dirties its transitive dependents.
         self.dirty.propagate_from(cref, &self.graph);
+    }
 
-        // Any blocked spill anchor re-evaluates: removing/altering a cell may
-        // free its rectangle so it can finally spill (`sheet.calc.spill.collision`).
+    /// Any blocked spill anchor re-evaluates: removing/altering a cell may
+    /// free its rectangle so it can finally spill
+    /// (`sheet.calc.spill.collision`).
+    fn redirty_blocked_spills(&mut self) {
         for blocked in self.spills.blocked_sorted() {
             if self.graph.is_formula(blocked) {
                 self.dirty.mark(blocked);
@@ -395,8 +434,6 @@ impl Engine {
                 self.spills.unmark_blocked(blocked);
             }
         }
-
-        self.recalc_dirty()
     }
 
     /// Recalculate EVERY formula cell (marks all dirty, then runs a pass).

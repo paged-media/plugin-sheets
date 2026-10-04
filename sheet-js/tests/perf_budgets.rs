@@ -77,11 +77,11 @@ fn descending_with_sum() -> SheetSession {
     s
 }
 
-// COVERS: sort_range's apply lane (core.rs) — every moved cell re-enters
-// through Engine::enter, so the SUM over the sorted column recalcs once PER
-// MOVED CELL, reading the whole column each time. Inherent: 0 evaluations
-// (the sum of a permutation is unchanged — but whole-range invalidation
-// must evaluate it once). Batched: 1 recalc, 1 evaluation, 1000 cells.
+// COVERS: sort_range's apply lane (core.rs) — the moved cells re-enter
+// through ONE Engine::set_cells batch, so the SUM over the sorted column
+// evaluates once (whole-range invalidation must evaluate it once; the sum of
+// a permutation is unchanged). Before the batch door: one recalc and one
+// whole-column SUM per moved cell (1000 / 1 000 000 cells).
 #[test]
 fn perf_sort_1k_rows_with_sum__feat__sheet_edit_ops() {
     let mut s = descending_with_sum();
@@ -97,21 +97,22 @@ fn perf_sort_1k_rows_with_sum__feat__sheet_edit_ops() {
         "sort 1000 rows with a SUM over them",
         work,
         PerfCounters {
-            range_probes: 2_000,
-            range_keys_scanned: 1_000, // one box test per write into column A (was 2 000)
-            precedent_candidates_scanned: 1_000,
-            ranges_materialized: 1_000,
-            cells_read: 1_000_000, // the column once per moved cell — batched → 1_000
-            evaluations: 1_000,    // the SUM once per moved cell — batched → 1
-            recalcs: 1_000,        // one per moved cell — batched → 1
-            recalc_passes: 1_000,
-            cells_marked_dirty: 1_000,
+            range_probes: 1_001, // 1000 written cells + the SUM's own probe
+            range_keys_scanned: 1_000,
+            precedent_candidates_scanned: 1,
+            ranges_materialized: 1,
+            cells_read: 1_000, // the column ONCE (was 1 000 000: once per moved cell)
+            evaluations: 1,    // the SUM once (was 1 000)
+            recalcs: 1,        // one batch (was 1 000: one per moved cell)
+            recalc_passes: 1,
+            cells_marked_dirty: 1,
         },
     );
 }
 
 // COVERS: a 100×10 paste as the bundle does it today — one set_cell per
 // cell (session.ts paste lane) — under a column total per pasted column.
+// The batched lane below is what the bundle moves to (`setCells`).
 #[test]
 fn perf_paste_100x10_under_totals__feat__sheet_edit_ops() {
     let mut s = SheetSession::new();
@@ -147,8 +148,82 @@ fn perf_paste_100x10_under_totals__feat__sheet_edit_ops() {
     );
 }
 
+// COVERS: the same paste through the batch door (`set_cells`, the wasm
+// `setCells`): one recalc, each column total evaluated once.
+#[test]
+fn perf_paste_100x10_batched__feat__sheet_edit_ops() {
+    use sheet_js::core::CellInput;
+    let mut s = SheetSession::new();
+    for c in 0..10u32 {
+        let col = (b'A' + c as u8) as char;
+        s.set_cell(0, 100, c, &format!("=SUM({col}1:{col}100)"))
+            .unwrap();
+    }
+    let batch: Vec<CellInput> = (0..100u32)
+        .flat_map(|r| {
+            (0..10u32).map(move |c| CellInput {
+                sheet: 0,
+                row: r,
+                col: c,
+                input: (r + 1).to_string(),
+            })
+        })
+        .collect();
+    let (res, work) = measure(|| s.set_cells(&batch));
+    let res = res.expect("the batch applies");
+    for c in 0..10u32 {
+        assert_eq!(s.get_cell_display(0, 100, c), "5050");
+    }
+    assert_eq!(res.changed_count, 1_010); // 1000 written + 10 totals
+    check(
+        "paste 100x10 under 10 column totals, one set_cells batch",
+        work,
+        PerfCounters {
+            range_probes: 1_010,
+            range_keys_scanned: 1_010,
+            precedent_candidates_scanned: 10,
+            ranges_materialized: 10,
+            cells_read: 1_000, // each column once (per-cell lane: 100 000)
+            evaluations: 10,   // each total once (per-cell lane: 1 000)
+            recalcs: 1,        // per-cell lane: 1 000
+            recalc_passes: 1,
+            cells_marked_dirty: 10,
+        },
+    );
+}
+
+// COVERS: a batch is all-or-nothing on bad input — a parse error or a bad
+// sheet id rejects it before any cell is written.
+#[test]
+fn set_cells_rejects_whole_batch_on_bad_input__feat__sheet_edit_ops() {
+    use sheet_js::core::CellInput;
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "1").unwrap();
+    let cell = |row: u32, input: &str| CellInput {
+        sheet: 0,
+        row,
+        col: 0,
+        input: input.to_string(),
+    };
+    let err = s
+        .set_cells(&[cell(0, "5"), cell(1, "=SUM(")])
+        .expect_err("a parse error rejects the batch");
+    assert!(err.0.contains("A2"), "{}", err.0);
+    assert_eq!(s.get_cell_display(0, 0, 0), "1");
+    let bad_sheet = CellInput {
+        sheet: 9,
+        ..cell(0, "5")
+    };
+    assert!(s.set_cells(&[cell(0, "5"), bad_sheet]).is_err());
+    assert_eq!(s.get_cell_display(0, 0, 0), "1");
+    // A later input for the same cell wins.
+    s.set_cells(&[cell(0, "5"), cell(0, "6")]).unwrap();
+    assert_eq!(s.get_cell_display(0, 0, 0), "6");
+}
+
 // COVERS: replace_all over a column of values feeding a SUM (core.rs replace
-// lane) — one re-entry and one SUM recalc per replaced cell.
+// lane) — the survivors commit as one set_cells batch: one SUM recalc
+// (before: one per replaced cell).
 #[test]
 fn perf_replace_500_under_sum__feat__sheet_edit_ops() {
     let mut s = SheetSession::new();
@@ -174,15 +249,15 @@ fn perf_replace_500_under_sum__feat__sheet_edit_ops() {
         "replace 500 cells under a SUM",
         work,
         PerfCounters {
-            range_probes: 1_000,
-            range_keys_scanned: 1_000,
-            precedent_candidates_scanned: 500,
-            ranges_materialized: 500,
-            cells_read: 250_000, // N²/2-shaped — batched → 500
-            evaluations: 500,
-            recalcs: 500, // one per replaced cell — batched → 1
-            recalc_passes: 500,
-            cells_marked_dirty: 500,
+            range_probes: 501,
+            range_keys_scanned: 501,
+            precedent_candidates_scanned: 1,
+            ranges_materialized: 1,
+            cells_read: 500, // the column once (was 250 000)
+            evaluations: 1,  // was 500
+            recalcs: 1,      // one batch (was 500: one per replaced cell)
+            recalc_passes: 1,
+            cells_marked_dirty: 1,
         },
     );
 }

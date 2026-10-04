@@ -61,8 +61,8 @@ pub mod core;
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use crate::core::{
-        FindOptions, FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg, SheetSession,
-        StructuralEdit,
+        CellInput, FindOptions, FrameBoxArg, GridSceneOptions, LowerOptions, PaginateOptionsArg,
+        SheetSession, StructuralEdit,
     };
     use wasm_bindgen::prelude::*;
 
@@ -130,6 +130,17 @@ mod wasm {
                 .session
                 .set_cell(sheet, row, col, input)
                 .map_err(map_err)?;
+            to_js(&result)
+        }
+
+        /// Commit a batch of inputs `[{sheet,row,col,input}]` with ONE
+        /// recalc. Every input is validated and parsed first: a bad sheet id
+        /// or a parse error rejects the whole batch (boundary error), the
+        /// workbook untouched. Returns the slim `{changedCount, circular}`.
+        pub fn set_cells(&mut self, inputs: JsValue) -> Result<JsValue, JsValue> {
+            let inputs: Vec<CellInput> = serde_wasm_bindgen::from_value(inputs)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let result = self.session.set_cells(&inputs).map_err(map_err)?;
             to_js(&result)
         }
 

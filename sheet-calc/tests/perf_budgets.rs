@@ -201,8 +201,44 @@ fn perf_running_total_build__feat__sheet_calc_engine() {
             ranges_materialized: 2_000,
             cells_read: 2_001_000, // N²/2 — inherent for SUM-by-scan (copies: 2_001_000 → 0)
             evaluations: 2_000,
-            recalcs: 4_000, // one per entry — a batch setCells door → 1
+            recalcs: 4_000, // one per entry — the batched scenario below: 1
             recalc_passes: 2_000,
+            cells_marked_dirty: 2_000,
+        },
+    );
+}
+
+// COVERS: the same build through the batch door (Engine::set_cells): one
+// recalc, every total evaluated once, no probe meets a box.
+#[test]
+fn perf_running_total_build_batched__feat__sheet_calc_engine() {
+    let mut e = engine();
+    let work = measure(|| {
+        let mut batch = Vec::new();
+        for i in 0..N {
+            batch.push((0, i, 0, e.parse_input(0, &(i + 1).to_string()).unwrap()));
+        }
+        for i in 0..N {
+            let f = e.parse_input(0, &format!("=SUM($A$1:A{})", i + 1)).unwrap();
+            batch.push((0, i, 1, f));
+        }
+        e.set_cells(batch);
+    });
+    let n = f64::from(N);
+    assert_eq!(num(&e, N - 1, 1), n * (n + 1.0) / 2.0);
+    assert_eq!(num(&e, 0, 1), 1.0);
+    check(
+        "running-total n=2000, build in one set_cells batch",
+        work,
+        PerfCounters {
+            range_probes: 4_000,
+            range_keys_scanned: 0,
+            precedent_candidates_scanned: 2_000,
+            ranges_materialized: 2_000,
+            cells_read: 2_001_000, // SUM's own scan
+            evaluations: 2_000,
+            recalcs: 1, // per-entry lane: 4 000
+            recalc_passes: 1,
             cells_marked_dirty: 2_000,
         },
     );
