@@ -55,7 +55,8 @@ use crate::opc::{ContentTypes, ModeledKind, OpcContainer, PartEntry};
 use crate::sheet_doc::SheetBinding;
 use sheet_core::value::CellValue;
 use sheet_core::{col_to_a1, SheetId, SheetModel};
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 
 /// The `calcChain.xml` part name (always dropped).
@@ -87,6 +88,13 @@ pub fn save(
     let opts: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
+    // Worksheet part name → binding, once (was a scan per dirty sheet).
+    let mut by_part: HashMap<&str, &SheetBinding> = HashMap::with_capacity(bindings.len());
+    for b in bindings {
+        // First binding wins, matching the scan it replaces.
+        by_part.entry(b.part_name.as_str()).or_insert(b);
+    }
+
     for part in &container.parts {
         let name = part.name();
 
@@ -103,8 +111,10 @@ pub fn save(
             continue;
         }
 
-        let bytes: Vec<u8> = match part {
-            PartEntry::Opaque { bytes, .. } => bytes.clone(),
+        // Untouched parts are BORROWED (lazy-verbatim without a copy); only
+        // re-encoded/rebuilt parts allocate.
+        let bytes: Cow<'_, [u8]> = match part {
+            PartEntry::Opaque { bytes, .. } => Cow::Borrowed(bytes),
             PartEntry::Modeled {
                 kind,
                 raw,
@@ -114,36 +124,33 @@ pub fn save(
                 match kind {
                     ModeledKind::ContentTypes => {
                         if drop_calc_chain {
-                            rebuild_content_types(&container.content_types)
+                            Cow::Owned(rebuild_content_types(&container.content_types))
                         } else {
-                            raw.clone()
+                            Cow::Borrowed(raw)
                         }
                     }
                     ModeledKind::WorkbookRels => {
                         if drop_calc_chain {
-                            strip_calc_chain_rel(raw)?
+                            Cow::Owned(strip_calc_chain_rel(raw)?)
                         } else {
-                            raw.clone()
+                            Cow::Borrowed(raw)
                         }
                     }
                     ModeledKind::Worksheet => {
                         if *dirty {
-                            let binding = bindings
-                                .iter()
-                                .find(|b| &b.part_name == name)
-                                .ok_or_else(|| {
-                                    XlsxError::Structure(format!(
-                                        "dirty worksheet {name} has no binding"
-                                    ))
-                                })?;
-                            encode_worksheet(model, binding, formula_texts)?
+                            let binding = by_part.get(name.as_str()).copied().ok_or_else(|| {
+                                XlsxError::Structure(format!(
+                                    "dirty worksheet {name} has no binding"
+                                ))
+                            })?;
+                            Cow::Owned(encode_worksheet(model, binding, formula_texts)?)
                         } else {
-                            raw.clone()
+                            Cow::Borrowed(raw)
                         }
                     }
                     // Workbook / SharedStrings / Styles: verbatim in T0
                     // (the model never mutates them through this writer yet).
-                    _ => raw.clone(),
+                    _ => Cow::Borrowed(raw),
                 }
             }
         };

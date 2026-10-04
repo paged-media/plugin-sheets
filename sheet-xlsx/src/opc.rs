@@ -45,6 +45,7 @@
 //! `calcChain.xml` override without re-flowing the rest.
 
 use crate::error::XlsxError;
+use std::collections::HashMap;
 use std::io::Read;
 
 /// Logical OPC content-type for the `[Content_Types].xml` part name.
@@ -212,6 +213,10 @@ pub struct OpcContainer {
     /// True once a structural change (calcChain drop, sheet re-encode) made
     /// the container diverge from the byte-for-byte original.
     pub dirty: bool,
+    /// Part name → index into `parts`, built on read (lookups were a linear
+    /// scan per call). `parts` is public, so every lookup verifies the hit
+    /// and falls back to the scan if the vector was reshaped behind it.
+    index: HashMap<String, usize>,
 }
 
 impl OpcContainer {
@@ -262,29 +267,45 @@ impl OpcContainer {
         let content_types = content_types
             .ok_or_else(|| XlsxError::Structure(format!("missing {CONTENT_TYPES_PART}")))?;
 
+        // First occurrence wins, matching the scan it replaces.
+        let mut index = HashMap::with_capacity(parts.len());
+        for (i, p) in parts.iter().enumerate() {
+            index.entry(p.name().to_owned()).or_insert(i);
+        }
         Ok(OpcContainer {
             parts,
             content_types,
             dirty: false,
+            index,
         })
+    }
+
+    /// The index of the part named `name`: the map's answer when it still
+    /// names that part, else a scan.
+    fn position(&self, name: &str) -> Option<usize> {
+        match self.index.get(name) {
+            Some(&i) if self.parts.get(i).is_some_and(|p| p.name() == name) => Some(i),
+            _ => self.parts.iter().position(|p| p.name() == name),
+        }
     }
 
     /// Find a part by exact name.
     pub fn part(&self, name: &str) -> Option<&PartEntry> {
-        self.parts.iter().find(|p| p.name() == name)
+        self.position(name).map(|i| &self.parts[i])
     }
 
     /// Find a part by exact name, mutably.
     pub fn part_mut(&mut self, name: &str) -> Option<&mut PartEntry> {
-        self.parts.iter_mut().find(|p| p.name() == name)
+        self.position(name).map(|i| &mut self.parts[i])
     }
 
     /// Promote the part `name` (if present and still `Opaque`) to a
-    /// `Modeled` part of `kind`. No-op if absent or already modeled.
+    /// `Modeled` part of `kind`. No-op if absent or already modeled. Moves the
+    /// bytes (no copy).
     pub fn promote(&mut self, name: &str, kind: ModeledKind) {
-        if let Some(idx) = self.parts.iter().position(|p| p.name() == name) {
-            if let PartEntry::Opaque { name, bytes } = &self.parts[idx] {
-                let (name, bytes) = (name.clone(), bytes.clone());
+        if let Some(idx) = self.position(name) {
+            if let PartEntry::Opaque { name, bytes } = &mut self.parts[idx] {
+                let (name, bytes) = (std::mem::take(name), std::mem::take(bytes));
                 self.parts[idx] = PartEntry::Modeled {
                     name,
                     kind,

@@ -42,6 +42,8 @@
 //! is chosen by CONTENT, not by name or extension: every file that is a ZIP
 //! and opens as a workbook is loaded once, and the one with the most used
 //! cells wins. Without the corpus mount the bench is skipped with a note.
+//! The same workbook drives the save benches (verbatim save, and
+//! edit → save → edit).
 
 use std::path::{Path, PathBuf};
 
@@ -133,6 +135,23 @@ fn load_corpus(c: &mut Criterion) {
     g.sample_size(10);
     g.bench_function("load_corpus_largest_authored", |b| {
         b.iter(|| SheetSession::load_xlsx(&bytes).expect("it opened during selection"))
+    });
+    // Save with no edit: every part re-emits verbatim (the writer's
+    // lazy-verbatim lane — borrowed since 2026-10, cloned before).
+    let mut s = SheetSession::load_xlsx(&bytes).expect("it opened during selection");
+    g.bench_function("save_corpus_largest_authored", |b| {
+        b.iter(|| s.save_xlsx().expect("saves"))
+    });
+    // One edit, save, then an edit no formula reads: before 2026-10 the save
+    // rebuilt the engine all-dirty, so that edit re-evaluated every formula.
+    let mut flip = false;
+    g.bench_function("edit_save_edit_corpus_largest_authored", |b| {
+        b.iter(|| {
+            flip = !flip;
+            s.set_cell(0, 0, 0, if flip { "x" } else { "y" }).unwrap();
+            s.save_xlsx().expect("saves");
+            s.set_cell(0, 0, 0, if flip { "y" } else { "x" }).unwrap();
+        })
     });
     g.finish();
 }
