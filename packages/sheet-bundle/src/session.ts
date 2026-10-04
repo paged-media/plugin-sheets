@@ -36,6 +36,7 @@ import {
   gridSceneToSceneLayer,
   hitCell,
   hitFillHandle,
+  parseBinding,
   workbookPalette,
   type ChartGeometry,
   type FunctionEntry,
@@ -867,9 +868,23 @@ export function createWorkbookSession(
     prev: string;
     next: string;
     batch?: number;
+    /** The workbook content version right after this entry committed —
+     *  what a placed frame's binding carries once the edit is refreshed
+     *  onto the page (the document-undo follower keys on it). */
+    rev?: number;
   }[] = [];
   let journalCursor = 0;
   let nextJournalBatch = 1;
+  // ADR-012 Tier 1 — while a sheet frame is entered, Cmd-Z stops at the
+  // journal position the session began at (the modal boundary); the
+  // entries before it belong to the document's history.
+  let sessionFloor = 0;
+  // Tier 2 — refreshes the session's edits would schedule are held while
+  // the frame is entered (the in-frame grid covers it) and land as one
+  // refresh on exit; `suppressRefresh` keeps a document-driven unwind from
+  // writing the page the document just restored.
+  let refreshDeferred = false;
+  let suppressRefresh = false;
 
   /** Write one cell through the engine AND journal it (the shared Tier-1
    *  capture for `editCell` + the in-frame commit). Returns false when
@@ -893,6 +908,7 @@ export function createWorkbookSession(
     editJournal.push({ sheet, row, col, prev, next: input });
     journalCursor = editJournal.length;
     markEdited();
+    stampRev();
     return true;
   }
 
@@ -935,6 +951,65 @@ export function createWorkbookSession(
     return prev;
   }
 
+  /** Stamp the content version on the entries a commit just pushed. */
+  function stampRev(): void {
+    for (let i = journalCursor - 1; i >= 0 && editJournal[i].rev === undefined; i--) {
+      editJournal[i].rev = revision;
+    }
+  }
+
+  /** Un/re-apply ONE journal step (a batched group whole) through one
+   *  batch write when the engine has the door. False when exhausted or the
+   *  write fails. Emits + re-renders. */
+  function stepJournal(dir: "undo" | "redo"): boolean {
+    const engine = state.engine;
+    if (!engine) return false;
+    const undo = dir === "undo";
+    if (undo ? journalCursor === 0 : journalCursor >= editJournal.length) return false;
+    const first = undo ? journalCursor - 1 : journalCursor;
+    const group = editJournal[first].batch;
+    let last = first;
+    if (group !== undefined) {
+      while (undo ? last > 0 && editJournal[last - 1].batch === group
+                  : last + 1 < editJournal.length && editJournal[last + 1].batch === group) {
+        last += undo ? -1 : 1;
+      }
+    }
+    const entries = undo
+      ? editJournal.slice(last, first + 1).reverse()
+      : editJournal.slice(first, last + 1);
+    const writes = entries.map((e) => ({
+      sheet: e.sheet,
+      row: e.row,
+      col: e.col,
+      input: undo ? e.prev : e.next,
+    }));
+    let done = false;
+    if (engine.setCells && writes.length > 1) {
+      try {
+        engine.setCells(writes);
+        done = true;
+      } catch (err) {
+        host.log.debug(`${dir}: batch write refused — per cell`, err);
+      }
+    }
+    if (!done) {
+      for (const w of writes) {
+        try {
+          writeOneCell(engine, w.sheet, w.row, w.col, w.input);
+        } catch (err) {
+          host.log.error(`${dir}: engine write failed`, err);
+          return false;
+        }
+      }
+    }
+    journalCursor = undo ? last : last + 1;
+    markEdited();
+    emitter.emit({ kind: "cells", regions: regionsOf(entries) });
+    void submitInFrameGrid();
+    return true;
+  }
+
   /** Journal a BULK op's per-cell rewrites (the engine's `edits` lane —
    *  prev/next already faithful inputs) as ONE grouped batch: a single
    *  undo/redo step for the whole sort / replace-all. No-op when the op
@@ -955,6 +1030,7 @@ export function createWorkbookSession(
     }
     journalCursor = editJournal.length;
     markEdited();
+    stampRev();
   }
 
   // ── K-1 in-frame cell editor (shared by the public verbs and the key
@@ -1032,6 +1108,77 @@ export function createWorkbookSession(
     cellEdit = null;
     void submitInFrameGrid();
   }
+
+  // ── Wave 5 — the document's undo reaches the workbook ────────────────
+  //
+  // Sheet edits reach the page as refreshes: document mutations that
+  // re-stamp each placed frame's binding with the workbook content version
+  // they show. A host Cmd-Z OUTSIDE the modal session undoes those
+  // mutations; when it takes a binding back to an older version, the
+  // workbook follows — the journal unwinds to that version (redo: forward
+  // again), without writing the page the document just restored.
+
+  async function followDocumentHistory(): Promise<void> {
+    if (!state.engine || loweredTables.size === 0 || !host.document.getMetadata) return;
+    let target: number | null = null;
+    let from: number | null = null;
+    const moved: string[] = [];
+    for (const [frameId, info] of loweredTables) {
+      if (info.contentVersion === undefined) continue;
+      let shown: number | undefined;
+      try {
+        const env = await host.document.getMetadata({ kind: "textFrame", id: frameId } as ElementId);
+        shown = parseBinding(env)?.data.contentVersion;
+      } catch (err) {
+        host.log.debug("document-undo follower: binding read failed", err);
+        continue;
+      }
+      if (shown === undefined || shown === info.contentVersion) continue;
+      moved.push(frameId);
+      target ??= shown;
+      from ??= info.contentVersion;
+    }
+    if (target === null || from === null) return;
+    suppressRefresh = true;
+    try {
+      if (target < from) {
+        while (
+          journalCursor > 0 &&
+          (editJournal[journalCursor - 1].rev ?? 0) > target &&
+          stepJournal("undo")
+        );
+      } else {
+        while (
+          journalCursor < editJournal.length &&
+          (editJournal[journalCursor].rev ?? Infinity) <= target &&
+          stepJournal("redo")
+        );
+      }
+    } finally {
+      suppressRefresh = false;
+    }
+    // The page now shows `target`; the next refresh diffs against what was
+    // last written (rewriting a cell the document already restored is a
+    // no-op), so the baseline content stays.
+    for (const frameId of moved) {
+      const info = loweredTables.get(frameId);
+      if (!info) continue;
+      const next = { ...info, contentVersion: target };
+      loweredTables.set(frameId, next);
+      if (lastLoweredTable?.frameId === frameId) lastLoweredTable = next;
+    }
+  }
+
+  let historyChain: Promise<void> = Promise.resolve();
+  const historySub =
+    typeof host.document?.onDidChange === "function"
+      ? host.document.onDidChange((e) => {
+          if (e.kind !== "undoApplied" && e.kind !== "redoApplied") return;
+          historyChain = historyChain.then(followDocumentHistory).catch((err) => {
+            host.log.warn("document-undo follower failed", err);
+          });
+        })
+      : null;
 
   // ── Wave 5 — selection model, bulk writes, fill, clear, find, keys ──
 
@@ -1633,6 +1780,11 @@ export function createWorkbookSession(
     if (loweredTables.size === 0 && placedCharts.length === 0 && chains.size === 0) {
       return;
     }
+    if (suppressRefresh) return;
+    if (inFrameActive) {
+      refreshDeferred = true;
+      return;
+    }
     if (refreshTimer !== null) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => {
       refreshTimer = null;
@@ -1968,6 +2120,7 @@ export function createWorkbookSession(
         wPt,
         hPt,
       };
+      if (!inFrameActive) sessionFloor = journalCursor; // the modal boundary
       inFrameActive = true;
       const ok = await submitInFrameGrid();
       if (!ok) host.log.warn("showGridInFrame: grid windowing failed");
@@ -2016,6 +2169,11 @@ export function createWorkbookSession(
       fillPreview = null;
       inFrameActive = false;
       if (lastFrameId) void sceneSurface?.clear(lastFrameId);
+      // Tier 2 — the session's edits reach the page as ONE refresh now.
+      if (refreshDeferred) {
+        refreshDeferred = false;
+        void refreshPlacements();
+      }
     },
 
     listCharts() {
@@ -2359,64 +2517,20 @@ export function createWorkbookSession(
         void submitInFrameGrid();
         return true;
       }
-      if (journalCursor === 0 || !state.engine) return false;
-      // A batched group (sort / replace-all) unwinds WHOLE — one undo step;
-      // plain entries (no batch) unwind singly. Cells in a batch are
-      // disjoint, so reverse-order re-entry is order-independent.
-      const group = editJournal[journalCursor - 1].batch;
-      const undone: { sheet: number; row: number; col: number }[] = [];
-      do {
-        const entry = editJournal[journalCursor - 1];
-        undone.push(entry);
-        try {
-          state.engine.setCell(entry.sheet, entry.row, entry.col, entry.prev);
-        } catch (err) {
-          host.log.error("undoCellEdit: engine setCell failed", err);
-          return false;
-        }
-        markEdited();
-        journalCursor -= 1;
-      } while (
-        group !== undefined &&
-        journalCursor > 0 &&
-        editJournal[journalCursor - 1].batch === group
-      );
-      emitter.emit({ kind: "cells", regions: regionsOf(undone) });
-      void submitInFrameGrid();
-      return true;
+      // A batched group (sort / replace-all / paste / fill / clear) unwinds
+      // WHOLE — one undo step, one batch write. In an entered frame the
+      // session's start is the floor (ADR-012: the modal boundary).
+      if (inFrameActive && journalCursor <= sessionFloor) return false;
+      return stepJournal("undo");
     },
 
     redoCellEdit() {
-      if (cellEdit !== null || journalCursor >= editJournal.length) {
-        return false;
-      }
-      if (!state.engine) return false;
-      // Mirror of undo: a batched group re-applies whole.
-      const group = editJournal[journalCursor].batch;
-      const redone: { sheet: number; row: number; col: number }[] = [];
-      do {
-        const entry = editJournal[journalCursor];
-        redone.push(entry);
-        try {
-          state.engine.setCell(entry.sheet, entry.row, entry.col, entry.next);
-        } catch (err) {
-          host.log.error("redoCellEdit: engine setCell failed", err);
-          return false;
-        }
-        markEdited();
-        journalCursor += 1;
-      } while (
-        group !== undefined &&
-        journalCursor < editJournal.length &&
-        editJournal[journalCursor].batch === group
-      );
-      emitter.emit({ kind: "cells", regions: regionsOf(redone) });
-      void submitInFrameGrid();
-      return true;
+      if (cellEdit !== null) return false;
+      return stepJournal("redo");
     },
 
     canUndoCellEdit() {
-      return cellEdit !== null || journalCursor > 0;
+      return cellEdit !== null || journalCursor > (inFrameActive ? sessionFloor : 0);
     },
 
     canRedoCellEdit() {
@@ -3267,6 +3381,7 @@ export function createWorkbookSession(
     },
 
     dispose() {
+      historySub?.dispose();
       forgetPlacements();
       // Flush unsaved edits BEFORE the engine is freed: the bytes are
       // taken synchronously here; the write finishes in the background.

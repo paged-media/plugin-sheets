@@ -491,13 +491,17 @@ export function activate(host: BundleHost): BundleHandle {
       // routes Cmd-Z / Cmd-Shift-Z (and Edit/Undo) to the session's
       // journal of committed cell edits (workbook grain), never the
       // document stack; the modal exit is the document's one-step grain
-      // (Tier 2). The journal dies with the session (cleared on exit).
+      // (Tier 2). In-session Cmd-Z stops at the session's start.
       onUndo: () => session.undoCellEdit(),
       onRedo: () => session.redoCellEdit(),
       onCanUndo: () => session.canUndoCellEdit(),
       onCanRedo: () => session.canRedoCellEdit(),
+      // Wave 5 — the journal SURVIVES the exit: the session's edits land on
+      // the page as one refresh (Tier 2), and a later host Cmd-Z that undoes
+      // that refresh unwinds the workbook with it (the session's
+      // document-undo follower). Inside the next session Cmd-Z stops at its
+      // own start.
       onExit: () => {
-        session.clearCellEditJournal();
         session.hideGridInFrame();
       },
     });

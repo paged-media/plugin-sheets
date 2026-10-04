@@ -244,9 +244,11 @@ describe("sheet_grid_clipboard_paste_range: the setCells batch door [sheet.edit.
       ],
     ]);
     expect(setCellCalls).toHaveLength(0);
-    // One undo restores the four prior (empty) inputs.
+    // One undo restores the four prior (empty) inputs — in ONE batch too
+    // (Wave 5: a group unwinds through one setCells).
     expect(session.undoCellEdit()).toBe(true);
-    expect(setCellCalls.map((c) => c[3])).toEqual(["", "", "", ""]);
+    expect(batches).toHaveLength(2);
+    expect(batches[1].map((c) => c.input)).toEqual(["", "", "", ""]);
   });
 
   it("falls back to per-cell writes when the batch is refused", async () => {
