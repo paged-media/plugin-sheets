@@ -74,6 +74,7 @@ function fakeDoc(opts: {
 } = {}) {
   const mutations: Mutation[] = [];
   const stories: string[] = opts.chain ? [opts.chain.storyId] : [];
+  const frameOfStory = new Map<string, string>();
   const tree: { id: ElementId; kind: string; label: string }[] = [];
   let seq = 0;
   const host = {
@@ -91,7 +92,9 @@ function fakeDoc(opts: {
         return [{ kind: "page", label: "p", children: [...tree] }] as never;
       },
       async frameChain(storyId: string) {
-        return opts.chain && storyId === opts.chain.storyId ? opts.chain.links : [];
+        if (opts.chain && storyId === opts.chain.storyId) return opts.chain.links;
+        const frame = frameOfStory.get(storyId);
+        return frame ? ([{ frameId: frame, next: null, overflow: false }] as never) : [];
       },
       async elementGeometry(ids: ElementId[]) {
         return ids.map((id) => ({
@@ -111,16 +114,37 @@ function fakeDoc(opts: {
         };
         if (m.op === "batch") {
           let first: ElementId | null = null;
+          // C-15 handles: `$h:NAME` in a storyId position is the story the
+          // bound frame insert minted; the reply names the LAST mint when
+          // the batch binds handles (core's contract), else the first.
+          const handles = new Map<string, string>();
+          let lastStory: string | null = null;
+          let last: ElementId | null = null;
           for (const o of m.args.ops) {
             if (o.op === "insertTextFrame") {
               const id = created("textFrame");
               first ??= id;
-              stories.push(`Story/s${seq}`);
+              last = id;
+              lastStory = `Story/s${seq}`;
+              stories.push(lastStory);
+              frameOfStory.set(lastStory, id.id as string);
             } else if (o.op === "insertPath") {
               first ??= created("polygon");
+            } else if (o.op === "bindCreated" && lastStory) {
+              handles.set(`$h:${o.args.handle}`, lastStory);
+            } else if (o.op === "insertTable") {
+              seq += 1;
+              last = {
+                kind: "table",
+                id: { story_id: handles.get(o.args.storyId) ?? o.args.storyId, table_id: `t${seq}` },
+              } as ElementId;
             }
           }
-          return { applied: true, createdId: first, pageIds: ["Page/u1"] };
+          return {
+            applied: true,
+            createdId: handles.size > 0 ? last : first,
+            pageIds: ["Page/u1"],
+          };
         }
         if (m.op === "insertTable") {
           seq += 1;

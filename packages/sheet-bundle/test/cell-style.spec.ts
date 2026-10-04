@@ -125,9 +125,13 @@ function fakeHost(opts?: { rejectApply?: boolean; cellEntries?: unknown[] }) {
           const ops = (m as { args: { ops: Array<{ op: string }> } }).args.ops;
           if (ops.some((o) => o.op === "insertTextFrame")) {
             frameInserted = true;
+            // The one-batch placement reports the LAST id it minted: the
+            // table (its structured id carries the frame's story).
             return {
               applied: true,
-              createdId: { kind: "textFrame", id: "frame1" } as ElementId,
+              createdId: ops.some((o) => o.op === "insertTable")
+                ? ({ kind: "table", id: { story_id: "Story/s1", table_id: "table1" } } as ElementId)
+                : ({ kind: "textFrame", id: "frame1" } as ElementId),
               pageIds: ["Page/u1"],
             };
           }
@@ -150,6 +154,9 @@ function fakeHost(opts?: { rejectApply?: boolean; cellEntries?: unknown[] }) {
       },
       async hitTest() {
         return { storyId: "Story/s1", frameId: "frame1" } as never;
+      },
+      async frameChain() {
+        return [{ frameId: "frame1", next: null, overflow: false }] as never;
       },
     },
     text: {

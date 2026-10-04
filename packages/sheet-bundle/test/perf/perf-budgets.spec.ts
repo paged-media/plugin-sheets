@@ -69,6 +69,7 @@ import {
   WASM,
   authorWorkbook,
   blankPageIdml,
+  exportedTableCells,
   openHost,
   settle,
   sheetHost,
@@ -185,11 +186,12 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     return e;
   };
 
-  // COVERS: lower.ts placement — phase 1 (frame + binding batch), the
-  // stories diff, column measurement, insertTable, then the cell pour.
-  // 1000 cells → 1000 insertText mutates, one awaited round trip each
-  // (lower.ts pourCellContent). Core has applied text inside a batch as one
-  // undo step since v0.61, so the pour → 1 batch is plugin-side (Wave 2).
+  // COVERS: lower.ts placement — ONE batch for the frame + binding + table
+  // (C-15 handles: the table's storyId is `$h:f`), the frame read back off
+  // the table's story chain, column measurement, then ONE batch for the
+  // whole content (pour + decor + text styles; core takes text ops in a
+  // batch since v0.61, one rebuild per batch since v0.63). Was 1003
+  // mutates: one awaited round trip — and one rebuild — per cell.
   it("place a 50×20 range as a native table [sheet.lower.page]", async () => {
     const s = await open(
       await authorWorkbook(50, 20, (r, c) => `r${r}c${c}`),
@@ -198,14 +200,26 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     const frame = await s.lowerSelection();
     await settle();
     const work = take("place 50x20");
-    // Behaviour: a frame landed and every cell's text was poured, once.
+    // Behaviour: a frame landed, every cell's text was poured once, and
+    // the document the core exports holds exactly that text, cell by cell.
     expect(frame).not.toBeNull();
-    expect(work.mutations.filter((m) => m.op === "insertText").length).toBe(1000);
+    const childOps = (op: string) =>
+      work.mutations.reduce((n, m) => n + (m.kinds[op] ?? 0), 0);
+    expect(childOps("insertText")).toBe(1000);
+    expect(childOps("insertTable")).toBe(1);
+    const tables = await exportedTableCells(h);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].size).toBe(1000);
+    for (const [r, c] of [[0, 0], [0, 19], [49, 0], [49, 19], [17, 7]]) {
+      expect(tables[0].get(`${r}:${c}`)).toBe(`r${r}c${c}`);
+    }
     expectBudget("place 50x20", work, {
       "document.meta": 1,
-      "document.collection": 3,
+      "document.frameChain": 1, // the frame, read back off the table's story
       "text.measureString": 20,
-      "document.mutate": 1003, // → 4 (frame batch, insertTable, ONE pour batch, decor)
+      // → 1 once core resolves a table handle in a tableId position
+      // (core 0eff96b, unreleased): frame + table + content, one batch.
+      "document.mutate": 2,
       "selection.set": 1,
       // Wave 4: the PAGE door (styles + conditional formatting) replaces the
       // key-0 door one for one; the placement reads the selection (an
@@ -213,13 +227,22 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "engine.getRangePage": 1,
       "selection.get": 1,
       "engine.listSheets": 1,
-      "=mutations": 1003,
+      "document.collection": 1, // the swatch read before the fill mints
+      "=mutations": 2,
       "=engineCalls": 2,
-      "=reads": 4,
+      "=reads": 3,
       "=bytesWritten": 0,
       "=sceneItems": 0,
       "=rejected": 0,
     });
+    // Undo: the content is ONE step (all 1000 cells at once), the frame
+    // and its table the other — two steps where it was 1003.
+    await raw.document.undo();
+    const emptied = await exportedTableCells(h);
+    expect(emptied).toHaveLength(1);
+    expect([...emptied[0].values()].every((t) => t === "")).toBe(true);
+    await raw.document.undo();
+    expect(await exportedTableCells(h)).toHaveLength(0);
   });
 
   // COVERS: the K-1 in-frame edit session (session.ts typeCellChar /

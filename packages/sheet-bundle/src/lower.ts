@@ -23,15 +23,19 @@
 //
 // TWO LANES:
 //
-//   native-table (DEFAULT) — three phases:
-//     Phase 1 — mutate(batch): insertTextFrame + setPluginMetadata
-//       (binding) as ONE undoable step; the outcome mints the frame id.
-//       No drawn rules: the table carries its own cell edges.
-//     Phase 2 — resolve the frame's storyId, then mutate(insertTable)
-//       sized by font metrics (S-13); the outcome mints the tableId.
-//     Phase 3 — mutate(batch): the cell pour (insertText per cell via
-//       TextCellAddr) + decor (setCellSpan per merge, cellFillColor +
-//       cell*EdgeStrokeWeight via tableCell-scoped setElementProperty).
+//   native-table (DEFAULT) — two batches:
+//     1 — mutate(batch): insertTextFrame + bindCreated + setPluginMetadata
+//       (binding) + insertTable into the frame's story (`$h:f`, C-15
+//       handles), sized by font metrics (S-13); the outcome mints the
+//       table, whose id carries the story. No drawn rules: the table
+//       carries its own cell edges.
+//     2 — mutate(batch): the table's whole content — swatch + character-
+//       style mints, the cell pour (insertText per cell via TextCellAddr;
+//       core takes text ops in a batch since v0.61), the decor (setCellSpan
+//       per merge, cellFillColor + cell*EdgeStrokeWeight via tableCell-
+//       scoped setElementProperty) and the cell text styles.
+//     A host that refuses the first batch gets the PHASED placement (frame
+//     batch, insertTable, content batch).
 //
 //   tab-text (EXPLICIT FALLBACK, spec §2.2 degradation) — the retained
 //     two-phase lane (lower-to-mutations.ts): frame + drawn rules +
@@ -51,6 +55,7 @@ import type {
   BundleHost,
   Disposable,
   ElementId,
+  Mutation,
   PageId,
 } from "@paged-media/plugin-api";
 import {
@@ -226,34 +231,32 @@ function frameIdOf(id: ElementId): string | null {
   return null;
 }
 
-/** Phase 3 — pour a native table's cell content in the engine's TWO apply
- *  lanes, NOT one batch. The cell text is a TEXT edit (`insertText` with the
- *  `TextCellAddr` qualifier); the decor (merges → `setCellSpan`, style fills
- *  + grid rules → `tableCell`-scoped `setElementProperty`) is the FRAME /
- *  property lane. `Operation::Batch` carries only frame ops — text isn't an
- *  Operation — so combining them made the engine reject the WHOLE batch
- *  (`Mutation::Batch` NotImplemented), leaving the table BLANK. Pour each
- *  cell's text via its own mutate (text lane), then the decor as ONE batch
- *  (frame lane). The two-lane split costs the single-undo atomicity the
- *  combined batch had, but it is the only shape the engine applies. */
-async function pourCellContent(
+/** Everything a native table's content needs, as ONE op list: the swatch
+ *  mints (cell fills + cell text colours), the character-style mints, the
+ *  cell text pour, the decor (merges → `setCellSpan`, style fills + grid
+ *  rules → `tableCell`-scoped `setElementProperty`) and the per-cell
+ *  character-style applies.
+ *
+ *  Core applies text ops inside a `Mutation::Batch` as one undo step
+ *  since v0.61 and rebuilds once per batch since v0.63, so the content of
+ *  a table is ONE `mutate` (it was one per cell: 1000 round trips and
+ *  1000 rebuilds for a 50×20 range).
+ *
+ *  The mints LEAD: a `cellFillColor` colorRef / an `applyStyle` names an
+ *  id, and a cell whose swatch does not exist is left UNPAINTED by the
+ *  renderer. Reads happen only when there is something to mint, and a
+ *  FAILED read mints nothing (`null` known-set): core refuses a duplicate
+ *  `createSwatch` / `createCharacterStyle`, and the refusal would fail the
+ *  whole batch — text included. Fill and text swatches never collide
+ *  (their palette ids carry the facet). */
+async function tableContentOps(
   host: BundleHost,
   content: LoweredContent,
   storyId: string,
   tableId: string,
-): Promise<void> {
-  // TEXT lane — one InsertText per non-empty cell (insertText can't ride an
-  // Operation::Batch, so it can't be batched with the decor or each other).
+): Promise<{ ops: Mutation[]; styleOps: Mutation[] }> {
   const pour = tableCellOps(content, storyId, tableId);
   const pourOps = pour.op === "batch" ? pour.args.ops : [pour];
-  for (const op of pourOps) {
-    const r = await host.document.mutate(op);
-    if (!r.applied) host.log.warn("lower: cell text pour rejected", r);
-  }
-  // FRAME lane — the cell-fill swatch mints + the decor (spans + fills +
-  // edge strokes) as ONE batch. The mints LEAD: a `cellFillColor` colorRef
-  // names a swatch id, and a cell whose swatch does not exist is left
-  // UNPAINTED by the renderer (verified by render, not by reading).
   const decor = tableDecorOps(content, storyId, tableId);
   if (decor.unmappedRules > 0) {
     host.log.warn(
@@ -261,28 +264,50 @@ async function pourCellContent(
         "(not drawn natively)",
     );
   }
-  // The swatch READ only happens when there is something to mint (an
-  // unstyled region — what `getRangeLowered` emits today — costs no extra
-  // host round-trip). `readKnownSwatchIds` returns `null` when the read
-  // FAILED, and `swatchMintOps` mints nothing for `null`: minting blind
-  // risks a duplicate, and core's refusal of a duplicate `createSwatch`
-  // fails the WHOLE batch, taking the fills and edge strokes with it. So a
-  // failed read degrades the fills to unpainted (the pre-fix behaviour),
-  // never to lost decor. Same ruling the ADR-023 Swatches provider makes
-  // before an `editSwatch`.
-  const wanted = cellFillSwatchOps(content);
-  const mints =
-    wanted.length === 0
-      ? []
-      : cellFillSwatchOps(content, await readKnownSwatchIds(host));
-  const ops = [...mints, ...decor.ops];
+  const wantsFills = cellFillSwatchOps(content).length > 0;
+  const wantsText = cellCharacterStyles(content).size > 0;
+  const [swatches, styles] = await Promise.all([
+    wantsFills || wantsText ? readKnownSwatchIds(host) : Promise.resolve(undefined),
+    wantsText ? readKnownCharacterStyleIds(host) : Promise.resolve(null),
+  ]);
+  const fillMints = wantsFills ? cellFillSwatchOps(content, swatches) : [];
+  const styleOps = wantsText
+    ? [
+        ...cellTextSwatchOps(content, swatches),
+        ...cellCharacterStyleMints(content, styles),
+        ...cellCharacterStyleApplies(content, storyId, tableId),
+      ]
+    : [];
+  return { ops: [...fillMints, ...pourOps, ...decor.ops], styleOps };
+}
+
+/** Pour a native table's content (see {@link tableContentOps}) as ONE
+ *  `mutate`. Should core refuse the combined batch, the content is retried
+ *  in its two lanes — text + decor, then the cell text styles — so a style
+ *  refusal never costs the cell text. Returns the `mutate` count. */
+async function pourCellContent(
+  host: BundleHost,
+  content: LoweredContent,
+  storyId: string,
+  tableId: string,
+): Promise<number> {
+  const { ops, styleOps } = await tableContentOps(host, content, storyId, tableId);
+  const all = [...ops, ...styleOps];
+  if (all.length === 0) return 0;
+  const r = await host.document.mutate({ op: "batch", args: { ops: all } });
+  if (r.applied) return 1;
+  host.log.warn("lower: table content batch rejected — retrying per lane", r);
+  if (styleOps.length === 0) return 1;
+  let calls = 1;
   if (ops.length > 0) {
-    const r = await host.document.mutate({ op: "batch", args: { ops } });
-    if (!r.applied) host.log.warn("lower: cell decor batch rejected", r);
+    calls += 1;
+    const t = await host.document.mutate({ op: "batch", args: { ops } });
+    if (!t.applied) host.log.warn("lower: cell text + decor rejected", t);
   }
-  // The cells' text formatting (bold, size, face, colour) — the widths
-  // were measured in it, so the pour now renders in it too.
-  await styleCellText(host, content, storyId, tableId);
+  calls += 1;
+  const s = await host.document.mutate({ op: "batch", args: { ops: styleOps } });
+  if (!s.applied) host.log.warn("cell text styles: rejected", s);
+  return calls;
 }
 
 /** The document's character-style ids, or null when the read failed. */
@@ -458,6 +483,102 @@ export async function lowerSelectionToFrame(
     return lowerTabTextToFrame(host, content, placement, binding);
   }
 
+  // Sized by font metrics (S-13) — the content alone decides the widths,
+  // so they are measured BEFORE anything is written.
+  const columnWidths = await measureColumnWidths(host, content);
+
+  // ONE batch: the frame, its binding and the native table (C-15 handles,
+  // core v0.64: `$h:f` in the table's `storyId` position is the story the
+  // frame insert minted). The batch reports the LAST id minted — the
+  // table, whose structured id carries its story; the frame is that
+  // story's (only) chain link.
+  const placed = await host.document.mutate({
+    op: "batch",
+    args: {
+      ops: [
+        { op: "insertTextFrame", args: { pageId, bounds: placement.bounds } },
+        { op: "bindCreated", args: { handle: FRAME_HANDLE } },
+        {
+          op: "setPluginMetadata",
+          args: {
+            elementId: { kind: "textFrame", id: `$h:${FRAME_HANDLE}` },
+            key: BINDING_KEY,
+            value: JSON.stringify(binding),
+          },
+        },
+        tableInsertOp(content, `$h:${FRAME_HANDLE}`, columnWidths),
+      ],
+    },
+  });
+  if (!placed.applied) {
+    // A host without in-batch handles (or one that refuses insertTable):
+    // nothing landed (a refused batch rolls back whole) — the phased
+    // placement, with its tab-text degradation.
+    host.log.debug("lower: one-batch placement refused — phased placement", placed);
+    return lowerPhased(host, content, pageId, placement, binding, columnWidths, {
+      ...opts,
+      sheet,
+      range,
+      contentVersion,
+    });
+  }
+  if (placed.createdId?.kind !== "table") {
+    // Applied, but the reply names no table: the frame stands and there is
+    // no table id to pour into. Never place a second frame over it.
+    host.log.warn("lower: placement applied without reporting its table", placed);
+    return placed.createdId ? frameIdOf(placed.createdId) : null;
+  }
+  const storyId = placed.createdId.id.story_id;
+  const tableId = placed.createdId.id.table_id;
+  let frameId: string | null = null;
+  try {
+    frameId = (await host.document.frameChain(storyId))[0]?.frameId ?? null;
+  } catch (err) {
+    host.log.warn("lower: frame chain read failed", err);
+  }
+
+  // The table's content — text, decor and text styles — as ONE more batch.
+  // (Core 0eff96b resolves a table handle in a `tableId` position, which
+  // folds this into the placement batch: one mutate, one undo step.)
+  await pourCellContent(host, content, storyId, tableId);
+
+  if (!frameId) {
+    host.log.warn("lower: placed the table but could not read its frame back");
+    return null;
+  }
+  opts?.onLowered?.({
+    frameId,
+    storyId,
+    tableId,
+    sheet,
+    range,
+    pageId,
+    content,
+    columnWidths,
+    contentVersion,
+  });
+  await host.selection.set([{ kind: "textFrame", id: frameId }]);
+  return frameId;
+}
+
+/** The within-batch handle the placement names its frame by. */
+const FRAME_HANDLE = "f";
+
+/** The PHASED native placement — the shape before in-batch handles, kept
+ *  for a host that refuses the one-batch placement: (1) the frame + its
+ *  binding, (2) `insertTable` into the frame's story (resolved by diffing
+ *  the stories collection), (3) the content batch. A host that rejects
+ *  `insertTable` degrades to the spec §2.2 tab-text pour. */
+async function lowerPhased(
+  host: BundleHost,
+  content: LoweredContent,
+  pageId: PageId,
+  placement: Placement,
+  binding: ReturnType<typeof makeBinding>,
+  columnWidths: number[],
+  opts: LowerLaneOptions & { sheet: number; range: string; contentVersion: number },
+): Promise<string | null> {
+  const { sheet, range, contentVersion } = opts;
   // Snapshot story ids BEFORE phase 1 — the new frame's story is the
   // diff (see newStoryId).
   const storiesBefore = await storyIdsSnapshot(host);
@@ -505,9 +626,8 @@ export async function lowerSelectionToFrame(
     return frameId;
   }
 
-  // Phase 2 — create the native table in that story, sized by font
-  // metrics (S-13). createdId is the new tableId.
-  const columnWidths = await measureColumnWidths(host, content);
+  // Phase 2 — create the native table in that story. createdId is the
+  // new tableId.
   const tableOutcome = await host.document.mutate(
     tableInsertOp(content, storyId, columnWidths),
   );
@@ -550,8 +670,7 @@ export async function lowerSelectionToFrame(
     contentVersion,
   });
 
-  // Phase 3 — pour the cell text (TEXT lane) then the decor (FRAME lane);
-  // two lanes, never one batch (see pourCellContent).
+  // Phase 3 — the content, one batch (see pourCellContent).
   await pourCellContent(host, content, storyId, tableId);
 
   await host.selection.set([outcome.createdId]);

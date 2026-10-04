@@ -133,6 +133,18 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
           const ops = (m as { args: { ops: Array<{ op: string }> } }).args.ops;
           if (ops.some((o) => o.op === "insertTextFrame")) {
             frameInserted = true;
+            // The one-batch placement (frame + table, C-15 handles) reports
+            // the LAST id it minted — the table, carrying the frame's story.
+            if (ops.some((o) => o.op === "insertTable")) {
+              return {
+                applied: true,
+                createdId: {
+                  kind: "table",
+                  id: { story_id: storyId ?? "Story/u9", table_id: "table1" },
+                } as ElementId,
+                pageIds: ["Page/u1"],
+              };
+            }
             return { applied: true, createdId, pageIds: ["Page/u1"] };
           }
           return { applied: true, createdId: null, pageIds: ["Page/u1"] };
@@ -157,6 +169,9 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
           ? ({ storyId, frameId: "frame1" } as never)
           : null;
       },
+      async frameChain() {
+        return [{ frameId: "frame1", next: null, overflow: false }] as never;
+      },
     },
     text: {
       async measureString() {
@@ -175,54 +190,70 @@ function fakeHost(createdId: ElementId, storyId: string | null) {
 
 const CREATED: ElementId = { kind: "textFrame", id: "frame1" };
 
+/** A host without C-15 handles: refuse (and record) any batch carrying a
+ *  `bindCreated` — the one-batch placement — and apply the rest. */
+function refuseHandles(host: BundleHost, mutations: Mutation[]): void {
+  const realMutate = host.document.mutate.bind(host.document);
+  host.document.mutate = async (m: Mutation) => {
+    const ops = m.op === "batch" ? (m as { args: { ops: Array<{ op: string }> } }).args.ops : [];
+    if (ops.some((o) => o.op === "bindCreated")) {
+      mutations.push(m);
+      return { applied: false, error: "unknown op bindCreated" } as MutationOutcome;
+    }
+    return realMutate(m);
+  };
+}
+
 describe("sheet_plugin_lower_mutations: native-table host flow", () => {
-  it("phase 1 frame batch → phase 2 insertTable → phase 3 cell text", async () => {
+  it("one batch places frame + binding + table, one batch pours the content", async () => {
     const { host, mutations, selections } = fakeHost(CREATED, "Story/u9");
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
 
     expect(id).toBe("frame1");
-    // phase1 batch + insertTable + 2 cell-text insertText + 1 decor batch.
-    expect(mutations).toHaveLength(5);
-    // Phase 1 — frame + binding (NO drawn rules: the table draws borders).
+    // The placement batch + the content batch — nothing per cell.
+    expect(mutations).toHaveLength(2);
+    // Batch 1 — frame + binding + native table (NO drawn rules: the table
+    // draws borders). The table addresses the frame's story by handle.
     expect(mutations[0].op).toBe("batch");
-    const ops = (mutations[0] as { args: { ops: Array<{ op: string }> } }).args
-      .ops;
-    expect(ops[0].op).toBe("insertTextFrame");
-    expect(ops.some((o) => o.op === "insertLine")).toBe(false);
-    expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
-    // Phase 2 — native table in the resolved story, font-metric widths.
-    expect(mutations[1].op).toBe("insertTable");
-    const tbl = mutations[1] as {
-      args: { storyId: string; rows: number; cols: number; columnWidths: number[] };
-    };
-    expect(tbl.args.storyId).toBe("Story/u9");
-    expect(tbl.args.rows).toBe(1);
-    expect(tbl.args.cols).toBe(2);
-    expect(tbl.args.columnWidths).toHaveLength(2);
-    expect(tbl.args.columnWidths[0]).toBeGreaterThan(0); // measured, not 0
-    // Phase 3 — TWO lanes (NOT one batch): each cell's text via its own
-    // insertText (the text lane can't ride an Operation::Batch), then the
-    // decor (the engine's h-rule at the bottom boundary → tableCell-scoped
-    // bottom-edge strokes on both columns) as ONE batch — the LAST mutation.
-    const tail = mutations.slice(2) as Array<{
+    const ops = (mutations[0] as {
+      args: { ops: Array<{ op: string; args: Record<string, any> }> };
+    }).args.ops;
+    expect(ops.map((o) => o.op)).toEqual([
+      "insertTextFrame",
+      "bindCreated",
+      "setPluginMetadata",
+      "insertTable",
+    ]);
+    expect(ops[1].args.handle).toBe("f");
+    expect(ops[2].args.elementId).toEqual({ kind: "textFrame", id: "$h:f" });
+    const tbl = ops[3].args as { storyId: string; rows: number; cols: number; columnWidths: number[] };
+    expect(tbl.storyId).toBe("$h:f");
+    expect(tbl.rows).toBe(1);
+    expect(tbl.cols).toBe(2);
+    expect(tbl.columnWidths).toHaveLength(2);
+    expect(tbl.columnWidths[0]).toBeGreaterThan(0); // measured, not 0
+    // Batch 2 — the cell text (TextCellAddr) and the decor in ONE batch
+    // (core takes text ops in a batch since v0.61): the engine's h-rule at
+    // the bottom boundary → tableCell-scoped bottom-edge strokes.
+    const content = mutations[1] as {
       op: string;
-      args: { text?: string; cell?: unknown; ops?: Array<{ op: string; args: { path?: string; elementId?: unknown } }> };
-    }>;
-    const textPours = tail.filter((o) => o.op === "insertText");
+      args: { ops: Array<{ op: string; args: Record<string, any> }> };
+    };
+    expect(content.op).toBe("batch");
+    const textPours = content.args.ops.filter((o) => o.op === "insertText");
     expect(textPours).toHaveLength(2);
-    const item = textPours.find((o) => o.args.text === "Item");
-    expect(item?.args.cell).toEqual({ tableId: "table1", row: 0, col: 0 });
+    expect(textPours.find((o) => o.args.text === "Item")?.args.cell).toEqual({
+      tableId: "table1",
+      row: 0,
+      col: 0,
+    });
     expect(textPours.find((o) => o.args.text === "Qty")?.args.cell).toEqual({
       tableId: "table1",
       row: 0,
       col: 1,
     });
-    const decor = mutations[mutations.length - 1] as {
-      op: string;
-      args: { ops: Array<{ op: string; args: { path?: string; elementId?: unknown } }> };
-    };
-    expect(decor.op).toBe("batch");
-    const edges = decor.args.ops.filter((o) => o.op === "setElementProperty");
+    expect(textPours.every((o) => o.args.storyId === "Story/u9")).toBe(true);
+    const edges = content.args.ops.filter((o) => o.op === "setElementProperty");
     expect(edges).toHaveLength(2); // one per column under the h-rule at 18
     expect(edges.every((o) => o.args.path === "cellBottomEdgeStrokeWeight")).toBe(
       true,
@@ -231,7 +262,22 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
       kind: "tableCell",
       id: { story_id: "Story/u9", table_id: "table1", row: 0, col: 0 },
     });
-    // The new frame is selected.
+    // The new frame (read back off the table's story) is selected.
+    expect(selections).toEqual([[CREATED]]);
+  });
+
+  it("a host that refuses the one batch gets the phased placement", async () => {
+    const { host, mutations, selections } = fakeHost(CREATED, "Story/u9");
+    refuseHandles(host, mutations);
+    const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
+    expect(id).toBe("frame1");
+    expect(mutations.map((m) => m.op)).toEqual([
+      "batch", // refused one-batch placement (rolled back whole)
+      "batch", // phase 1 — frame + binding
+      "insertTable", // phase 2 — into the story the stories diff resolved
+      "batch", // phase 3 — the content
+    ]);
+    expect((mutations[2] as { args: { storyId: string } }).args.storyId).toBe("Story/u9");
     expect(selections).toEqual([[CREATED]]);
   });
 
@@ -266,7 +312,8 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
     // Wrap mutate: reject insertTable (an older wire), apply the rest.
     const realMutate = host.document.mutate.bind(host.document);
     host.document.mutate = async (m: Mutation) => {
-      if (m.op === "insertTable") {
+      const ops = m.op === "batch" ? (m as { args: { ops: Array<{ op: string }> } }).args.ops : [m];
+      if (ops.some((o) => o.op === "insertTable")) {
         mutations.push(m);
         return { applied: false, error: "unknown op" } as MutationOutcome;
       }
@@ -276,11 +323,12 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
     expect(id).toBe("frame1"); // frame stands
     expect(mutations.map((m) => m.op)).toEqual([
-      "batch", // phase 1 — frame + binding
+      "batch", // the one-batch placement — refused (it carries insertTable)
+      "batch", // phased: frame + binding
       "insertTable", // rejected
       "insertText", // the runtime tab-text fallback pour
     ]);
-    const pour = mutations[2] as { args: { text: string; cell?: unknown } };
+    const pour = mutations[3] as { args: { text: string; cell?: unknown } };
     expect(pour.args.text).toBe("Item\tQty");
     expect(pour.args.cell).toBeUndefined();
   });
@@ -299,11 +347,12 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
     expect(binding.data.range).toBe("A1:B1");
   });
 
-  it("skips the table (frame still placed) when the story can't be resolved", async () => {
+  it("phased: skips the table (frame still placed) when the story can't be resolved", async () => {
     const { host, mutations } = fakeHost(CREATED, null);
+    refuseHandles(host, mutations);
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
     expect(id).toBe("frame1"); // frame placed, honest about the gap
-    expect(mutations.map((m) => m.op)).toEqual(["batch"]); // no insertTable
+    expect(mutations.map((m) => m.op)).toEqual(["batch", "batch"]); // no insertTable
   });
 
   it("returns null when the phase-1 batch is rejected", async () => {
@@ -326,10 +375,16 @@ describe("sheet_plugin_lower_mutations: native-table host flow", () => {
         },
       },
       selection: { async set(ids: ElementId[]) { return ids; } },
+      text: {
+        async measureString() {
+          return { advance: 30, ascender: 9, descender: -2 };
+        },
+      },
     } as unknown as BundleHost;
     const id = await lowerSelectionToFrame(host, fakeEngine(), 0, "A1:B1");
     expect(id).toBeNull();
-    expect(mutations.map((m) => m.op)).toEqual(["batch"]);
+    // The one-batch placement, then the phased frame batch — both refused.
+    expect(mutations.map((m) => m.op)).toEqual(["batch", "batch"]);
   });
 });
 
@@ -877,7 +932,12 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
 
     // Each frame got its OWN page's cell text via individual insertText (the
     // text lane — NOT a batch), r0 → tbl1, r1 → tbl2.
-    const pours = mutations.filter((m) => m.op === "insertText") as Array<{
+    // The pour rides each table's content batch (one per page).
+    const pours = mutations
+      .flatMap((m) =>
+        m.op === "batch" ? (m as { args: { ops: Mutation[] } }).args.ops : [m],
+      )
+      .filter((m) => m.op === "insertText") as Array<{
       args: { text?: string; cell?: { tableId?: string } };
     }>;
     expect(pours.find((o) => o.args.text === "r0")?.args.cell?.tableId).toBe("tbl1");

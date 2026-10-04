@@ -49,6 +49,9 @@ export interface CountedMutation {
   op: string;
   /** How many ops it carried — 1 unless it is a batch. */
   ops: number;
+  /** The ops it carried, counted by kind (a batch's children; a single
+   *  op counts itself) — what a batch did, not just that it ran. */
+  kinds: Record<string, number>;
 }
 
 export interface WorkLog {
@@ -121,10 +124,14 @@ export class Tally {
     const calls = this.c.calls;
     calls[door] = (calls[door] ?? 0) + 1;
     if (door === "document.mutate") {
-      const m = args[0] as { op?: string; args?: { ops?: unknown[] } };
+      const m = args[0] as { op?: string; args?: { ops?: { op?: string }[] } };
+      const kinds: Record<string, number> = {};
+      const children = m?.op === "batch" ? (m.args?.ops ?? []) : [m];
+      for (const c of children) kinds[c?.op ?? "?"] = (kinds[c?.op ?? "?"] ?? 0) + 1;
       this.c.mutations.push({
         op: m?.op ?? "?",
         ops: m?.op === "batch" ? (m.args?.ops?.length ?? 0) : 1,
+        kinds,
       });
     } else if (door === "blob.write" || door === "parts.write") {
       this.c.bytesWritten += byteLength(args[1]);

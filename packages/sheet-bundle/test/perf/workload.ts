@@ -27,6 +27,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { inflateRawSync } from "node:zlib";
+
 import { createHeadlessHost, type HeadlessHost } from "@paged-media/plugin-sdk";
 import type { BundleHost, ClipboardPayload } from "@paged-media/plugin-api";
 
@@ -107,12 +109,15 @@ export function sheetHost(h: HeadlessHost): BundleHost {
  *  host can count what it submits. Everything else forwards untouched. */
 export function withSceneChannel(host: BundleHost): {
   host: BundleHost;
-  submits: { elementId: string; items: number }[];
+  submits: { elementId: string; items: number; texts: string[] }[];
 } {
-  const submits: { elementId: string; items: number }[] = [];
+  const submits: { elementId: string; items: number; texts: string[] }[] = [];
   const surface = {
     submit: async (elementId: string, layer: { items: unknown[] }) => {
-      submits.push({ elementId, items: layer.items.length });
+      const texts = (layer.items as { kind?: string; text?: string }[])
+        .filter((i) => i.kind === "text")
+        .map((i) => i.text ?? "");
+      submits.push({ elementId, items: layer.items.length, texts });
     },
     clear: async () => {},
     dispose: () => {},
@@ -184,3 +189,58 @@ export async function authorWorkbook(
 export const settle = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
 };
+
+/** The document as core exports it (`exportIdml` on the editor client):
+ *  every zip entry's text, by path. How a scenario reads back what a
+ *  placement actually wrote — table cell text included, which no plugin
+ *  read door returns. */
+export async function exportedIdmlParts(h: HeadlessHost): Promise<Map<string, string>> {
+  const client = (h.host as unknown as {
+    editor: { client: { send(m: unknown): Promise<{ kind: string; payload: { idmlBytes?: number[] } }> } };
+  }).editor.client;
+  const reply = await client.send({ kind: "exportIdml", payload: {} });
+  if (reply.kind !== "idmlExported" || !reply.payload.idmlBytes) {
+    throw new Error(`exportIdml failed: ${JSON.stringify(reply).slice(0, 200)}`);
+  }
+  const zip = Buffer.from(reply.payload.idmlBytes);
+  // The end-of-central-directory record, then each central entry.
+  let eocd = zip.length - 22;
+  while (eocd >= 0 && zip.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
+  const count = zip.readUInt16LE(eocd + 10);
+  let p = zip.readUInt32LE(eocd + 16);
+  const out = new Map<string, string>();
+  for (let i = 0; i < count; i++) {
+    const method = zip.readUInt16LE(p + 10);
+    const size = zip.readUInt32LE(p + 20);
+    const nameLen = zip.readUInt16LE(p + 28);
+    const extraLen = zip.readUInt16LE(p + 30);
+    const commentLen = zip.readUInt16LE(p + 32);
+    const local = zip.readUInt32LE(p + 42);
+    const name = zip.subarray(p + 46, p + 46 + nameLen).toString("utf8");
+    const lName = zip.readUInt16LE(local + 26);
+    const lExtra = zip.readUInt16LE(local + 28);
+    const data = zip.subarray(local + 30 + lName + lExtra, local + 30 + lName + lExtra + size);
+    out.set(name, (method === 8 ? inflateRawSync(data) : data).toString("utf8"));
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+/** The text of every `<Cell>` in the exported document's stories, in
+ *  document order, keyed `row:col` per table (`Name="col:row"` in IDML). */
+export async function exportedTableCells(h: HeadlessHost): Promise<Map<string, string>[]> {
+  const parts = await exportedIdmlParts(h);
+  const tables: Map<string, string>[] = [];
+  for (const [name, xml] of parts) {
+    if (!name.startsWith("Stories/")) continue;
+    for (const t of xml.matchAll(/<Table\b[\s\S]*?<\/Table>/g)) {
+      const cells = new Map<string, string>();
+      for (const c of t[0].matchAll(/<Cell\b[^>]*\bName="(\d+):(\d+)"[^>]*>([\s\S]*?)<\/Cell>/g)) {
+        const text = [...c[3].matchAll(/<Content>([\s\S]*?)<\/Content>/g)].map((m) => m[1]).join("");
+        cells.set(`${c[2]}:${c[1]}`, text);
+      }
+      tables.push(cells);
+    }
+  }
+  return tables;
+}
