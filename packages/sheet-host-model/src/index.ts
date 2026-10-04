@@ -157,3 +157,10 @@ export {
   type TextPrim,
   type WedgePrim,
 } from "./chart";
+
+export {
+  NO_FILL_SWATCH,
+  tableRefreshOps,
+  textOffsetLength,
+  type TableRefreshOps,
+} from "./table-refresh";
