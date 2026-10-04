@@ -16,11 +16,12 @@
  *  @license    AGPL-3.0-only OR Paged Media Enterprise License (PMEL)
  */
 
-// The workbook session — the bundle's IN-MEMORY workbook handle (S-08:
-// no persistence; workbook bytes NEVER touch host.storage — the panel
-// says so). It holds the booted engine + the active sheet/range/file
-// name, exposes import + lower + dispose, and emits a change signal the
-// panel subscribes to. All spreadsheet work is the engine's; this is
+// The workbook session — the bundle's workbook handle. It holds the
+// booted engine + the active sheet/range/file name, exposes import +
+// lower + dispose, and emits a change signal the panel subscribes to.
+// Persistence (S-08 + the container part): the import writes the bytes,
+// and every committed edit re-saves the workbook (debounced, flushed on
+// dispose) — see `markEdited`. All spreadsheet work is the engine's; this is
 // session bookkeeping + the host write path.
 
 import type {
@@ -68,6 +69,11 @@ import {
  *  imported workbook is the one restored on reload. */
 const BLOB_KEY = "workbook";
 const BLOB_NAME_KEY = "workbook.name";
+
+/** How long after the last committed edit the workbook is re-saved to the
+ *  container part + blob. One `saveXlsx` per burst of edits, not per
+ *  keystroke-commit: the save re-emits the whole workbook. */
+export const PERSIST_DEBOUNCE_MS = 750;
 
 /** The nominal box the palette probe asks chart geometry for. A chart's
  *  COLOURS do not depend on its size — only the primitive coordinates do
@@ -383,7 +389,16 @@ export interface WorkbookSession {
    *  auto-refetch — §1.1 / the RFC). A no-op (logged) when the provider is
    *  gone, the surface is absent, or the engine cannot boot. */
   sourceFromDataset(providerId: string): Promise<void>;
-  /** Tear down: free the engine, drop listeners. */
+  /** Write any committed-but-unsaved edits to the container part + blob
+   *  NOW (cancelling the pending debounce) and resolve when every queued
+   *  write has landed. Edits persist on their own after
+   *  [`PERSIST_DEBOUNCE_MS`] and on `dispose`; this is the explicit door
+   *  for a host save. (The plugin contract has no pre-save hook yet —
+   *  RFI: a host `onWillSave` would call this.) Never rejects. */
+  flushPersist(): Promise<void>;
+  /** Tear down: flush unsaved edits (the bytes are taken synchronously,
+   *  the write completes in the background), free the engine, drop
+   *  listeners. */
   dispose(): void;
 }
 
@@ -563,6 +578,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     editJournal.length = journalCursor; // drop any redo tail
     editJournal.push({ sheet, row, col, prev, next: input });
     journalCursor = editJournal.length;
+    markEdited();
     return true;
   }
 
@@ -585,6 +601,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       });
     }
     journalCursor = editJournal.length;
+    markEdited();
   }
 
   /** Record the grid selection (engine + session) so the next windowing
@@ -757,7 +774,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
    *  it travels WITH the document, the read PREFERENCE on restore) and the
    *  per-browser `host.blob` (a fast local cache + backward-compat for hosts
    *  with no container writer). */
-  async function persistWorkbook(bytes: Uint8Array, name: string): Promise<void> {
+  async function writeWorkbook(bytes: Uint8Array, name: string): Promise<void> {
     try {
       await writeWorkbookPart(host, bytes, name);
     } catch (err) {
@@ -770,6 +787,58 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     } catch (err) {
       host.log.warn("workbook persist failed (kept in memory)", err);
     }
+  }
+
+  // Edit persistence. Every committed engine write (cell edit, paste,
+  // sort, replace, undo/redo, dataset seed) calls `markEdited`; after
+  // PERSIST_DEBOUNCE_MS the workbook is re-saved (`engine.saveXlsx`, the
+  // preservation-first re-emit) and written to both homes. Writes are
+  // serialised on one chain so an older snapshot can never land after a
+  // newer one. Until 2026-10-04 only the import wrote, so a reload lost
+  // every edit since.
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  let persistDirty = false;
+  let persistChain: Promise<void> = Promise.resolve();
+
+  function enqueueWrite(bytes: Uint8Array, name: string): Promise<void> {
+    persistChain = persistChain.then(() => writeWorkbook(bytes, name));
+    return persistChain;
+  }
+
+  function cancelPendingPersist(): void {
+    if (persistTimer !== null) clearTimeout(persistTimer);
+    persistTimer = null;
+    persistDirty = false;
+  }
+
+  function markEdited(): void {
+    if (!state.engine) return;
+    persistDirty = true;
+    if (persistTimer !== null) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      void flushPersist();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  /** Take the bytes NOW (synchronous — safe right before the engine is
+   *  freed) and queue the write. */
+  function flushPersist(): Promise<void> {
+    if (!persistDirty || !state.engine) {
+      cancelPendingPersist();
+      return persistChain;
+    }
+    cancelPendingPersist();
+    let bytes: Uint8Array;
+    try {
+      bytes = state.engine.saveXlsx();
+    } catch (err) {
+      // Keep the edit marked: the next edit or flush tries again.
+      persistDirty = true;
+      host.log.warn("workbook persist: engine save failed (kept in memory)", err);
+      return persistChain;
+    }
+    return enqueueWrite(bytes, state.fileName ?? "workbook.xlsx");
   }
 
   /** Boot (if needed) + load bytes into the engine + default sheet/range.
@@ -811,7 +880,10 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       emitter.emit();
       return false;
     }
-    if (persist) await persistWorkbook(bytes, name);
+    // A newly loaded workbook replaces the old one: unsaved edits to the
+    // old one are moot (and must not overwrite the import below).
+    cancelPendingPersist();
+    if (persist) await enqueueWrite(bytes, name);
     emitter.emit();
     return true;
   }
@@ -1294,6 +1366,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
           host.log.error("undoCellEdit: engine setCell failed", err);
           return false;
         }
+        markEdited();
         journalCursor -= 1;
       } while (
         group !== undefined &&
@@ -1320,6 +1393,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
           host.log.error("redoCellEdit: engine setCell failed", err);
           return false;
         }
+        markEdited();
         journalCursor += 1;
       } while (
         group !== undefined &&
@@ -1613,6 +1687,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
 
       seedSheetFromRecords(engine, snapshot.records);
 
+      cancelPendingPersist(); // the prior workbook is replaced
       state.engine = engine;
       state.activeSheet = 0;
       state.fileName = providerId;
@@ -1642,6 +1717,8 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         emitter.emit();
       });
 
+      // The seeded workbook is document content: persist it like an edit.
+      markEdited();
       emitter.emit();
     },
 
@@ -1681,7 +1758,18 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       }
     },
 
+    flushPersist() {
+      return flushPersist().catch((err) => {
+        host.log.warn("workbook persist failed", err);
+      });
+    },
+
     dispose() {
+      // Flush unsaved edits BEFORE the engine is freed: the bytes are
+      // taken synchronously here; the write finishes in the background.
+      void flushPersist().catch((err) => {
+        host.log.warn("workbook persist on dispose failed", err);
+      });
       // S-15 — drop the dataset revision subscription.
       try {
         dataSourceSub?.dispose();
