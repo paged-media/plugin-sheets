@@ -155,7 +155,12 @@ pub fn strip_storage_prefixes(text: &str) -> String {
             let rest = &text[i..];
             if let Some(p) = PREFIXES
                 .iter()
-                .find(|p| rest.len() >= p.len() && rest[..p.len()].eq_ignore_ascii_case(p))
+                // Byte-wise: `rest[..6]` may split a multi-byte char
+                // (`_français!A1` panicked here).
+                .find(|p| {
+                    rest.len() >= p.len()
+                        && rest.as_bytes()[..p.len()].eq_ignore_ascii_case(p.as_bytes())
+                })
             {
                 // Only at an identifier start (not inside `A_xlfn.`).
                 let prev_ident = out
@@ -231,6 +236,16 @@ fn rewrite_anchorarray(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_ascii_after_underscore_does_not_panic() {
+        // Found by the full corpus lane: a defined name over a sheet called
+        // `_français` split the `ç` while probing for `_xlfn.`.
+        assert_eq!(
+            strip_storage_prefixes("_français!$A$1:$G$37"),
+            "_français!$A$1:$G$37"
+        );
+    }
 
     #[test]
     fn strips_function_and_parameter_prefixes() {
