@@ -259,3 +259,43 @@ describe.skipIf(!built)("the workbook follows the open document [sheet.plugin.pe
     handle.dispose();
   });
 });
+
+describe.skipIf(!built)("a wheel over the entered frame scrolls the grid [sheet.grid.inframe]", () => {
+  it("declares onContentWheel: down scrolls by rows and claims; up at row 1 declines", async () => {
+    const ed = fakeEditor({ broadcasts: true });
+    const handle = activate(ed.host);
+    ed.open("A", { "workbook.xlsx": await workbookWith("row ten") });
+    await vi.waitFor(async () => expect(await a10(await ed.exported())).toBe("row ten"));
+    const ctx = ed.sheetContext() as EditContextContribution & {
+      onContentWheel?(e: unknown): boolean;
+    };
+    expect(typeof ctx.onContentWheel).toBe("function");
+    const wheel = (dy: number, dx = 0, shift = false) =>
+      ctx.onContentWheel!({
+        contentPoint: [10, 10],
+        elementId: "f1",
+        delta: [dx, dy],
+        modifiers: { shift, alt: false, cmd: false, ctrl: false },
+      });
+
+    expect(wheel(40)).toBe(false); // no grid showing yet: the canvas pans
+    ctx.onEnter?.({ type: "sheet", id: { kind: "textFrame", id: "f1" } } as never);
+    await vi.waitFor(() => expect(ed.submits.length).toBeGreaterThan(0));
+    expect(wheel(-40)).toBe(false); // already at row 1: decline
+
+    const before = ed.submits.length;
+    expect(texts(ed.submits.at(-1)!)).toContain("1"); // A1's value
+    expect(wheel(400)).toBe(true); // many rows down
+    await vi.waitFor(() => expect(ed.submits.length).toBeGreaterThan(before));
+    expect(texts(ed.submits.at(-1)!)).not.toContain("1"); // row 1 scrolled off
+
+    const scrolled = ed.submits.length;
+    expect(wheel(1)).toBe(true); // a sub-row step is still the grid's (carried)
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ed.submits.length).toBe(scrolled); // …but moves nothing yet
+    expect(wheel(-4000)).toBe(true); // back up, clamped at row 1
+    await vi.waitFor(() => expect(texts(ed.submits.at(-1)!)).toContain("1"));
+    expect(wheel(-40)).toBe(false);
+    handle.dispose();
+  });
+});

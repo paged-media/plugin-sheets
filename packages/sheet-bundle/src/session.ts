@@ -643,6 +643,12 @@ export interface WorkbookSession {
   pointerUpInFrame(contentX: number, contentY: number): boolean;
   /** Scroll the in-frame grid window by rows / columns (never above A1). */
   scrollInFrame(dRows: number, dCols: number): boolean;
+  /** A wheel over the entered frame, in content points (x right, y down):
+   *  scroll the in-frame grid by whole rows / columns, carrying the
+   *  remainder to the next wheel. False (the host pans instead) when no
+   *  grid is showing or the window is already at the edge it scrolls
+   *  toward. */
+  wheelInFrame(dxPt: number, dyPt: number): boolean;
   /** Whether the in-frame grid is showing (a sheet frame is entered). */
   isInFrameActive(): boolean;
   /** The fill handle: fill `target` (which extends the selection in one
@@ -835,6 +841,8 @@ export function createWorkbookSession(
     | { firstRow: number; firstCol: number; wPt: number; hPt: number }
     | null = null;
   let lastGridScene: GridScene | null = null;
+  // The wheel's sub-step remainder in content points [x, y].
+  let wheelCarry: [number, number] = [0, 0];
 
   // K-1 — the in-frame cell EDITOR buffer (a keystroke edit, no DOM
   // overlay): the cell being typed into + its in-progress text. The grid
@@ -2367,6 +2375,7 @@ export function createWorkbookSession(
     lastFrameId = null;
     lastGridWindow = null;
     lastGridScene = null;
+    wheelCarry = [0, 0];
     editJournal = [];
     journalCursor = 0;
     readCache.clear();
@@ -3797,6 +3806,28 @@ export function createWorkbookSession(
       }
       lastGridWindow = { ...lastGridWindow, firstRow, firstCol };
       void submitInFrameGrid();
+      return true;
+    },
+
+    wheelInFrame(dxPt, dyPt) {
+      if (!inFrameActive || !lastGridWindow || !lastGridScene) return false;
+      const vp = lastGridScene.viewport;
+      // One step = the first visible row's height / column's width.
+      const rowH = vp.rows > 0 ? vp.yOffsets[1] - vp.yOffsets[0] : 0;
+      const colW = vp.cols > 0 ? vp.xOffsets[1] - vp.xOffsets[0] : 0;
+      const atTop = lastGridWindow.firstRow === 0;
+      const atLeft = lastGridWindow.firstCol === 0;
+      // Toward an edge the window is already at: decline (the canvas pans).
+      if ((dyPt === 0 || (dyPt < 0 && atTop)) && (dxPt === 0 || (dxPt < 0 && atLeft))) {
+        wheelCarry = [0, 0];
+        return false;
+      }
+      wheelCarry = [wheelCarry[0] + dxPt, wheelCarry[1] + dyPt];
+      const dRows = rowH > 0 ? Math.trunc(wheelCarry[1] / rowH) : 0;
+      const dCols = colW > 0 ? Math.trunc(wheelCarry[0] / colW) : 0;
+      wheelCarry = [wheelCarry[0] - dCols * colW, wheelCarry[1] - dRows * rowH];
+      if (dRows !== 0 || dCols !== 0) api.scrollInFrame(dRows, dCols);
+      // A partial step is still the grid's wheel: the canvas stays put.
       return true;
     },
 

@@ -134,3 +134,21 @@ export async function mintedElements(
   if (!after) return [];
   return [...after].filter(([k]) => !before.has(k)).map(([, id]) => id).filter(keep);
 }
+
+/** A wheel delivered to the ACTIVE edit context (editor `onContentWheel`,
+ *  ahead of plugin-api): `delta` is the scroll in frame-content points (the
+ *  screen delta divided by the camera scale), x right / y down. Return true
+ *  when the context scrolled (the canvas then does not pan). Cmd/Ctrl wheel
+ *  is the host's zoom and never arrives. */
+export interface ContentWheelEvent {
+  contentPoint: [number, number];
+  elementId: string;
+  delta: [number, number];
+  modifiers: { shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean };
+}
+
+/** The edit-context hook the editor honours today (it spreads the
+ *  contribution into its registry); plugin-api names it from 0.2.38. */
+export interface ContentWheelHook {
+  onContentWheel?(e: ContentWheelEvent): boolean;
+}

@@ -30,7 +30,8 @@
 // the one thing allocated OUTSIDE a facade-tracked registration, so
 // dispose tears it down.
 
-import type { BundleHandle, BundleHost } from "@paged-media/plugin-api";
+import type { BundleHandle, BundleHost, EditContextContribution } from "@paged-media/plugin-api";
+import type { ContentWheelEvent, ContentWheelHook } from "./protocol66";
 import { contributeMenu } from "./menu";
 import { contributePanel } from "@paged-media/plugin-sdk";
 import { parseBinding } from "../../sheet-host-model/src";
@@ -490,6 +491,16 @@ export function activate(host: BundleHost): BundleHandle {
       onContentPointerUp: (e) => {
         session.pointerUpInFrame(e.contentPoint[0], e.contentPoint[1]);
       },
+      // A plain wheel over the entered frame scrolls the grid window (by
+      // whole rows / columns); declining at an edge lets the canvas pan.
+      // Shift turns a vertical wheel horizontal. Typed locally until the
+      // contract names the hook (see protocol66.ts).
+      onContentWheel: (e: ContentWheelEvent) => {
+        const [dx, dy] = e.delta;
+        return e.modifiers.shift && dx === 0
+          ? session.wheelInFrame(dy, 0)
+          : session.wheelInFrame(dx, dy);
+      },
       // K-1 + Wave 5 — every key the shell forwards goes through the grid's
       // key map (grid-nav.ts): typing edits the active cell, Enter/Tab
       // commit and move, arrows move (shift extends), F2 edits in place,
@@ -521,7 +532,7 @@ export function activate(host: BundleHost): BundleHandle {
       onExit: () => {
         session.hideGridInFrame();
       },
-    });
+    } as EditContextContribution & ContentWheelHook);
 
     // ADR 023 phase D — paged.sheet answers the HOST's Swatches panel
     // while the `sheet` context is active: the WORKBOOK PALETTE (the
