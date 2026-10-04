@@ -262,10 +262,10 @@ fn perf_replace_500_under_sum__feat__sheet_edit_ops() {
     );
 }
 
-// COVERS: save_xlsx — it rebuilds the Engine from the model, and
-// Engine::new marks EVERY formula dirty (core.rs save step 5). The rebuild
-// does not recalc, but the next edit pays for the whole workbook: measured
-// here as save + one unrelated edit. Inherent for that edit: 0 evaluations.
+// COVERS: save_xlsx — the writer borrows the engine's model, so the engine
+// (graph, dirty set) survives the save and the next unrelated edit
+// evaluates nothing. Before 2026-10 the save rebuilt the Engine with every
+// formula dirty and that edit re-evaluated all 500.
 #[test]
 fn perf_save_then_edit__feat__sheet_xlsx_roundtrip() {
     let mut s = SheetSession::new();
@@ -288,10 +288,20 @@ fn perf_save_then_edit__feat__sheet_xlsx_roundtrip() {
             precedent_candidates_scanned: 0,
             ranges_materialized: 0,
             cells_read: 0,
-            evaluations: 500, // the whole workbook: save left every formula dirty → 0
+            evaluations: 0, // was 500: the save rebuilt the engine all-dirty
             recalcs: 1,
-            recalc_passes: 1,
-            cells_marked_dirty: 500, // Engine::new's mark_all inside save → 0
+            recalc_passes: 0,      // nothing dirty — the recalc drains an empty cut
+            cells_marked_dirty: 0, // was 500 (Engine::new's mark_all)
         },
     );
+    // Behaviour: the engine kept its graph across the save — a precedent
+    // edit still reaches its dependent, and only that one.
+    let (_, work) = measure(|| s.set_cell(0, 499, 0, "1").unwrap());
+    assert_eq!(s.get_cell_display(0, 499, 1), "2");
+    assert_eq!(work.evaluations, 1);
+    // And the saved bytes reload to the same values.
+    let bytes = s.save_xlsx().expect("saves");
+    let back = SheetSession::load_xlsx(&bytes).expect("reloads");
+    assert_eq!(back.get_cell_display(0, 499, 1), "2");
+    assert_eq!(back.get_cell_display(0, 0, 1), "2");
 }

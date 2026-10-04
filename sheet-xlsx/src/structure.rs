@@ -799,10 +799,15 @@ impl XlsxDocument {
         out
     }
 
-    /// The `<calcPr>` the workbook part needs for `calc`, or `None` when the
-    /// knobs are what the file was loaded with (the part then stays verbatim).
-    pub(crate) fn calc_pr_override(&self) -> Result<Option<Vec<u8>>, XlsxError> {
-        let now = &self.model.calc;
+    /// The `<calcPr>` the workbook part needs for `model`'s calc settings, or
+    /// `None` when the knobs are what the file was loaded with (the part then
+    /// stays verbatim). `model` is the one being saved (the session lends the
+    /// engine's — see [`XlsxDocument::save_model`]).
+    pub(crate) fn calc_pr_override(
+        &self,
+        model: &sheet_core::SheetModel,
+    ) -> Result<Option<Vec<u8>>, XlsxError> {
+        let now = &model.calc;
         let was = &self.loaded_calc;
         if now.iterative == was.iterative
             && now.max_iter == was.max_iter

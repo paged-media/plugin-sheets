@@ -602,16 +602,25 @@ impl XlsxDocument {
     /// (per-part byte identity); `calcChain.xml` is always dropped; dirty
     /// worksheets re-encode from the model.
     pub fn save(&self) -> Result<Vec<u8>, XlsxError> {
+        self.save_model(&self.model)
+    }
+
+    /// [`save`](Self::save) against a model held elsewhere — the session
+    /// keeps its model inside the calc engine, and lending it here saves
+    /// without moving it out (and without rebuilding the engine after).
+    /// `model` must be this document's model (the one `open` parsed, edited
+    /// in place); the container, bindings and formula texts come from `self`.
+    pub fn save_model(&self, model: &SheetModel) -> Result<Vec<u8>, XlsxError> {
         // Wave 4: a changed `<calcPr>` (iterative calculation toggled) is the
         // one workbook-part edit decided at save time; it rides as a byte
         // splice of that element, the rest of the part stays verbatim.
         let mut overrides: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-        if let Some(wb) = self.calc_pr_override()? {
+        if let Some(wb) = self.calc_pr_override(model)? {
             overrides.insert(self.workbook_part.clone(), wb);
         }
         write::save(
             &self.container,
-            &self.model,
+            model,
             &self.bindings,
             &self.formula_texts,
             &overrides,

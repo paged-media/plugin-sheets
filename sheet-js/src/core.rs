@@ -46,12 +46,12 @@
 //! to re-write the workbook. We cannot destructure `XlsxDocument` (private
 //! fields), so on load we `std::mem::take(&mut doc.model)` the model OUT (a
 //! `Default` empty model is left in the doc), parse the formula texts into it,
-//! and move it into the engine. On save we take the engine BY VALUE
-//! ([`Engine::into_model`]), drop the model back into `doc.model`, re-print the
-//! EDITED formula cells into `doc.formula_texts`, mark their sheets dirty, and
-//! `doc.save()`; then we rebuild a fresh engine from the model so the session
-//! stays usable. The rebuild re-marks everything dirty (no recalc — the cached
-//! values are already correct), so the next edit simply recomputes its cut.
+//! and move it into the engine. On save we re-print the EDITED formula cells
+//! into `doc.formula_texts`, mark their sheets dirty, and LEND the engine's
+//! model to the writer ([`XlsxDocument::save_model`]) — the engine, its graph,
+//! dirty set and spill ledger are untouched, so the next edit recomputes only
+//! its own cut. (Until 2026-10 the save moved the model out and rebuilt the
+//! engine, marking every formula dirty.)
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -371,8 +371,9 @@ pub struct PaginateOptionsArg {
 /// [`XlsxDocument`] container kept for save, the edited-cell set, and the
 /// unparsed-formula count. See the module docs for the coherence dance.
 pub struct SheetSession {
-    /// `Some` except transiently inside [`SheetSession::save_xlsx`]. Holding it
-    /// in an `Option` lets us take the engine BY VALUE for `into_model`.
+    /// Always `Some` once constructed (the save lends the engine's model to
+    /// the writer instead of taking the engine; the `Option` is kept only so
+    /// the accessors below stay the single place that states the invariant).
     engine: Option<Engine>,
     config: EngineConfig,
     /// The XLSX container/bindings/formula_texts. Its `model` field is a
@@ -427,9 +428,8 @@ impl std::fmt::Display for SessionError {
 impl std::error::Error for SessionError {}
 
 impl SheetSession {
-    /// The engine. Present everywhere except transiently inside
-    /// [`SheetSession::save_xlsx`], which always puts it back, also when the
-    /// save fails. So this `expect` states an invariant, not a hope.
+    /// The engine. Always present after construction (nothing takes it), so
+    /// this `expect` states an invariant, not a hope.
     fn engine(&self) -> &Engine {
         self.engine
             .as_ref()
@@ -546,32 +546,33 @@ impl SheetSession {
 
     /// Print every EDITED cell's AST back into `formula_texts` (formula cells)
     /// or clear it (cells that became values), mark the touched sheets dirty,
-    /// and `container.save()`. Returns the bytes. See the module docs for the
-    /// model swap dance.
+    /// and serialise. Returns the bytes.
+    ///
+    /// The writer borrows the ENGINE's model ([`XlsxDocument::save_model`]):
+    /// the engine, its dependency graph, dirty set and spill ledger survive
+    /// the save untouched. (Before 2026-10 the save moved the model out and
+    /// rebuilt the engine with `Engine::new`, which marked every formula
+    /// dirty — the next edit after a save re-evaluated the whole workbook —
+    /// and dropped the spill ledger.)
     pub fn save_xlsx(&mut self) -> Result<Vec<u8>, SessionError> {
-        // 1. Take the engine by value to reach `into_model`.
-        let engine = self.engine.take().expect("engine present outside save");
-        let model = engine.into_model();
-        // 2. Drop the model back into the doc so the writer can read it.
-        self.doc.model = model;
+        let engine = self
+            .engine
+            .as_ref()
+            .expect("engine present outside save_xlsx");
+        let model = engine.model();
 
-        // 3. Re-print edited formula cells into formula_texts; clear entries for
-        //    cells that became plain values. Mark each touched sheet dirty.
-        let edited: Vec<(SheetId, u32, u32)> = self.edited.iter().copied().collect();
+        // Re-print edited formula cells into formula_texts; clear entries for
+        // cells that became plain values. Mark each touched sheet dirty.
+        let names = ModelSheetNames { model };
         let mut dirty_sheets: BTreeSet<SheetId> = BTreeSet::new();
-        for (sheet, row, col) in edited {
-            let names = ModelSheetNames {
-                model: &self.doc.model,
-            };
-            let formula_id = self
-                .doc
-                .model
+        for &(sheet, row, col) in &self.edited {
+            let formula_id = model
                 .sheet(sheet)
                 .and_then(|ws| ws.cell(row, col))
                 .and_then(|c| c.formula);
             match formula_id {
                 Some(fid) => {
-                    if let Some(formula) = self.doc.model.formula(fid) {
+                    if let Some(formula) = model.formula(fid) {
                         // xlsx formula text carries NO leading '=' — print bare,
                         // in the OOXML storage dialect (`_xlfn.` prefixes etc.)
                         // so Excel does not open a newer function as #NAME?.
@@ -591,19 +592,13 @@ impl SheetSession {
             self.doc.mark_sheet_dirty(sheet);
         }
 
-        // 4. Serialise.
-        let saved = self.doc.save();
+        let bytes = self
+            .doc
+            .save_model(model)
+            .map_err(|e| SessionError(e.to_string()))?;
 
-        // 5. Rebuild the engine from the model so the session stays usable —
-        //    BEFORE propagating a save error. Returning early here used to
-        //    leave `engine` at `None`, so the next call on the session hit
-        //    `engine present` and aborted the wasm instance.
-        let model = std::mem::take(&mut self.doc.model);
-        self.engine = Some(Engine::new(model, self.config));
-        let bytes = saved.map_err(|e| SessionError(e.to_string()))?;
-
-        // 6. The edits are now persisted in the bytes — clear the pending set so
-        //    `metadata().dirty` reads false until the next edit.
+        // The edits are now persisted in the bytes — clear the pending set so
+        // `metadata().dirty` reads false until the next edit.
         self.edited.clear();
         self.extra_dirty.clear();
         self.structure_changed = false;
