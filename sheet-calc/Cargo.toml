@@ -27,3 +27,10 @@ perf-counters = []
 # The crate's own tests/benches run WITH the counters (tests/perf_budgets.rs,
 # benches/). A dev-dependency feature never reaches a non-test build.
 sheet-calc = { path = ".", features = ["perf-counters"] }
+# Wall-clock benches (benches/): trended, never gated — the gates are the
+# count budgets in tests/perf_budgets.rs. No plotters/rayon.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "calc"
+harness = false
