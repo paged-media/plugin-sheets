@@ -16,10 +16,12 @@ lane); the sheets-mode grid (T1+) renders vector on an SDK surface
 (S-02). XLSX round-trip safety ("Paged never destroys a workbook") is a
 launch property.
 
-Spec (the authority): `docs/concept.md` (architecture, status and decisions are in `docs/` too).
+Spec (the authority): `docs/concept.md` (architecture, status and decisions are in `docs/` too;
+the original planning paper is archived at `~/paged/thoughts/docs/archive/plugin-sheets/base-idea.md`).
+Where code and spec differ, `docs/status.md` and `docs/design/analysis-2026-10-04.md` say how.
 SDK gap tracker: the cross-repo RFI (the internal gap register) (S-NN ids in §6; per-plugin BREAKAGE_LOG retired 2026-06-12).
 
-**STATUS: M0–M3 shipped** (11 Rust crates, ~1188 nextest; the registry
+**STATUS: M0–M3 shipped** (11 Rust crates, ~1272 nextest; the registry
 rows below are the live ledger). Rust crates (Cargo workspace, top level
 per spec §4): `sheet-core` (frozen types + AST), `sheet-parser`,
 `sheet-calc`, `sheet-fn`, `sheet-format`, `sheet-xlsx`, `sheet-lower`,
@@ -29,13 +31,16 @@ IR — NOT charming, NOT hand-rolled SVG), `sheet-js` (wasm-bindgen
 surface), `sheet-conformance` (TEST-ONLY). TS packages (pnpm `packages/*`,
 draw/web convention): `sheet-host-model` (pure LoweredContent→Mutation
 translation) + `sheet-bundle` (manifest + `activate(host)` + workbook
-panel + grid panel + engine boot).
+panel + grid panel + datasets panel + 12 commands + engine boot).
 
 What landed (verified — see `~/paged/cockpit/docs/features/sheet/`):
 the calc engine, function library, spill, structured tables, the chart
 engine, and **XLSX round-trip** (preservation-safe both directions). The
-page surface **lowers to a native `<Table>`** (S-03 / `sheet.lower.page`)
-with live **multi-frame pagination** across the host frame chain (S-05).
+page surface **lowers to a native `<Table>`** (S-03 / `sheet.lower.page`),
+UNSTYLED: the page calls `getRangeLowered` (the NoStyles door), not
+`getRangeStyled`. **Multi-frame pagination** (S-05) is built in the engine
+and exported as `lowerPaginatedToChain` / `subscribeChainReflow`, but NO
+command or panel calls it — a user cannot reach it.
 The **in-frame grid renders + edits via K-1** (`sheet.grid.inframe`):
 `host.contribute.sceneLayer` paints the windowed grid (C-1 vector v0.39.0
 + text v0.40.0), and the modal edit session is wired end-to-end
@@ -43,7 +48,9 @@ The **in-frame grid renders + edits via K-1** (`sheet.grid.inframe`):
 Enter/Esc, session-scoped Cmd-Z per ADR-012) — driven by the editor
 journey `apps/canvas/tests/journey/plugins/sheet.journey.spec.ts` and the
 e2e `sheet-modal-session.spec.ts`. Workbook **persistence** rides
-`host.blob` (OPFS, S-08) + the metadata binding envelope; the
+`host.blob` (OPFS, S-08) + the `.paged` container part — ON IMPORT ONLY
+(`persistWorkbook` has one caller), so edits, sorts, pastes and a
+dataset-sourced workbook are lost on reload until edits are persisted; the
 **data-provider CONSUMER** (S-15, `sheetFromDataset`) sources a sheet from
 a governed dataset.
 
@@ -142,20 +149,26 @@ Rules for every code change in this repo:
   `@paged-media/shell`/`client` imports — writes via
   `host.document.mutate`, binding via `setPluginMetadata` (namespace
   `x-paged:media.paged.sheet`), persistence via `host.blob` (OPFS,
-  S-08 shipped — per-plugin keyed, restores the LAST imported workbook;
-  the panel says so). Panels are factories closing over `BundleHost`;
+  S-08 shipped — per-plugin keyed, restores the LAST IMPORTED workbook,
+  not later edits; the panel says so). Panels are factories closing over `BundleHost`;
   styling = the token layer (`--pg-*`, `--status-*`, `--font-mono`,
   `--space-*`, `--radius-*`).
-- **Reserved seams stay honest.** The page-lowering (S-03), pagination
-  (S-05), in-frame grid + K-1 modal edit session (S-02/C-1/K-1), importer
-  registration (S-06/S-11), OPFS persistence (S-08), and the data-provider
-  consumer (S-15) all SHIP now (registry-confirmed). What is still open
-  stays labelled, never faked: per-cell fill/borders await a `tableCell`
-  ElementId kind (the editor-side metrics RPC (K-7) is CLOSED — real
-  shaper metrics since v0.38.0, e2e-pinned in the editor's
-  `text-measure.spec.ts`); the §8.0 seamless-undo boundary is TBD; in-frame text v1
-  has caveats (default face, upright glyphs); full sheets-MODE (S-01),
-  owned-content interception (S-09), and range clipboard (S-14) are open.
+- **Reserved seams stay honest.** The page-lowering (S-03), in-frame
+  grid + K-1 modal edit session (S-02/C-1/K-1), importer registration
+  (S-06/S-11), OPFS persistence on import (S-08), and the data-provider
+  consumer (S-15) SHIP. Pagination (S-05) is BUILT but has no command.
+  DONE in the RFI, no longer gaps: per-cell fill/borders and
+  `appliedCellStyle` on a `tableCell` ElementId (S-04 — core applies
+  them, probe-verified), owned-content interception (S-09, editor-side),
+  the range clipboard with a tabular payload (S-14 / K-6), the editor-side
+  metrics RPC (K-7 — real shaper metrics since v0.38.0, e2e-pinned in the
+  editor's `text-measure.spec.ts`). Text ops inside `Mutation::Batch` are
+  DONE in core (C-14, v0.61.0; one rebuild per batch since v0.63.0), so
+  the per-cell pour in `lower.ts` is a plugin-side leftover, not an engine
+  limit. What is still open stays labelled, never faked: the §8.0
+  seamless-undo boundary is TBD; in-frame text v1 has caveats (default
+  face, upright glyphs); full sheets-MODE (S-01); the vector scene layer
+  invalidates every page cache per submit (core `CacheEffect::ClearAll`).
   The manifest + UI must keep saying so for the unshipped pieces.
 - **CLEAN-ROOM (§3).** `references/` (LibreOffice/IronCalc, IF ever
   mounted) is read-only, analyst-only, gitignored, excluded from all
