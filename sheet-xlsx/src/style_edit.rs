@@ -203,15 +203,15 @@ impl StylePatch {
 
 /// A small owned XML element (style records are a few elements deep).
 #[derive(Clone, Debug, PartialEq)]
-struct Elem {
+pub(crate) struct Elem {
     /// The qualified name as written (prefix kept).
-    name: String,
-    attrs: Vec<(String, String)>,
-    children: Vec<Elem>,
+    pub(crate) name: String,
+    pub(crate) attrs: Vec<(String, String)>,
+    pub(crate) children: Vec<Elem>,
 }
 
 impl Elem {
-    fn new(name: String) -> Elem {
+    pub(crate) fn new(name: String) -> Elem {
         Elem {
             name,
             attrs: Vec::new(),
@@ -219,28 +219,28 @@ impl Elem {
         }
     }
 
-    fn with_attr(mut self, k: &str, v: &str) -> Elem {
+    pub(crate) fn with_attr(mut self, k: &str, v: &str) -> Elem {
         self.attrs.push((k.to_string(), v.to_string()));
         self
     }
 
-    fn local(&self) -> &str {
+    pub(crate) fn local(&self) -> &str {
         self.name.rsplit(':').next().unwrap_or(&self.name)
     }
 
-    fn attr(&self, local: &str) -> Option<String> {
+    pub(crate) fn attr(&self, local: &str) -> Option<String> {
         attr_local(&self.attrs, local)
     }
 
-    fn set(&mut self, local: &str, v: Option<String>) {
+    pub(crate) fn set(&mut self, local: &str, v: Option<String>) {
         set_attr(&mut self.attrs, local, v);
     }
 
-    fn child(&self, local: &str) -> Option<&Elem> {
+    pub(crate) fn child(&self, local: &str) -> Option<&Elem> {
         self.children.iter().find(|c| c.local() == local)
     }
 
-    fn remove_children(&mut self, local: &str) {
+    pub(crate) fn remove_children(&mut self, local: &str) {
         self.children.retain(|c| c.local() != local);
     }
 
@@ -269,7 +269,7 @@ impl Elem {
         }
     }
 
-    fn to_xml(&self) -> String {
+    pub(crate) fn to_xml(&self) -> String {
         let mut s = String::new();
         self.render(&mut s);
         s
@@ -294,7 +294,7 @@ impl Elem {
 
 /// Parse one element (the bytes of a span) into an [`Elem`] tree. Text and
 /// comments are dropped — style records carry none.
-fn parse_elem(xml: &[u8]) -> Result<Elem, XlsxError> {
+pub(crate) fn parse_elem(xml: &[u8]) -> Result<Elem, XlsxError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buf = Vec::new();

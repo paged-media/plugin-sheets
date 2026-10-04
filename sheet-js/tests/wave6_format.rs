@@ -476,3 +476,51 @@ fn column_width_and_row_height_round_trip__feat__sheet_layout_sizes() {
     let l = s2.get_layout(0).unwrap();
     assert!(l.col_widths.is_empty() && l.row_heights.is_empty());
 }
+
+// ── 4. frozen panes ──────────────────────────────────────────────────────
+
+/// Freezing writes a frozen `<pane>` into the sheet's first `<sheetView>`
+/// (created in schema position when the sheet has none), the grid reads it,
+/// it survives save + reload, and clearing removes it.
+#[test]
+fn freeze_set_and_clear_round_trip__feat__sheet_layout_freeze() {
+    let body = r#"<sheetPr/><sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="B2" sqref="B2"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>"#;
+    let mut s = SheetSession::load_xlsx(&package("", body, None)).unwrap();
+    s.set_freeze(0, 1, 2).unwrap();
+    let l = s.get_layout(0).unwrap();
+    assert_eq!((l.freeze_rows, l.freeze_cols), (1, 2));
+    assert_eq!(s.list_freeze_panes().len(), 1);
+    let out = s.save_xlsx().unwrap();
+    let xml = part_text(&out, SHEET1);
+    assert!(
+        xml.contains(r#"<sheetView tabSelected="1" workbookViewId="0"><pane xSplit="2" ySplit="1" topLeftCell="C2" activePane="bottomRight" state="frozen"/><selection activeCell="B2" sqref="B2"/></sheetView>"#),
+        "{xml}"
+    );
+    assert!(pos_of(&xml, "sheetViews") < pos_of(&xml, "sheetFormatPr"));
+    let mut s2 = SheetSession::load_xlsx(&out).unwrap();
+    let l = s2.get_layout(0).unwrap();
+    assert_eq!((l.freeze_rows, l.freeze_cols), (1, 2));
+
+    s2.set_freeze(0, 0, 0).unwrap();
+    let out2 = s2.save_xlsx().unwrap();
+    assert!(!part_text(&out2, SHEET1).contains("<pane"));
+    let s3 = SheetSession::load_xlsx(&out2).unwrap();
+    assert!(s3.list_freeze_panes().is_empty());
+}
+
+/// A sheet with no `<sheetViews>` gets one, after `<sheetPr>` and before
+/// `<dimension>`'s followers; rows-only freezes use the bottom-left pane.
+#[test]
+fn freeze_creates_sheet_views__feat__sheet_layout_freeze() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 0, 0, "h").unwrap();
+    s.set_freeze(0, 1, 0).unwrap();
+    let out = s.save_xlsx().unwrap();
+    let xml = part_text(&out, SHEET1);
+    assert!(
+        xml.contains(r#"<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>"#),
+        "{xml}"
+    );
+    assert!(pos_of(&xml, "dimension") < pos_of(&xml, "sheetViews"));
+    assert!(pos_of(&xml, "sheetViews") < pos_of(&xml, "sheetData"));
+}

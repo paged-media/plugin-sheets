@@ -64,6 +64,7 @@ pub mod parts;
 pub mod preserve;
 pub mod rels;
 pub mod sheet_doc;
+pub mod sheet_view;
 pub mod splice;
 pub mod structure;
 pub mod style_edit;

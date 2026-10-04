@@ -658,6 +658,11 @@ mod wasm {
                 .map_err(map_err)
         }
 
+        /// Freeze the first `rows` rows and `cols` columns (`0, 0` clears).
+        pub fn set_freeze(&mut self, sheet: u16, rows: u32, cols: u32) -> Result<(), JsValue> {
+            self.session.set_freeze(sheet, rows, cols).map_err(map_err)
+        }
+
         /// `{colWidths, rowHeights, merges, freezeRows, freezeCols}` of a
         /// sheet.
         pub fn get_layout(&self, sheet: u16) -> Result<JsValue, JsValue> {

@@ -573,3 +573,22 @@ impl SheetSession {
         })
     }
 }
+
+impl SheetSession {
+    // ── frozen panes ────────────────────────────────────────────────────
+
+    /// Freeze the first `rows` rows and `cols` columns of `sheet`; `0, 0`
+    /// clears the freeze. Persisted to the sheet's `<sheetView><pane>`; the
+    /// grid scene reads it.
+    pub fn set_freeze(&mut self, sheet: u16, rows: u32, cols: u32) -> Result<(), SessionError> {
+        self.validate_sheet(sheet)?;
+        if rows > sheet_core::MAX_ROW || cols > sheet_core::MAX_COL {
+            return Err(SessionError("freeze split outside the sheet".into()));
+        }
+        self.doc
+            .set_freeze_panes(sheet, rows, cols)
+            .map_err(|e| SessionError(e.to_string()))?;
+        self.extra_dirty.insert(sheet);
+        Ok(())
+    }
+}
