@@ -305,6 +305,12 @@ impl SheetSession {
 pub struct ResolvedRange {
     pub sheet: u16,
     pub range: String,
+    /// The normalized 0-based bounds (inclusive), so a host can size the
+    /// rows / columns a range covers without parsing A1.
+    pub top: u32,
+    pub left: u32,
+    pub bottom: u32,
+    pub right: u32,
 }
 
 impl SheetSession {
@@ -321,6 +327,10 @@ impl SheetSession {
                 sheet_core::col_to_a1(r),
                 b + 1
             ),
+            top: t,
+            left: l,
+            bottom: b,
+            right: r,
         })
     }
 }

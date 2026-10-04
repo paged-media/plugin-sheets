@@ -684,6 +684,7 @@ fn table_name_resolves_to_its_range__feat__sheet_names_define() {
     let s = SheetSession::load_xlsx(&fixture("07-tables.xlsx")).unwrap();
     let r = s.resolve_range_a1(0, "Sales").unwrap();
     assert_eq!((r.sheet, r.range.as_str()), (0, "A1:C4"));
+    assert_eq!((r.top, r.left, r.bottom, r.right), (0, 0, 3, 2));
     let page = s
         .get_range_page(0, "Sales", LowerOptions::default())
         .unwrap();
