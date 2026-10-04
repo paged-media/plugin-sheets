@@ -63,6 +63,8 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod runner;
+
 /// One golden-corpus case (spec §12.4). The runner seeds [`setup`] into a
 /// model, evaluates [`formula`], and asserts the result renders to
 /// [`expected`].
