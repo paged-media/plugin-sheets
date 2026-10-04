@@ -82,6 +82,12 @@ pub enum XlsxError {
     /// to `paged-ooxml`'s `LegacyBinaryDoc`, found the same way.
     #[error("legacy binary Excel workbook (.xls, CFB/OLE) — only OOXML .xlsx/.xlsm is supported; re-save as .xlsx")]
     LegacyBinaryXls,
+
+    /// The package inflates past the reader's memory budget
+    /// ([`crate::MAX_UNCOMPRESSED_BYTES`]) — a decompression bomb, or a
+    /// workbook too large to hold.
+    #[error("xlsx exceeds the reader's memory budget: {0}")]
+    Budget(String),
 }
 
 impl From<quick_xml::events::attributes::AttrError> for XlsxError {

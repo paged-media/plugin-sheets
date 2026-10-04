@@ -202,6 +202,10 @@ pub(crate) fn attr(
     Ok(None)
 }
 
+/// Largest pre-allocation made from an entry's DECLARED size; growth past
+/// it follows the bytes actually inflated.
+const PREALLOC_CAP: u64 = 8 << 20;
+
 /// The whole package: an ordered list of parts plus the parsed content-type
 /// table. This is what `sheet-core`'s opaque `PreservedParts` slot holds.
 #[derive(Debug, Clone)]
@@ -223,6 +227,17 @@ impl OpcContainer {
     /// Read a zip archive into ordered parts. Every part starts `Opaque`;
     /// the parse layer promotes the understood ones to `Modeled` afterwards.
     pub fn read(bytes: &[u8]) -> Result<OpcContainer, XlsxError> {
+        Self::read_with_budget(bytes, crate::MAX_UNCOMPRESSED_BYTES)
+    }
+
+    /// [`read`](Self::read) with an explicit total-uncompressed budget.
+    ///
+    /// An entry's header may CLAIM any uncompressed size; the claim is
+    /// never trusted for allocation (fuzzing found 2.6 KB inputs asking
+    /// for 3.4 GB). Each entry is read through a limit of the budget still
+    /// unspent, so a decompression bomb stops at the budget with a typed
+    /// [`XlsxError::Budget`] instead of exhausting memory.
+    pub fn read_with_budget(bytes: &[u8], budget: u64) -> Result<OpcContainer, XlsxError> {
         // Container sniff BEFORE the zip reader. A legacy .xls is
         // CFB/OLE, and the zip crate locates a package by scanning
         // backwards for the EOCD — so a CFB file carrying anything
@@ -239,7 +254,8 @@ impl OpcContainer {
         }
         let cursor = std::io::Cursor::new(bytes);
         let mut zip = zip::ZipArchive::new(cursor)?;
-        let mut parts = Vec::with_capacity(zip.len());
+        let mut parts = Vec::with_capacity(zip.len().min(4096));
+        let mut remaining = budget;
         let mut content_types: Option<ContentTypes> = None;
 
         for i in 0..zip.len() {
@@ -249,8 +265,23 @@ impl OpcContainer {
                 continue;
             }
             let name = file.name().to_owned();
-            let mut data = Vec::with_capacity(file.size() as usize);
-            file.read_to_end(&mut data)?;
+            // The declared size is only a HINT, bounded by what the
+            // compressed bytes could plausibly hold and by a fixed cap.
+            let hint = file
+                .size()
+                .min(remaining)
+                .min(PREALLOC_CAP)
+                .min(bytes.len() as u64 * 1032);
+            let mut data = Vec::with_capacity(hint as usize);
+            // Read at most one byte past the budget: reaching it means the
+            // entry (or the package) is larger than we will hold.
+            (&mut file).take(remaining + 1).read_to_end(&mut data)?;
+            if data.len() as u64 > remaining {
+                return Err(XlsxError::Budget(format!(
+                    "part {name} exceeds the {budget}-byte uncompressed budget"
+                )));
+            }
+            remaining -= data.len() as u64;
             if name == CONTENT_TYPES_PART {
                 content_types = Some(ContentTypes::parse(&data)?);
                 parts.push(PartEntry::Modeled {

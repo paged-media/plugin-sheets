@@ -72,6 +72,11 @@ pub mod style_edit;
 pub mod write;
 
 pub use error::XlsxError;
+
+/// The total number of uncompressed bytes [`XlsxDocument::open`] will read
+/// from one package (1 GiB). Past it the open fails with
+/// [`XlsxError::Budget`]; a wasm32 host could not hold more anyway.
+pub const MAX_UNCOMPRESSED_BYTES: u64 = 1 << 30;
 pub use parts::chart::{ParsedChart as XlsxChart, SheetResolver as ChartSheetResolver};
 pub use parts::comments::{CellComment, SheetComments};
 pub use parts::conditional_format::{
