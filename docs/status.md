@@ -1,7 +1,7 @@
 # Status
 
 What `paged.sheet` ships and what it does not, read from the development branch on 2026-10-04
-(`@paged-media/sheet` 0.1.0-canary.10, not yet published; npm `canary` is 0.1.0-canary.8). How
+(`@paged-media/sheet` 0.1.0-canary.11, not yet published; npm `canary` is 0.1.0-canary.8). How
 the parts fit is in [`architecture.md`](architecture.md). The analysis behind this round of work,
 and what changed against it, is in [`design/analysis-2026-10-04.md`](design/analysis-2026-10-04.md).
 
