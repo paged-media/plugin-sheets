@@ -1,0 +1,15 @@
+# Golden cases whose FORMULA Excel refuses to enter at all (found by
+# find_rejects.py: Excel declines to open a workbook containing it, -50).
+# These are arity violations Excel rejects at parse time; the engine instead
+# accepts the text and evaluates it to an error. generate.py leaves the host
+# cell empty for them and read.py records type `rejected`; the Rust lane
+# treats them as documented divergences (Excel has no value to compare).
+# file	id
+fv.golden.tsv	fv-arity
+nper.golden.tsv	nper-arity
+pv.golden.tsv	pv-arity
+rate.golden.tsv	rate-arity
+sln.golden.tsv	sln-arity
+false.golden.tsv	arity-violation-one-arg
+true.golden.tsv	arity-violation-one-arg
+ifs.golden.tsv	odd-arity-is-na
