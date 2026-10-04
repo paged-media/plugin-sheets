@@ -35,9 +35,11 @@
 //!
 //! - the golden-corpus loader ([`load_corpus`]) shared by the Phase-2
 //!   per-family runners (`tests/fn_*.rs`, `tests/format.rs`, …);
+//! - the shared golden-case replay path ([`runner`]) used by the hand-golden
+//!   gate and the Excel differential oracle (`tests/excel_oracle.rs`, §12.4,
+//!   values recorded from desktop Excel under `oracle/excel/`);
 //! - the coverage gate (`bin/coverage-gate`, the §12.2 verification
-//!   invariant) and the env-gated LibreOffice oracle skeleton
-//!   (`tests/oracle.rs`, §12.4).
+//!   invariant).
 //!
 //! ## Golden TSV format (§12.4 "golden corpora")
 //!

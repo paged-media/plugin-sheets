@@ -47,7 +47,7 @@ already-computed output into committed host mutations.
 | `sheet-xlsx` | OPC/zip + SpreadsheetML parse, preservation model, writer — zero-edit round-trip byte-identical |
 | `sheet-lower` | pure range → `LoweredContent` IR (formatted text, widths, rules) for the page surface |
 | `sheet-js` | wasm-bindgen surface consumed by the bundle (`SheetHandle`: load/save xlsx, set_cell, get_range_lowered, …) |
-| `sheet-conformance` | TEST-ONLY: golden corpora, property tests, env-gated LibreOffice oracle skeleton, the coverage gate |
+| `sheet-conformance` | TEST-ONLY: golden corpora, property tests, the Excel differential oracle (recorded Excel values), the coverage gate |
 | `@paged-media/sheet-host-model` | pure TS: `LoweredContent` → `Mutation[]` translation (no spreadsheet semantics) |
 | `@paged-media/sheet-bundle` | manifest (`media.paged.sheet`) + `activate(host)` + workbook panel + engine boot |
 

@@ -109,6 +109,51 @@ def normalize_separators(formula: str) -> str:
 _FN = re.compile(r'(?<![A-Za-z0-9_.])([A-Z][A-Z0-9]*(?:\.[A-Z0-9]+)*)\(')
 
 
+def _call_args(text: str, open_paren: int) -> list[str]:
+    """Top-level argument texts of the call whose '(' is at `open_paren`."""
+    args, depth, cur, in_str, i = [], 0, [], False, open_paren + 1
+    while i < len(text):
+        ch = text[i]
+        if ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch in "({":
+                depth += 1
+            elif ch in ")}":
+                if depth == 0:
+                    args.append("".join(cur))
+                    return args
+                depth -= 1
+            elif ch == "," and depth == 0:
+                args.append("".join(cur))
+                cur = []
+                i += 1
+                continue
+        cur.append(ch)
+        i += 1
+    return args
+
+
+def lambda_params(body: str) -> set[str]:
+    """Names bound by LET / LAMBDA anywhere in the formula (upper-cased).
+
+    LAMBDA(p1, ..., body): every argument but the last. LET(n1, v1, ..., body):
+    the odd-position arguments. In the file format each USE of such a name is
+    written `_xlpm.<name>`; written bare, Excel reads an undefined name.
+    """
+    names: set[str] = set()
+    for m in re.finditer(r'(?<![A-Za-z0-9_.])(LAMBDA|LET)\(', body):
+        args = [a.strip() for a in _call_args(body, m.end() - 1)]
+        if m.group(1) == "LAMBDA":
+            names.update(a.upper() for a in args[:-1])
+        else:
+            names.update(a.upper() for a in args[:-1:2])
+    return {n for n in names if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", n)}
+
+
+_IDENT = re.compile(r'(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_.]*)(?![A-Za-z0-9_.])')
+
+
 def to_file_formula(formula: str) -> str:
     """Golden formula -> xlsx `<f>` text: no '=', en-US separators, prefixes.
 
@@ -128,6 +173,12 @@ def to_file_formula(formula: str) -> str:
                 return f"_xlfn.{name}("
             return m.group(0)
         parts[i] = _FN.sub(sub, parts[i])
+    params = lambda_params(body)
+    if params:
+        for i in range(0, len(parts), 2):
+            parts[i] = _IDENT.sub(
+                lambda m: f"_xlpm.{m.group(1)}" if m.group(1).upper() in params else m.group(0),
+                parts[i])
     return "".join(parts)
 
 
@@ -146,7 +197,48 @@ def parse_setup(col: str) -> list[tuple[str, str]]:
     return out
 
 
+FORMAT_CORPUS = REPO / "corpus" / "format-corpus"
+FORMAT_FAMILY = "format"
+
+
+def format_formula(code: str) -> str:
+    """The probe for a number-format case: Excel's TEXT() over the seeded
+    value (tests/excel_oracle.rs builds the identical string)."""
+    return '=TEXT(A1,"' + code.replace('"', '""') + '")'
+
+
+def format_seed(value: str) -> str:
+    if value.startswith("bool:"):
+        return "bool:" + value[5:].upper()
+    return value
+
+
+def load_format_family() -> list[Case]:
+    """corpus/format-corpus rows (id, code, value, expected) as TEXT() cases."""
+    cases: list[Case] = []
+    # locale-*.golden.tsv render under other locales; this oracle is en-US.
+    for path in sorted(p for p in FORMAT_CORPUS.glob("*.golden.tsv")
+                       if not p.name.startswith("locale-")):
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.rstrip("\r\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            cols = line.split("\t")
+            if len(cols) == 3:   # an empty expected (e.g. ';;;') loses its tab
+                cols.append("")
+            if len(cols) != 4:
+                raise SystemExit(f"{path}: {len(cols)} columns in {line!r}")
+            cid, code, value, expected = cols
+            cases.append(Case(FORMAT_FAMILY, path.name, cid, format_formula(code),
+                              [("A1", format_seed(value))], expected))
+    for n, c in enumerate(cases, 1):
+        c.sheet = f"c{n}"
+    return cases
+
+
 def load_family(family: str) -> list[Case]:
+    if family == FORMAT_FAMILY:
+        return load_format_family()
     cases: list[Case] = []
     for path in sorted((FN_CORPUS / family).glob("*.golden.tsv")):
         for raw in path.read_text(encoding="utf-8").splitlines():
@@ -168,7 +260,7 @@ def load_family(family: str) -> list[Case]:
 
 def families() -> list[str]:
     return sorted(d.name for d in FN_CORPUS.iterdir()
-                  if d.is_dir() and d.name not in SKIP_FAMILIES)
+                  if d.is_dir() and d.name not in SKIP_FAMILIES) + [FORMAT_FAMILY]
 
 
 _NUM = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")

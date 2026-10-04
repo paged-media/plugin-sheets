@@ -216,6 +216,8 @@ bash scripts/build-wasm.sh
 pnpm install && pnpm test && pnpm typecheck
 pnpm validate:manifest
 
-# Optional LibreOffice differential oracle (CI container; not local)
-PAGED_SHEET_ORACLE=1 cargo test -p sheet-conformance -- --ignored
+# Excel differential oracle — CI compares against the committed recordings:
+cargo test -p sheet-conformance --test excel_oracle
+# re-record (maintainer, macOS + Excel): sheet-conformance/oracle/excel/
+#   python3 generate.py && ./drive.sh && python3 read.py
 ```
