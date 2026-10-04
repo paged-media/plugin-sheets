@@ -64,7 +64,7 @@ use sheet_lower::{
     lower_range, lower_range_styled, paginate as lower_paginate, CellRange, FrameBox, Page,
     ViewOptions,
 };
-use sheet_parser::{parse, print, ParseCtx, SheetNames};
+use sheet_parser::{parse, print, print_ooxml, strip_storage_prefixes, ParseCtx, SheetNames};
 use sheet_xlsx::{XlsxChart, XlsxDocument};
 
 // ─────────────────────────────────────────── serde wire structs (camelCase)
@@ -449,7 +449,11 @@ impl SheetSession {
                     model: &model,
                     current: sheet,
                 };
-                parse(&text, &ctx)
+                // The `<f>` text is the OOXML STORAGE dialect: future
+                // functions carry `_xlfn.` (`_xlfn._xlws.`), LET/LAMBDA
+                // names `_xlpm.`, and `A1#` is `ANCHORARRAY(A1)`. Strip to
+                // the display dialect the parser reads.
+                parse(&strip_storage_prefixes(&text), &ctx)
             };
             match parsed {
                 Ok(formula) => {
@@ -510,8 +514,10 @@ impl SheetSession {
             match formula_id {
                 Some(fid) => {
                     if let Some(formula) = self.doc.model.formula(fid) {
-                        // xlsx formula text carries NO leading '=' — print bare.
-                        let text = print(formula, sheet, &names);
+                        // xlsx formula text carries NO leading '=' — print bare,
+                        // in the OOXML storage dialect (`_xlfn.` prefixes etc.)
+                        // so Excel does not open a newer function as #NAME?.
+                        let text = print_ooxml(formula, sheet, &names);
                         self.doc.formula_texts.insert((sheet, row, col), text);
                     }
                 }

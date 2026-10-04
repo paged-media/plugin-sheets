@@ -1040,3 +1040,46 @@ fn sheet_js_get_range_styled_resolves_cell_styles() {
         .get_range_styled(9, "A1", LowerOptions::default())
         .is_err());
 }
+
+/// Functions newer than the ECMA-376 base set are STORED with their
+/// future-function prefix ([MS-XLSX] §2.2.2): a formula typed in Paged saves as
+/// `_xlfn.XLOOKUP(…)` / `_xlfn._xlws.SORT(…)` / `_xlfn.LET(_xlpm.x,…)` — without
+/// it Excel opens the cell as `#NAME?` — and a prefixed `<f>` text read back
+/// parses and recalculates instead of degrading to a cached value.
+#[test]
+fn sheet_js_save_xlsx_future_function_prefixes() {
+    let mut s = SheetSession::load_xlsx(&fixture("02-formulas.xlsx")).expect("load 02");
+    s.set_cell(0, 0, 0, "10").expect("A1");
+    s.set_cell(0, 0, 4, "=XLOOKUP(10,A1:A2,A1:A2)").expect("E1");
+    s.set_cell(0, 1, 4, "=LET(x,A1,x*2)").expect("E2");
+    s.set_cell(0, 2, 4, "=SUM(SORT(A1:A2))").expect("E3");
+    s.set_cell(0, 3, 4, "=SUM(A1:A2)").expect("E4");
+    let bytes = s.save_xlsx().expect("save");
+
+    let parts = unzip_parts(&bytes);
+    let sheet = String::from_utf8_lossy(&parts["xl/worksheets/sheet1.xml"]).to_string();
+    assert!(
+        sheet.contains("<f>_xlfn.XLOOKUP(10,A1:A2,A1:A2)</f>"),
+        "{sheet}"
+    );
+    assert!(
+        sheet.contains("<f>_xlfn.LET(_xlpm.x,A1,_xlpm.x*2)</f>"),
+        "{sheet}"
+    );
+    assert!(
+        sheet.contains("<f>SUM(_xlfn._xlws.SORT(A1:A2))</f>"),
+        "{sheet}"
+    );
+    // A base-set function carries no prefix.
+    assert!(sheet.contains("<f>SUM(A1:A2)</f>"), "{sheet}");
+
+    let s2 = SheetSession::load_xlsx(&bytes).expect("reopen");
+    assert_eq!(
+        s2.metadata().unparsed_formulas,
+        0,
+        "prefixed formulas re-parse"
+    );
+    assert_eq!(s2.get_cell_display(0, 0, 4), "10");
+    assert_eq!(s2.get_cell_display(0, 1, 4), "20");
+    assert_eq!(s2.get_cell_input(0, 1, 4), "=LET(x,A1,x*2)");
+}
