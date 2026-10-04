@@ -2,6 +2,8 @@
 
 What `paged.sheet` ships and what it does not, read from the code at commit `71f37d7`
 (`@paged-media/sheet` 0.1.0-canary.8). How the parts fit is in [`architecture.md`](architecture.md).
+The gaps against the everyday fundamentals of a spreadsheet, with their classes and the order
+in which they are closed, are in [`design/analysis-2026-10-04.md`](design/analysis-2026-10-04.md).
 
 ## Shipped
 

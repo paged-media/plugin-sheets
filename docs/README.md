@@ -10,6 +10,9 @@ What this folder holds.
 - [`adr/`](adr/README.md): the decision records of this repository, 016 and 500–509.
 - [`design/data-provider-consumer.md`](design/data-provider-consumer.md): how a sheet is
   filled from a dataset that another plugin publishes through the host.
+- [`design/analysis-2026-10-04.md`](design/analysis-2026-10-04.md): the plugin measured
+  against the everyday fundamentals of a spreadsheet, with the test, CI and performance state
+  as found on 2026-10-04 and the records it corrected.
 
 One document stays at the repo root: [`DECIMAL-SPIKE.md`](../DECIMAL-SPIKE.md), the measured
 comparison of `f64` and exact decimal arithmetic behind [ADR 501](adr/501-f64-numbers.md).
