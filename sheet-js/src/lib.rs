@@ -587,6 +587,48 @@ mod wasm {
         }
     }
 
+    #[wasm_bindgen]
+    impl SheetEngine {
+        // ── Wave 6: formatting & layout ──────────────────────────────
+
+        /// Apply a partial cell style to a range (or a defined name / table
+        /// name): `patch` is `{numFmt?, fontName?, fontSize?, bold?,
+        /// italic?, underline?, fontColor?, fill?, borderTop?/Right?/
+        /// Bottom?/Left?: {style, color?}, hAlign?, vAlign?, wrap?}`.
+        /// Returns `{cells, styles}`.
+        pub fn set_style(
+            &mut self,
+            sheet: u16,
+            range: &str,
+            patch: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let patch: crate::core::StylePatchArg = serde_wasm_bindgen::from_value(patch)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let r = self
+                .session
+                .set_style(sheet, range, patch)
+                .map_err(map_err)?;
+            to_js(&r)
+        }
+
+        /// The full style of one cell (the `set_style` patch shape, every
+        /// field present).
+        pub fn get_style(&self, sheet: u16, row: u32, col: u32) -> Result<JsValue, JsValue> {
+            let r = self.session.get_style(sheet, row, col).map_err(map_err)?;
+            to_js(&r)
+        }
+
+        /// Resolve a range argument (A1, `Sheet!A1:B2`, a defined name or a
+        /// table name) as seen from `sheet`: `{sheet, range}` (range in A1).
+        pub fn resolve_range(&self, sheet: u16, text: &str) -> Result<JsValue, JsValue> {
+            let r = self
+                .session
+                .resolve_range_a1(sheet, text)
+                .map_err(map_err)?;
+            to_js(&r)
+        }
+    }
+
     impl Default for SheetEngine {
         fn default() -> Self {
             Self::new()

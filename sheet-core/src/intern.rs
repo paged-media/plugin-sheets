@@ -88,6 +88,31 @@ impl<T: Eq + Hash> Interner<T> {
         id
     }
 
+    /// Append `value` WITHOUT deduplication, returning its new id. An equal
+    /// earlier value keeps answering [`intern`](Self::intern) (first wins).
+    /// For tables whose ids are positional in an external format (the xlsx
+    /// `cellXfs` index is a cell's `StyleId`), where two equal entries must
+    /// still keep two ids.
+    pub fn push(&mut self, value: T) -> u32 {
+        let id = self.values.len() as u32;
+        self.index.entry(hash_of(&value)).or_default().push(id);
+        self.values.push(value);
+        id
+    }
+
+    /// Replace the value at `id` (no-op when out of range), keeping every
+    /// other id. The dedup index is rebuilt (first occurrence wins).
+    pub fn replace(&mut self, id: u32, value: T) {
+        let Some(slot) = self.values.get_mut(id as usize) else {
+            return;
+        };
+        *slot = value;
+        self.index.clear();
+        for (i, v) in self.values.iter().enumerate() {
+            self.index.entry(hash_of(v)).or_default().push(i as u32);
+        }
+    }
+
     /// Resolve an id to its value, or `None` if out of range.
     pub fn get(&self, id: u32) -> Option<&T> {
         self.values.get(id as usize)
@@ -126,6 +151,18 @@ mod tests {
         assert_eq!(a, a2);
         assert_ne!(a, b);
         assert_eq!(it.len(), 2);
+    }
+
+    #[test]
+    fn push_keeps_duplicates_positional() {
+        let mut it: Interner<String> = Interner::new();
+        let a = it.push("x".into());
+        let b = it.push("x".into());
+        assert_eq!((a, b), (0, 1));
+        assert_eq!(it.intern("x".into()), 0, "first occurrence answers intern");
+        it.replace(0, "y".into());
+        assert_eq!(it.get(0).map(String::as_str), Some("y"));
+        assert_eq!(it.intern("x".into()), 1, "index rebuilt after replace");
     }
 
     #[test]

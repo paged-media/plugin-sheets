@@ -66,6 +66,7 @@ pub mod rels;
 pub mod sheet_doc;
 pub mod splice;
 pub mod structure;
+pub mod style_edit;
 pub mod write;
 
 pub use error::XlsxError;
@@ -78,6 +79,7 @@ pub use parts::data_validation::{DataValidation, DvKind, SheetDataValidations};
 pub use parts::external_link::{ExternalBook, ExternalLinks};
 pub use parts::freeze::FreezePanes;
 pub use parts::styles::{VisualStyle, VisualStyles};
+pub use style_edit::{EdgePatch, StylePatch};
 
 use opc::{ModeledKind, OpcContainer, PartEntry};
 use parts::chart::{ParsedChart, SheetResolver};
@@ -189,6 +191,9 @@ pub struct XlsxDocument {
     /// The calc settings as LOADED: `save` re-emits `<calcPr>` only when the
     /// model's iteration knobs differ from these.
     loaded_calc: sheet_core::calc_settings::CalcSettings,
+    /// The styles part name, when the package has one (Wave 6: style
+    /// authoring splices it, or creates it).
+    styles_part: Option<String>,
 }
 
 /// A name→id resolver over the workbook's sheet list, for chart `c:f` refs.
@@ -595,6 +600,7 @@ impl XlsxDocument {
             workbook_part,
             wb_rels_part,
             loaded_calc,
+            styles_part,
         })
     }
 

@@ -95,6 +95,7 @@ pub mod eval;
 pub mod external;
 pub mod graph;
 pub mod iterate;
+pub mod layout;
 #[cfg(feature = "perf-counters")]
 pub mod perf;
 pub mod spill;

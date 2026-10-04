@@ -85,6 +85,63 @@ pub struct VisualAttrs {
     pub border_right: bool,
     pub border_bottom: bool,
     pub border_left: bool,
+    /// Underlined text (Wave 6, additive).
+    pub underline: bool,
+    /// Vertical alignment inside the cell: `"top"`, `"center"` or
+    /// `"bottom"`; `None` = the document default (bottom).
+    pub v_align: Option<String>,
+    /// Wrap text inside the cell.
+    pub wrap: bool,
+    /// The per-edge border LINES (style, weight, colour) behind the
+    /// presence flags above; `None` for an edge without a line.
+    pub border_lines: BorderLines,
+}
+
+/// One border edge's line (Wave 6): the xlsx style name (`thin`, `medium`,
+/// `thick`, `dashed`, `dotted`, `double`, `hair`, …), its weight in points
+/// (the style's nominal stroke) and its colour (`#RRGGBB`, `None` = auto).
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BorderLine {
+    pub style: String,
+    pub weight_pt: f64,
+    pub rgb: Option<String>,
+}
+
+impl BorderLine {
+    /// The nominal stroke weight (pt) of an xlsx border style: Excel draws
+    /// hair/thin/medium/thick as 1/4, 1, 2 and 3 device pixels at 96 dpi.
+    pub fn weight_of(style: &str) -> f64 {
+        match style {
+            "hair" => 0.25,
+            "medium" | "mediumDashed" | "mediumDashDot" | "mediumDashDotDot" | "slantDashDot" => {
+                1.5
+            }
+            "thick" | "double" => 2.25,
+            _ => 0.75,
+        }
+    }
+}
+
+/// The four edges' [`BorderLine`]s.
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BorderLines {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<BorderLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<BorderLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<BorderLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<BorderLine>,
+}
+
+impl BorderLines {
+    /// True when no edge carries a line.
+    pub fn is_empty(&self) -> bool {
+        self.top.is_none() && self.right.is_none() && self.bottom.is_none() && self.left.is_none()
+    }
 }
 
 impl VisualAttrs {
@@ -95,7 +152,7 @@ impl VisualAttrs {
     }
 
     /// Promote to a wire [`LoweredStyle`] under the given `key`.
-    fn into_lowered(self, key: u32) -> LoweredStyle {
+    pub(crate) fn into_lowered(self, key: u32) -> LoweredStyle {
         LoweredStyle {
             key,
             bold: self.bold,
@@ -108,6 +165,10 @@ impl VisualAttrs {
             border_right: self.border_right,
             border_bottom: self.border_bottom,
             border_left: self.border_left,
+            underline: self.underline,
+            v_align: self.v_align,
+            wrap: self.wrap,
+            border_lines: self.border_lines,
         }
     }
 }
@@ -184,6 +245,9 @@ struct StyleKeyless {
     border_right: bool,
     border_bottom: bool,
     border_left: bool,
+    /// The Wave 6 facets (underline, vertical alignment, wrap, border
+    /// lines), keyed by their debug rendering (f64 weights have no `Hash`).
+    extra: String,
 }
 
 impl StyleKeyless {
@@ -199,6 +263,7 @@ impl StyleKeyless {
             border_right: s.border_right,
             border_bottom: s.border_bottom,
             border_left: s.border_left,
+            extra: format!("{:?}", (s.underline, &s.v_align, s.wrap, &s.border_lines)),
         }
     }
 }

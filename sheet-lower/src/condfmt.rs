@@ -434,6 +434,11 @@ pub fn fold_override(base: &VisualAttrs, over: &VisualAttrs) -> VisualAttrs {
         border_right: base.border_right || over.border_right,
         border_bottom: base.border_bottom || over.border_bottom,
         border_left: base.border_left || over.border_left,
+        // A dxf never restates these facets; the base keeps them.
+        underline: base.underline || over.underline,
+        v_align: base.v_align.clone(),
+        wrap: base.wrap,
+        border_lines: base.border_lines.clone(),
     }
 }
 

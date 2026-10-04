@@ -166,6 +166,15 @@ pub struct VisualStyle {
     pub border_right: bool,
     pub border_bottom: bool,
     pub border_left: bool,
+    /// Underlined text (Wave 6).
+    pub underline: bool,
+    /// `<alignment vertical>` (`top` / `center` / `bottom`), `None` = default.
+    pub v_align: Option<String>,
+    /// `<alignment wrapText="1">`.
+    pub wrap: bool,
+    /// Per-edge border lines (style, weight, colour) behind the presence
+    /// flags.
+    pub border_lines: sheet_lower::BorderLines,
 }
 
 impl VisualStyle {
@@ -229,6 +238,10 @@ impl VisualStyle {
             border_right: self.border_right,
             border_bottom: self.border_bottom,
             border_left: self.border_left,
+            underline: self.underline,
+            v_align: self.v_align.clone(),
+            wrap: self.wrap,
+            border_lines: self.border_lines.clone(),
         }
     }
 }
@@ -298,7 +311,7 @@ pub fn parse(xml: &[u8], styles: &mut StyleTable) -> Result<ParsedStyles, XlsxEr
 
     let mut xf_to_style = Vec::with_capacity(parsed.xfs.len());
     let mut visual = VisualStyles::default();
-    for xf in &parsed.xfs {
+    for (i, xf) in parsed.xfs.iter().enumerate() {
         // Custom code wins (ids >= 164 are always custom); else built-in.
         let code: String = parsed
             .custom_fmts
@@ -312,9 +325,18 @@ pub fn parse(xml: &[u8], styles: &mut StyleTable) -> Result<ParsedStyles, XlsxEr
             font: xf.font_id,
             fill: xf.fill_id,
             border: xf.border_id,
-            align: sheet_core::Align::General,
+            align: model_align(xf.h_align.as_deref()),
         };
-        let id = styles.intern_style(style);
+        // POSITIONAL ids (Wave 6): `StyleId == cellXfs index`, so two `<xf>`
+        // records the frozen `CellStyle` cannot tell apart keep their own ids
+        // and the writer's `s=` index stays the one the cell was read with.
+        // xf 0 is the workbook default and takes the seeded id 0.
+        let id = if i == 0 {
+            styles.replace_style(StyleId(0), style);
+            StyleId(0)
+        } else {
+            styles.push_style(style)
+        };
         xf_to_style.push(id);
 
         // The visual interpretation for this xf, resolved through the
@@ -358,6 +380,8 @@ fn dxf_visual(d: &DxfRec) -> VisualStyle {
         border_right: d.border.as_ref().map(|b| b.right).unwrap_or(false),
         border_bottom: d.border.as_ref().map(|b| b.bottom).unwrap_or(false),
         border_left: d.border.as_ref().map(|b| b.left).unwrap_or(false),
+        underline: d.font.as_ref().map(|f| f.underline).unwrap_or(false),
+        ..VisualStyle::default()
     }
 }
 
@@ -393,6 +417,7 @@ fn visual_of(parsed: &RawStyles, xf: &XfRow) -> VisualStyle {
                 vs.font_name = f.name.clone();
             }
             vs.text_rgb = f.color.clone();
+            vs.underline = f.underline;
         }
     }
 
@@ -410,10 +435,31 @@ fn visual_of(parsed: &RawStyles, xf: &XfRow) -> VisualStyle {
             vs.border_right = b.right;
             vs.border_bottom = b.bottom;
             vs.border_left = b.left;
+            vs.border_lines = b.lines.clone();
         }
     }
 
+    // Alignment (Wave 6): vertical placement and wrap. The horizontal
+    // alignment rides the frozen `CellStyle::align`.
+    vs.v_align = xf
+        .v_align
+        .clone()
+        .filter(|v| matches!(v.as_str(), "top" | "center"));
+    vs.wrap = xf.wrap;
+
     vs
+}
+
+/// The frozen model's horizontal alignment of an `<alignment horizontal>`
+/// value (`centerContinuous` reads as centred; `justify`/`distributed` as
+/// left — the model has no justified slot; `fill`/`general` as general).
+fn model_align(h: Option<&str>) -> sheet_core::Align {
+    match h {
+        Some("left") | Some("justify") | Some("distributed") => sheet_core::Align::Left,
+        Some("center") | Some("centerContinuous") => sheet_core::Align::Center,
+        Some("right") => sheet_core::Align::Right,
+        _ => sheet_core::Align::General,
+    }
 }
 
 /// The raw, index-keyed sub-tables parsed from `styles.xml` before the xf
@@ -448,6 +494,7 @@ struct FontRec {
     size_pt: Option<f64>,
     name: Option<String>,
     color: Option<String>,
+    underline: bool,
 }
 
 /// One `<fill>`: the solid pattern foreground colour resolved to `#RRGGBB`
@@ -466,6 +513,8 @@ struct BorderRec {
     right: bool,
     bottom: bool,
     left: bool,
+    /// The edges' line style + colour (Wave 6).
+    lines: sheet_lower::BorderLines,
 }
 
 struct XfRow {
@@ -477,6 +526,10 @@ struct XfRow {
     apply_font: Option<bool>,
     apply_fill: Option<bool>,
     apply_border: Option<bool>,
+    /// `<alignment>` (Wave 6): horizontal / vertical / wrapText.
+    h_align: Option<String>,
+    v_align: Option<String>,
+    wrap: bool,
 }
 
 /// Resolve a colour element's attributes (`rgb`/`indexed`/`theme`/`auto`) to
@@ -551,6 +604,9 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
     let mut cur_border: Option<BorderRec> = None;
     // Inside a `<fill>`, only a `solid` patternFill contributes a colour.
     let mut fill_is_solid = false;
+    // The border edge currently open (`<left style="thin"><color/></left>`),
+    // so its `<color>` child lands on that edge.
+    let mut cur_edge: Option<Edge> = None;
 
     loop {
         match reader.read_event_into(&mut buf)? {
@@ -589,6 +645,18 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                         }
                     }
                     b"xf" if in_cell_xfs => xfs.push(read_xf(&e)?),
+                    // A border edge WITH children (`<left style="thin"><color
+                    // indexed="64"/></left>` — the form Excel writes).
+                    b"top" | b"right" | b"bottom" | b"left" if cur_border.is_some() => {
+                        let edge = Edge::of(local.as_ref());
+                        set_border_edge(&mut cur_border, &e, edge)?;
+                        cur_edge = Some(edge);
+                    }
+                    b"color" if cur_edge.is_some() => {
+                        set_edge_color(&mut cur_border, cur_edge, &e)?
+                    }
+                    b"alignment" if in_cell_xfs => read_alignment(&e, xfs.last_mut())?,
+                    b"u" if cur_font.is_some() => set_underline(&mut cur_font, &e)?,
                     _ => {}
                 }
             }
@@ -649,10 +717,16 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                         set_border_edge(&mut cur_border, &e, Edge::Left)?
                     }
                     b"xf" if in_cell_xfs => xfs.push(read_xf(&e)?),
+                    b"color" if cur_edge.is_some() => {
+                        set_edge_color(&mut cur_border, cur_edge, &e)?
+                    }
+                    b"alignment" if in_cell_xfs => read_alignment(&e, xfs.last_mut())?,
+                    b"u" if cur_font.is_some() => set_underline(&mut cur_font, &e)?,
                     _ => {}
                 }
             }
             Event::End(e) => match e.local_name().as_ref() {
+                b"top" | b"right" | b"bottom" | b"left" => cur_edge = None,
                 b"fonts" => in_fonts = false,
                 b"fills" => in_fills = false,
                 b"borders" => in_borders = false,
@@ -708,11 +782,73 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
 }
 
 /// Which border edge a `<top>`/`<right>`/`<bottom>`/`<left>` element sets.
+#[derive(Copy, Clone)]
 enum Edge {
     Top,
     Right,
     Bottom,
     Left,
+}
+
+impl Edge {
+    fn of(local: &[u8]) -> Edge {
+        match local {
+            b"top" => Edge::Top,
+            b"right" => Edge::Right,
+            b"bottom" => Edge::Bottom,
+            _ => Edge::Left,
+        }
+    }
+}
+
+/// The open edge's line slot.
+fn edge_line(b: &mut BorderRec, edge: Edge) -> &mut Option<sheet_lower::BorderLine> {
+    match edge {
+        Edge::Top => &mut b.lines.top,
+        Edge::Right => &mut b.lines.right,
+        Edge::Bottom => &mut b.lines.bottom,
+        Edge::Left => &mut b.lines.left,
+    }
+}
+
+/// A `<color>` inside an open border edge colours that edge's line.
+fn set_edge_color(
+    cur: &mut Option<BorderRec>,
+    edge: Option<Edge>,
+    e: &quick_xml::events::BytesStart<'_>,
+) -> Result<(), XlsxError> {
+    let rgb = resolve_color(e)?;
+    if let (Some(b), Some(edge)) = (cur.as_mut(), edge) {
+        if let Some(line) = edge_line(b, edge).as_mut() {
+            line.rgb = rgb;
+        }
+    }
+    Ok(())
+}
+
+/// `<u/>` / `<u val="double"/>` underline the font; `val="none"` does not.
+fn set_underline(
+    cur: &mut Option<FontRec>,
+    e: &quick_xml::events::BytesStart<'_>,
+) -> Result<(), XlsxError> {
+    let on = attr(e, b"val")?.is_none_or(|v| v != "none");
+    if let Some(f) = cur.as_mut() {
+        f.underline = on;
+    }
+    Ok(())
+}
+
+/// `<alignment horizontal vertical wrapText>` of the `<xf>` being read.
+fn read_alignment(
+    e: &quick_xml::events::BytesStart<'_>,
+    xf: Option<&mut XfRow>,
+) -> Result<(), XlsxError> {
+    if let Some(xf) = xf {
+        xf.h_align = attr(e, b"horizontal")?;
+        xf.v_align = attr(e, b"vertical")?;
+        xf.wrap = attr(e, b"wrapText")?.is_some_and(|v| v == "1" || v == "true");
+    }
+    Ok(())
 }
 
 /// Mark a border edge present if it carries a non-empty `style` attribute
@@ -722,8 +858,14 @@ fn set_border_edge(
     e: &quick_xml::events::BytesStart<'_>,
     edge: Edge,
 ) -> Result<(), XlsxError> {
-    let present = attr(e, b"style")?.is_some_and(|s| !s.is_empty());
+    let style = attr(e, b"style")?.filter(|s| !s.is_empty() && s != "none");
+    let present = style.is_some();
     if let Some(b) = cur.as_mut() {
+        *edge_line(b, edge) = style.map(|st| sheet_lower::BorderLine {
+            weight_pt: sheet_lower::BorderLine::weight_of(&st),
+            style: st,
+            rgb: None,
+        });
         match edge {
             Edge::Top => b.top = present,
             Edge::Right => b.right = present,
@@ -789,6 +931,9 @@ fn read_xf(e: &quick_xml::events::BytesStart<'_>) -> Result<XfRow, XlsxError> {
         apply_font: bool_attr(b"applyFont")?,
         apply_fill: bool_attr(b"applyFill")?,
         apply_border: bool_attr(b"applyBorder")?,
+        h_align: None,
+        v_align: None,
+        wrap: false,
     })
 }
 

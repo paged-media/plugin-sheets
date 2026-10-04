@@ -99,7 +99,7 @@ pub use paginate::{paginate, FrameBox, Page, PaginateOptions};
 // deduplicated `LoweredContent.styles` table + per-cell `style_key`. The SAME
 // resolver feeds the grid scene (cross-surface parity).
 pub mod style;
-pub use style::{NoStyles, StyleResolver, VisualAttrs, VisualStyleSource};
+pub use style::{BorderLine, BorderLines, NoStyles, StyleResolver, VisualAttrs, VisualStyleSource};
 
 // ---- Conditional formatting → style overrides (T2 cond-fmt track; §10.4). ----
 //
@@ -222,6 +222,20 @@ pub struct LoweredStyle {
     pub border_right: bool,
     pub border_bottom: bool,
     pub border_left: bool,
+    /// Underlined text (Wave 6; omitted on the wire when false).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    /// Vertical alignment (`"top"` / `"center"` / `"bottom"`); omitted when
+    /// the default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v_align: Option<String>,
+    /// Wrap text inside the cell (omitted when false).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub wrap: bool,
+    /// Per-edge border lines (style, weight, colour); omitted when no edge
+    /// carries one. The `border_*` flags above stay the presence summary.
+    #[serde(skip_serializing_if = "BorderLines::is_empty")]
+    pub border_lines: BorderLines,
 }
 
 impl LoweredStyle {
@@ -240,6 +254,10 @@ impl LoweredStyle {
             border_right: false,
             border_bottom: false,
             border_left: false,
+            underline: false,
+            v_align: None,
+            wrap: false,
+            border_lines: BorderLines::default(),
         }
     }
 }
@@ -763,19 +781,7 @@ fn intern_effective(
     if attrs.is_default() {
         return 0;
     }
-    let lowered = LoweredStyle {
-        key: 0,
-        bold: attrs.bold,
-        italic: attrs.italic,
-        font_size_pt: attrs.font_size_pt,
-        font_name: attrs.font_name,
-        fill_rgb: attrs.fill_rgb,
-        text_rgb: attrs.text_rgb,
-        border_top: attrs.border_top,
-        border_right: attrs.border_right,
-        border_bottom: attrs.border_bottom,
-        border_left: attrs.border_left,
-    };
+    let lowered = attrs.into_lowered(0);
     let dk = StyleKeyless::of(&lowered);
     if let Some(&existing) = dedup.get(&dk) {
         return existing;
@@ -804,6 +810,9 @@ struct StyleKeyless {
     border_right: bool,
     border_bottom: bool,
     border_left: bool,
+    /// The Wave 6 facets (underline, vertical alignment, wrap, border
+    /// lines), keyed by their debug rendering (f64 weights have no `Hash`).
+    extra: String,
 }
 
 impl StyleKeyless {
@@ -819,6 +828,7 @@ impl StyleKeyless {
             border_right: s.border_right,
             border_bottom: s.border_bottom,
             border_left: s.border_left,
+            extra: format!("{:?}", (s.underline, &s.v_align, s.wrap, &s.border_lines)),
         }
     }
 }

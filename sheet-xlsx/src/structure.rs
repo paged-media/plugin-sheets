@@ -301,13 +301,13 @@ fn escape_text(s: &str) -> String {
 
 impl XlsxDocument {
     /// The current bytes of a part (`None` when absent).
-    fn part_bytes(&self, name: &str) -> Option<Vec<u8>> {
+    pub(crate) fn part_bytes(&self, name: &str) -> Option<Vec<u8>> {
         self.container.part(name).map(|p| p.bytes().to_vec())
     }
 
     /// Replace a part's bytes in place (its kind and dirty flag are kept, so
     /// a modelled part keeps re-emitting these bytes verbatim).
-    fn set_part_bytes(&mut self, name: &str, bytes: Vec<u8>) {
+    pub(crate) fn set_part_bytes(&mut self, name: &str, bytes: Vec<u8>) {
         match self.container.part_mut(name) {
             Some(PartEntry::Opaque { bytes: b, .. }) => *b = bytes,
             Some(PartEntry::Modeled { raw, .. }) => *raw = bytes,
@@ -330,7 +330,7 @@ impl XlsxDocument {
     }
 
     /// The workbook part bytes (it always exists after `open`).
-    fn workbook_bytes(&self) -> Result<Vec<u8>, XlsxError> {
+    pub(crate) fn workbook_bytes(&self) -> Result<Vec<u8>, XlsxError> {
         self.part_bytes(&self.workbook_part)
             .ok_or_else(|| XlsxError::Structure("missing workbook part".into()))
     }
@@ -380,7 +380,11 @@ impl XlsxDocument {
     }
 
     /// Splice a `<Relationship>` into the workbook `.rels`; returns its id.
-    fn add_workbook_rel(&mut self, rel_type: &str, target: &str) -> Result<String, XlsxError> {
+    pub(crate) fn add_workbook_rel(
+        &mut self,
+        rel_type: &str,
+        target: &str,
+    ) -> Result<String, XlsxError> {
         let rels_part = self.wb_rels_part.clone();
         let raw = self.part_bytes(&rels_part).unwrap_or_else(|| {
             br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -440,7 +444,7 @@ impl XlsxDocument {
     }
 
     /// Add a `[Content_Types]` override (model + bytes).
-    fn add_override(&mut self, part: &str, content_type: &str) -> Result<(), XlsxError> {
+    pub(crate) fn add_override(&mut self, part: &str, content_type: &str) -> Result<(), XlsxError> {
         let pn = format!("/{part}");
         if self.container.content_types.has_override(&pn) {
             return Ok(());

@@ -91,6 +91,25 @@ impl StyleTable {
         StyleId(self.styles.intern(style))
     }
 
+    /// Append a style WITHOUT deduplication (additive, Wave 6). The xlsx
+    /// layer keeps `StyleId == cellXfs index`, so two `<xf>` records the
+    /// frozen `CellStyle` cannot tell apart (they differ in an attribute it
+    /// does not model) still keep their own ids — the writer emits a cell's
+    /// `StyleId` as its `s=` index.
+    pub fn push_style(&mut self, style: CellStyle) -> StyleId {
+        StyleId(self.styles.push(style))
+    }
+
+    /// Replace the style at `id` in place (no-op when out of range).
+    pub fn replace_style(&mut self, id: StyleId, style: CellStyle) {
+        self.styles.replace(id.0, style);
+    }
+
+    /// The number of style ids (the seeded default included).
+    pub fn style_count(&self) -> usize {
+        self.styles.len()
+    }
+
     /// Resolve a `StyleId`. Out-of-range ids fall back to the default style.
     pub fn style(&self, id: StyleId) -> &CellStyle {
         self.styles.get(id.0).unwrap_or_else(|| {
