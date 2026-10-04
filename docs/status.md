@@ -56,8 +56,8 @@ in which they are closed, are in [`design/analysis-2026-10-04.md`](design/analys
   cleared on exit and on load. Placing a range is not one undo step in the document: the
   frame, the table, each cell's text and the cell decoration are separate writes.
 - **Sorting** refuses a range that contains formulas or spilled cells. **Cell style from
-  selection** creates and fills the style; the panel states that applying it is pending on
-  the host.
+  selection** creates and fills the style and applies it to the selected cell; the panel
+  reports whether the host accepted the apply.
 - **Clock.** The engine takes the current time as an injected serial; the bundle never sets
   it, so `NOW` and `TODAY` evaluate from serial 0. The random seed is a fixed default.
 - **Formulas** are the Excel en-US dialect only. On load, a formula with an unregistered

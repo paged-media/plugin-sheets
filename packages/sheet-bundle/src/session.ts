@@ -331,11 +331,10 @@ export interface WorkbookSession {
    *  null-createdId precedent), `setStyleProperty` to populate it, then
    *  ATTEMPT `setElementProperty{appliedCellStyle}` to apply it back.
    *
-   *  HONEST RESIDUAL (verified against the plugin-api contract): applying a
-   *  cell style via `appliedCellStyle` is wire-shape-only today
-   *  ("UnsupportedProperty until the Table NodeId surface lands",
-   *  wire.d.ts CellStyleSummary). So the style is minted + populated (these
-   *  land), and the apply is reported as `applied` true/false honestly.
+   *  The engine applies `appliedCellStyle` on a `tableCell` element (S-04,
+   *  probe-verified; the old "wire-shape-only" note in wire.d.ts is stale).
+   *  A host can still refuse the apply, so the outcome is reported as
+   *  `applied` true/false rather than assumed.
    *
    *  Returns the outcome: the minted style id, the count of captured
    *  properties, and whether the apply-back took. `ok:false` carries the
@@ -1589,9 +1588,8 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         return { ok: false as const, message: "minting the cell style failed" };
       }
 
-      // Attempt the APPLY-BACK. wire.d.ts marks appliedCellStyle wire-shape-
-      // only (UnsupportedProperty until the Table NodeId surface lands), so a
-      // rejection here is EXPECTED — reported honestly, never faked.
+      // The APPLY-BACK. The engine applies appliedCellStyle on a tableCell;
+      // a host that refuses it is reported, never faked.
       let applied = false;
       let applyMessage: string | null = null;
       try {
@@ -1599,13 +1597,13 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         applied = r.applied;
         if (!r.applied) {
           applyMessage =
-            "style created but not applied to the cell — appliedCellStyle is " +
-            "not yet supported on table cells (Table NodeId surface pending)";
+            "style created but not applied to the cell — the host refused " +
+            "appliedCellStyle";
           host.log.info(`newCellStyleFromSelection: ${applyMessage}`);
         }
       } catch (err) {
         applyMessage =
-          "style created but the apply-back threw (appliedCellStyle pending)";
+          "style created but applying it threw (appliedCellStyle)";
         host.log.info("newCellStyleFromSelection: apply-back threw", err);
       }
 

@@ -547,10 +547,9 @@ export function makeWorkbookPanel(
               </ul>
             )}
 
-            {/* New cell style from the selected cell (S-04). Honest about the
-             *  residual: the style is minted + populated from the cell's
-             *  appearance; applying it BACK is wire-shape-only today (the
-             *  message reports whether the apply took). */}
+            {/* New cell style from the selected cell (S-04): the style is
+             *  minted + populated from the cell's appearance and applied
+             *  back to the cell (the message reports whether the apply took). */}
             <div style={kicker}>New cell style</div>
             <input
               data-sheet-cellstyle-name
@@ -584,8 +583,7 @@ export function makeWorkbookPanel(
               }}
             >
               Captures fill + borders from the selected cell over a lowered
-              table. Applying the style to cells is pending the platform Table
-              style surface.
+              table and applies the new style to that cell.
             </p>
 
             {/* INSPECT — the three read-only inventories the engine has

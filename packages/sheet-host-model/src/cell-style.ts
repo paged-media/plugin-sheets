@@ -27,12 +27,10 @@
 // already-decided document properties into style-collection writes. The
 // engine owns the cell appearance; the platform owns style minting.
 //
-// HONESTY (the residual the RFI names, verified against the plugin-api
-// contract — wire.d.ts CellStyleSummary): APPLYING the minted style back to
-// the cell via `appliedCellStyle` is "wire-shape-only (UnsupportedProperty
-// until the Table NodeId surface lands)". So this module mints + populates
-// (which DO land); the caller attempts the apply and reports the platform's
-// rejection rather than pretending it took.
+// The apply-back: the engine applies `appliedCellStyle` on a `tableCell`
+// element (S-04, probe-verified; the "wire-shape-only" note on wire.d.ts
+// CellStyleSummary is stale). This module mints + populates; the caller
+// sends the apply and reports a host refusal rather than assuming success.
 
 import type { ElementId, Mutation, PropertyPath, Value } from "@paged-media/plugin-api";
 
@@ -79,9 +77,8 @@ export interface ReadEntry {
  *  properties. `createOp` mints (with our own `selfId` — the null-createdId
  *  precedent so the caller never needs `createdId` back); `propertyOps`
  *  populate it. `capturedPaths` lists what was carried (for the honest UI
- *  count). The `applyOp` is the APPLY-BACK the caller attempts separately —
- *  it is wire-shape-only today (see the header), so it is offered, not
- *  bundled into the mint batch. */
+ *  count). The `applyOp` is the APPLY-BACK the caller sends separately, so
+ *  a refused apply cannot roll back the mint batch. */
 export interface CellStylePlan {
   styleId: string;
   createOp: Mutation;
