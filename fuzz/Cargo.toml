@@ -1,0 +1,50 @@
+# paged.sheet fuzz targets (cargo-fuzz). NOT a member of the main workspace:
+# the `[workspace]` table below makes this its own root, so `cargo build
+# --workspace` / nextest never compile it. Needs nightly:
+#
+#   cargo +nightly fuzz run parse_formula
+#   cargo +nightly fuzz run xlsx_open -- -max_total_time=60
+#
+# CI runs these nightly only (.github/workflows/fuzz.yml), never on PRs.
+[package]
+name = "sheet-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only OR LicenseRef-PMEL"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sheet-core = { path = "../sheet-core" }
+sheet-parser = { path = "../sheet-parser" }
+sheet-xlsx = { path = "../sheet-xlsx" }
+sheet-js = { path = "../sheet-js" }
+
+[[bin]]
+name = "parse_formula"
+path = "fuzz_targets/parse_formula.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xlsx_open"
+path = "fuzz_targets/xlsx_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xlsx_load_recalc"
+path = "fuzz_targets/xlsx_load_recalc.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

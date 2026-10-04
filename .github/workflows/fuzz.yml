@@ -1,0 +1,49 @@
+name: fuzz
+# Nightly only — never on PRs. cargo-fuzz targets live in fuzz/ (its own
+# workspace, so the main build and nextest never compile them):
+#   parse_formula     parse -> print -> reparse must be a fixpoint
+#   xlsx_open         XlsxDocument::open (+ save) never panics / OOMs
+#   xlsx_load_recalc  the product load path (open, parse, recalc_all, save)
+# Seeds: corpus/xlsx-corpus, corpus/xlsx-recalc and the fn-corpus formulas,
+# plus every reproducer committed under fuzz/regressions/. A crash uploads
+# its artifact and fails the run.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse_formula, xlsx_open, xlsx_load_recalc]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - name: seed corpus
+        run: |
+          mkdir -p fuzz/corpus/${{ matrix.target }}
+          if [ "${{ matrix.target }}" = parse_formula ]; then
+            cut -f2 corpus/fn-corpus/*/*.golden.tsv | grep '^=' | sed 's/^=//' \
+              | split -l 1 - fuzz/corpus/parse_formula/seed-
+            cp fuzz/regressions/parse_formula-* fuzz/corpus/parse_formula/
+          else
+            cp corpus/xlsx-corpus/*.xlsx corpus/xlsx-recalc/*.xlsx fuzz/corpus/${{ matrix.target }}/
+            cp fuzz/regressions/xlsx_* fuzz/corpus/${{ matrix.target }}/
+          fi
+      - name: fuzz ${{ matrix.target }} (20 min)
+        working-directory: fuzz
+        run: >
+          cargo +nightly fuzz run ${{ matrix.target }} --
+          -max_total_time=1200 -rss_limit_mb=2048 -max_len=1048576
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/

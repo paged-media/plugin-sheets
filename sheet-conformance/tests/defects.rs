@@ -105,3 +105,43 @@ fn defect_fixed_decimals_round_the_binary_value__feat__sheet_format_engine() {
         "formatter rounds the binary value, not Excel's 15-digit decimal: {wrong:?}"
     );
 }
+
+/// Found by the `parse_formula` fuzz target (`fuzz/regressions/
+/// parse_formula-union-print-not-reparsable.txt`). A parenthesised union
+/// `(1/0,-100,-1000)` parses, but the printer emits `1/0,(-100,(-1000))` —
+/// the outer parentheses are dropped, and the printed text no longer parses
+/// ("unexpected trailing token"). The xlsx writer re-emits edited formulas
+/// through this printer, so such a cell would be saved as a formula Excel
+/// (and this engine) cannot read back.
+#[test]
+#[should_panic(expected = "printed union does not reparse")]
+fn defect_union_prints_without_its_parentheses__feat__sheet_parser_dialect() {
+    use sheet_core::{NameId, SheetId};
+    use sheet_parser::{parse, print, ParseCtx, SheetNames};
+    struct Ctx;
+    impl ParseCtx for Ctx {
+        fn sheet_id(&self, _: &str) -> Option<SheetId> {
+            None
+        }
+        fn name_id(&self, _: &str) -> Option<NameId> {
+            None
+        }
+        fn current_sheet(&self) -> SheetId {
+            0
+        }
+    }
+    impl SheetNames for Ctx {
+        fn sheet_name(&self, _: SheetId) -> Option<&str> {
+            Some("Sheet1")
+        }
+        fn defined_name(&self, _: NameId) -> Option<&str> {
+            None
+        }
+    }
+    let f = parse("(1/0,-100,-1000)", &Ctx).expect("the union parses");
+    let printed = print(&f, 0, &Ctx);
+    assert!(
+        parse(&printed, &Ctx).is_ok(),
+        "printed union does not reparse: {printed:?}"
+    );
+}
