@@ -15,7 +15,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@paged-media/plugin-api": "canary"
+    "@paged-media/plugin-api": "0.2.37-canary.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
