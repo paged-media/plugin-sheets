@@ -537,8 +537,8 @@ function fakeChartEngine(): SheetEngine {
   };
 }
 
-describe("sheet_chart_lower_paged_draw: bundle two-phase flow", () => {
-  it("phase 1 emits the vector batch (insertPath) then pours each label", async () => {
+describe("sheet_chart_lower_paged_draw: bundle one-batch flow", () => {
+  it("one batch: the vector art, the label frames and each label's text [sheet.chart.engine]", async () => {
     const { host, mutations, selections } = fakeHost(CREATED, "Story/u9");
     const ok = await lowerChartToFrame(host, fakeChartEngine(), 0);
 
@@ -565,11 +565,15 @@ describe("sheet_chart_lower_paged_draw: bundle two-phase flow", () => {
     // The binding rides the FIRST created element (so it sits after the rect's
     // style ops, not necessarily last in the batch).
     expect(ops.some((o) => o.op === "setPluginMetadata")).toBe(true);
-    // Phase 2 — the label text poured into the resolved story.
-    const pour = mutations.find((m) => m.op === "insertText") as {
-      args: { text: string };
+    // Wave 9 — the label text rides the SAME batch, poured through the
+    // label frame's C-15 handle: one mutate, no story resolution.
+    expect(mutations).toHaveLength(1);
+    const bind = ops.findIndex((o) => o.op === "bindCreated");
+    expect(ops[bind - 1].op).toBe("insertTextFrame");
+    const pour = ops.find((o) => o.op === "insertText") as {
+      args: { text: string; storyId: string };
     };
-    expect(pour.args.text).toBe("Q1");
+    expect(pour.args).toMatchObject({ text: "Q1", storyId: "$h:l0" });
     // The created element is selected.
     expect(selections).toEqual([[CREATED]]);
   });
@@ -792,7 +796,7 @@ function fakeChainEngine() {
 /** A fake host with a real frame chain (2 links), per-frame geometry boxes,
  *  per-frame story resolution (hitTest), table minting (mutate), and an
  *  onDidChange channel the test fires reflow / non-reflow events on. */
-function fakeChainHost(links: FrameChainLink[]) {
+function fakeChainHost(links: FrameChainLink[], opts: { deleteTable?: boolean } = {}) {
   const mutations: Mutation[] = [];
   const listeners: Array<(e: DocumentChangeEvent) => void> = [];
   let tableSeq = 0;
@@ -845,6 +849,15 @@ function fakeChainHost(links: FrameChainLink[]) {
       },
       async mutate(m: Mutation): Promise<MutationOutcome> {
         mutations.push(m);
+        // A pre-66 wire refuses the `deleteTable` variant outright (the
+        // real 0.64 engine's reply, verbatim in shape).
+        const kids = m.op === "batch" ? m.args.ops : [m];
+        if (!opts.deleteTable && kids.some((k) => (k.op as string) === "deleteTable")) {
+          return {
+            applied: false,
+            error: { error: { kind: "notImplemented", details: { what: "malformed message: unknown variant `deleteTable`, expected one of `insertText`" } } },
+          };
+        }
         if (m.op === "insertTable") {
           tableSeq += 1;
           // Realistic structured Table id (as the real engine mints).
@@ -1024,6 +1037,48 @@ describe("sheet_plugin_lower_chain: live multi-frame pagination", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("a host with deleteTable (protocol 66) DELETES the tables a shrink no longer needs [sheet.lower.paginate]", async () => {
+    const { host, mutations } = fakeChainHost(CHAIN, { deleteTable: true });
+    const { engine } = fakeChainEngine();
+    const first = await lowerPaginatedToChain(host, engine, 0, "A1:A6", "Story/f0");
+    expect(first?.tables).toHaveLength(2);
+    engine.paginate = () => [pageFor(0, "r0b", false)];
+    const sub = subscribeChainReflow(host, engine, 0, "A1:A6", "Story/f0", { from: first });
+    const mark = mutations.length;
+    const pass = await sub.refresh();
+    sub.dispose();
+    const after = mutations
+      .slice(mark)
+      .flatMap((m) => (m.op === "batch" ? m.args.ops : [m]));
+    const deletes = after.filter((m) => (m.op as string) === "deleteTable");
+    expect(deletes.map((m) => (m.args as { tableId: string }).tableId)).toEqual(["tbl2"]);
+    // Not emptied: no text op reaches the deleted table.
+    expect(
+      after.some((m) => (m.args as { cell?: { tableId: string } }).cell?.tableId === "tbl2"),
+    ).toBe(false);
+    expect(pass?.tables.map((t) => t.tableId)).toEqual(["tbl1"]);
+  });
+
+  it("a pre-66 host is asked for deleteTable ONCE, then tables are emptied [sheet.lower.paginate]", async () => {
+    const { host, mutations } = fakeChainHost(CHAIN);
+    const { engine } = fakeChainEngine();
+    const first = await lowerPaginatedToChain(host, engine, 0, "A1:A6", "Story/f0");
+    const sub = subscribeChainReflow(host, engine, 0, "A1:A6", "Story/f0", { from: first });
+    engine.paginate = () => [pageFor(0, "r0b", false)];
+    await sub.refresh();
+    // Grow back to two pages, then shrink again.
+    engine.paginate = () => [pageFor(0, "r0", false), pageFor(1, "r1", false)];
+    await sub.refresh();
+    engine.paginate = () => [pageFor(0, "r0b", false)];
+    const last = await sub.refresh();
+    sub.dispose();
+    const asked = mutations
+      .flatMap((m) => (m.op === "batch" ? m.args.ops : [m]))
+      .filter((m) => (m.op as string) === "deleteTable");
+    expect(asked).toHaveLength(1);
+    expect(last?.tables.map((t) => t.blank)).toEqual([false, true]);
   });
 
   it("returns null when the story threads no frames", async () => {

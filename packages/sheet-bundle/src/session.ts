@@ -79,7 +79,6 @@ import {
 import {
   CHART_SIZE_PT,
   lowerChartToFrame,
-  removePlacedChart,
   type PlacedChart,
 } from "./lower-chart";
 import { readWorkbookPart, writeWorkbookPart } from "./workbook-part";
@@ -1845,11 +1844,11 @@ export function createWorkbookSession(
           charts.push({ ...placed, contentVersion: version });
           continue;
         }
-        await removePlacedChart(host, placed);
         let replaced: PlacedChart | null = null;
         await lowerChartToFrame(host, engine, placed.chartIndex, {
           placement: { pageId: placed.pageId, bounds: placed.bounds },
           contentVersion: version,
+          replaces: placed,
           onLowered: (p) => {
             replaced = p;
           },

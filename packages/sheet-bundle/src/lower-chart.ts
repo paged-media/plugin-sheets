@@ -25,15 +25,18 @@
 // §2.1: paged.draw is a CORE SDK surface reached through the native wire ops,
 // NEVER another plugin. A lowered chart is document-native vector art.
 //
-// TWO-PHASE (mirrors lower.ts). Phase 1 is ONE undoable batch: every vector
-// path (insertPath) + one insertTextFrame per label + the binding metadata
-// on the first created element. Phase 2 pours each label's text into its new
-// frame's story — resolved through the hitTest read door (the only door that
-// yields a created frame's storyId), exactly as the sheet lower does.
+// ONE BATCH (Wave 9): every vector path (insertPath) + one insertTextFrame
+// per label + the binding metadata on the first created element + each
+// label's text, poured through the frame's C-15 handle — and, on a refresh,
+// the deletes of the chart it replaces. The elements it made come back in
+// the 66 `minted` list (a scene-tree diff on an older host). A host that
+// refuses in-batch handles gets the two-phase lane: the plain batch, then
+// the labels poured into the stories the batch minted (a stories diff).
 
 import type {
   BundleHost,
   ElementId,
+  Mutation,
   PageId,
   SceneTreeNode,
 } from "@paged-media/plugin-api";
@@ -45,6 +48,7 @@ import {
 
 import type { SheetEngine } from "./engine";
 import { storyIdsSnapshot } from "./lower";
+import { doors66, noteMinted } from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
 
 /** The default chart-frame content box, pt (a sensible publishing size; the
@@ -94,6 +98,9 @@ export interface ChartLowerOptions {
   contentVersion?: number;
   /** Called with the placed chart's record on success. */
   onLowered?: (placed: PlacedChart) => void;
+  /** A chart this one REPLACES (a refresh): its elements are deleted in the
+   *  same batch, so the replacement is one undo step. */
+  replaces?: PlacedChart;
 }
 
 /** Every addressable element id in a scene tree, keyed by kind:id. */
@@ -200,24 +207,65 @@ export async function lowerChartToFrame(
     return false;
   }
 
-  // Phase 1 — every vector path + the label frames + binding, one undoable batch.
-  // Snapshot the stories FIRST: the label frames' stories are resolved by
-  // diffing this collection across the batch (see below).
-  const storiesBefore = await storyIdsSnapshot(host);
-  // Wave 4: the scene tree before/after names every element this batch
-  // made, so the chart can be REPLACED when the data changes.
-  const treeBefore = opts?.onLowered ? await readTreeIds(host) : null;
-  const outcome = await host.document.mutate(batch);
-  if (!outcome.applied) {
-    host.log.warn("lowerChart: phase-1 batch rejected", outcome);
-    return false;
+  // ONE batch: every vector path, the label frames, the binding — and each
+  // label's text, poured through the frame's C-15 handle (`bindCreated`
+  // right after its insertTextFrame, the pours at the end so no `$created`
+  // the style/binding ops name moves). One mutate and one undo step for the
+  // whole chart; no story resolution at all.
+  const ops = (batch as { args: { ops: Mutation[] } }).args.ops;
+  const withLabels: Mutation[] = [];
+  const pours: Mutation[] = [];
+  let label = 0;
+  for (const op of ops) {
+    withLabels.push(op);
+    if (op.op !== "insertTextFrame") continue;
+    const handle = `l${label}`;
+    const text = texts[label]?.text ?? "";
+    label += 1;
+    if (text.length === 0) continue;
+    withLabels.push({ op: "bindCreated", args: { handle } });
+    pours.push({ op: "insertText", args: { storyId: `$h:${handle}`, offset: 0, text } });
   }
+
+  // Wave 4: a refresh REPLACES the chart, so it needs every element the
+  // batch made. The 66 `minted` list names them; a host that does not send
+  // it gets the scene-tree diff (read before, read after).
+  const doors = doors66(host);
+  const treeBefore =
+    opts?.onLowered && doors.minted !== true ? await readTreeIds(host) : null;
+  const removals = (opts?.replaces?.elementIds ?? []).map((id) => ({
+    op: "deleteFrame" as const,
+    args: { frameId: id.id as string },
+  }));
+  let outcome = await host.document.mutate({
+    op: "batch",
+    args: { ops: [...removals, ...withLabels, ...pours] },
+  });
+  if (!outcome.applied) {
+    if (opts?.replaces) await removePlacedChart(host, opts.replaces);
+    // A host without in-batch handles: the plain batch, then the labels.
+    host.log.debug("lowerChart: one-batch chart refused — two-phase", outcome);
+    const storiesBefore = await storyIdsSnapshot(host);
+    outcome = await host.document.mutate(batch);
+    if (!outcome.applied) {
+      host.log.warn("lowerChart: phase-1 batch rejected", outcome);
+      return false;
+    }
+    await pourLabels(host, storiesBefore, texts);
+  }
+  const minted = noteMinted(host, outcome);
   if (opts?.onLowered) {
-    const treeAfter = treeBefore ? await readTreeIds(host) : null;
-    const elementIds =
-      treeBefore && treeAfter
-        ? [...treeAfter].filter(([k]) => !treeBefore.has(k)).map(([, id]) => id)
-        : [];
+    let elementIds: ElementId[] = [];
+    if (minted) {
+      elementIds = minted.map((m) => m.element);
+    } else {
+      const before = treeBefore ?? null;
+      const treeAfter = before ? await readTreeIds(host) : null;
+      elementIds =
+        before && treeAfter
+          ? [...treeAfter].filter(([k]) => !before.has(k)).map(([, id]) => id)
+          : [];
+    }
     opts.onLowered({
       chartIndex,
       pageId,
@@ -228,40 +276,44 @@ export async function lowerChartToFrame(
     });
   }
 
-  // Phase 2 — pour each label's text into its frame. The batch created one
-  // text frame per label, in `texts` order, and each frame was born with a
-  // story of its own, so the stories that are NEW after the batch are the
-  // labels' stories, in mint order (the engine numbers them ascending).
-  //
-  // This used to hit-test the label's anchor point. The text hit path
-  // cannot see an EMPTY frame (`storyId: null`, verified live — the table
-  // lowering learned it first), so the hit fell through to whatever text
-  // frame lay UNDER the anchor — on a page with prose, the page's own
-  // heading — and the label's text was poured into THAT story at offset 0
-  // ("Q2Q2The chart wall"), while the label frame stayed empty. A resolution
-  // that can answer with someone else's story is not a resolution; the diff
-  // can only answer with a story this batch minted.
+  if (outcome.applied && outcome.createdId) await host.selection.set([outcome.createdId]);
+  return true;
+}
+
+/** The two-phase label pour (a host without in-batch handles): each label's
+ *  text into its frame's story. The batch created one text frame per label,
+ *  in `texts` order, and each frame was born with a story of its own, so the
+ *  stories that are NEW after the batch are the labels' stories, in mint
+ *  order (the engine numbers them ascending).
+ *
+ *  This used to hit-test the label's anchor point. The text hit path cannot
+ *  see an EMPTY frame (`storyId: null`), so the hit fell through to whatever
+ *  text frame lay UNDER the anchor — on a page with prose, the page's own
+ *  heading — and the label's text was poured into THAT story. A resolution
+ *  that can answer with someone else's story is not a resolution; the diff
+ *  can only answer with a story this batch minted. */
+async function pourLabels(
+  host: BundleHost,
+  storiesBefore: ReadonlySet<string>,
+  texts: readonly { text: string }[],
+): Promise<void> {
   const fresh = await newStoryIdsInMintOrder(host, storiesBefore);
   if (fresh.length !== texts.length) {
     host.log.warn(
       `lowerChart: the batch minted ${fresh.length} stor${fresh.length === 1 ? "y" : "ies"} for ${texts.length} label(s); labels left empty`,
     );
+    return;
   }
   for (const [i, label] of texts.entries()) {
     if (label.text.length === 0) continue;
-    const storyId = fresh.length === texts.length ? fresh[i] : null;
-    if (!storyId) continue;
     const pour = await host.document.mutate({
       op: "insertText",
-      args: { storyId, offset: 0, text: label.text },
+      args: { storyId: fresh[i], offset: 0, text: label.text },
     });
     if (!pour.applied) {
       host.log.debug("lowerChart: a label insertText was rejected", pour);
     }
   }
-
-  if (outcome.createdId) await host.selection.set([outcome.createdId]);
-  return true;
 }
 
 /** The story ids that exist now and did not before, in MINT order. Minted

@@ -244,3 +244,63 @@ export async function exportedTableCells(h: HeadlessHost): Promise<Map<string, s
   }
   return tables;
 }
+
+/** The protocol-66 doors over a 0.64 host, for the Wave 9 scenarios that
+ *  drive the 66 path (the pins stay at 0.2.37 until 66 is published):
+ *
+ *   `minted` — core already sends it on `mutationApplied`; the 0.2.37
+ *       host-impl drops it. Here `document.mutate` goes to the editor
+ *       client directly and the outcome carries the engine's own list.
+ *   `geometryStoryId` — each text frame's geometry item gains its story,
+ *       resolved test-side by walking the stories' frame chains (what a 66
+ *       core answers from the frame's ParentStory).
+ *
+ *  Everything else forwards untouched (scene channel, counting, gates). */
+export function withDoors66(
+  h: HeadlessHost,
+  host: BundleHost,
+  doors: { minted?: boolean; geometryStoryId?: boolean },
+): BundleHost {
+  const client = (h.host as unknown as {
+    editor: { client: { mutate(m: unknown): Promise<{ kind: string; payload: Record<string, unknown> }> } };
+  }).editor.client;
+  const raw = host.document;
+  const document = new Proxy(raw, {
+    get(o, p, r) {
+      if (p === "mutate" && doors.minted) {
+        return async (m: unknown) => {
+          const reply = await client.mutate(m);
+          if (reply.kind !== "mutationApplied") return { applied: false, error: reply.payload ?? reply };
+          return {
+            applied: true,
+            createdId: reply.payload.createdId ?? null,
+            pageIds: reply.payload.pageIds,
+            ...(reply.payload.minted !== undefined ? { minted: reply.payload.minted } : {}),
+          };
+        };
+      }
+      if (p === "elementGeometry" && doors.geometryStoryId) {
+        return async (ids: Parameters<typeof raw.elementGeometry>[0]) => {
+          const items = await raw.elementGeometry(ids);
+          const stories = await raw.collection<{ selfId: string }>("stories");
+          const storyOf = new Map<string, string>();
+          for (const s of stories) {
+            for (const l of await raw.frameChain(s.selfId)) storyOf.set(l.frameId, s.selfId);
+          }
+          return items.map((it) =>
+            it.id.kind === "textFrame" && storyOf.has(it.id.id as string)
+              ? { ...it, storyId: storyOf.get(it.id.id as string) }
+              : it,
+          );
+        };
+      }
+      return Reflect.get(o, p, r);
+    },
+  });
+  return new Proxy(host, {
+    get(o, p, r) {
+      if (p === "document") return document;
+      return Reflect.get(o, p, r);
+    },
+  });
+}

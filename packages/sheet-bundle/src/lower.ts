@@ -81,6 +81,13 @@ import {
 } from "../../sheet-host-model/src";
 
 import type { FrameBox, SheetEngine } from "./engine";
+import {
+  deleteTableOp,
+  doors66,
+  geometryStoryId,
+  isUnknownVariant,
+  noteMinted,
+} from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
 
 /**
@@ -492,11 +499,21 @@ export async function lowerSelectionToFrame(
   }
   const storyId = placed.createdId.id.story_id;
   const tableId = placed.createdId.id.table_id;
-  let frameId: string | null = null;
-  try {
-    frameId = (await host.document.frameChain(storyId))[0]?.frameId ?? null;
-  } catch (err) {
-    host.log.warn("lower: frame chain read failed", err);
+  // The frame: named in the 66 `minted` list — by its handle, or by mint
+  // order (a batch with no text child reports every handle null; this batch
+  // mints exactly one text frame) — else read back off the table's story
+  // chain (one read).
+  const minted = noteMinted(host, placed);
+  const mintedFrame =
+    minted?.find((m) => m.handle === FRAME_HANDLE) ??
+    minted?.find((m) => m.element.kind === "textFrame");
+  let frameId: string | null = mintedFrame ? frameIdOf(mintedFrame.element) : null;
+  if (!frameId) {
+    try {
+      frameId = (await host.document.frameChain(storyId))[0]?.frameId ?? null;
+    } catch (err) {
+      host.log.warn("lower: frame chain read failed", err);
+    }
   }
 
   // The table's content — text, decor and text styles — as ONE more batch.
@@ -764,15 +781,31 @@ function idOf(id: ElementId): string | null {
   return null;
 }
 
-/** The story a frame belongs to (Wave 4). There is no frame→story read
- *  door (the hitTest door answers `storyId: null` for an empty frame), so
- *  this walks the stories and asks each for its frame chain — the chain
- *  that contains `frameId` names the story. One `frameChain` read per story;
- *  null when no story threads the frame. */
+/** The story a frame belongs to (Wave 4). The 66 geometry read carries a
+ *  text frame's `storyId` — one read. A host without it (the field absent on
+ *  a text frame's item, remembered per host) gets the walk: every story asked
+ *  for its frame chain (the hitTest door answers `storyId: null` for an empty
+ *  frame), the chain that contains `frameId` naming the story. Null when no
+ *  story threads the frame. */
 export async function storyOfFrame(
   host: BundleHost,
   frameId: string,
 ): Promise<string | null> {
+  const doors = doors66(host);
+  if (doors.geometryStoryId !== false) {
+    try {
+      const [item] = await host.document.elementGeometry([{ kind: "textFrame", id: frameId }]);
+      const storyId = item ? geometryStoryId(item) : undefined;
+      if (storyId) {
+        doors.geometryStoryId = true;
+        return storyId;
+      }
+      // A text frame's item without a story: a pre-66 geometry read.
+      if (item) doors.geometryStoryId = false;
+    } catch (err) {
+      host.log.debug("storyOfFrame: geometry read failed — walking the stories", err);
+    }
+  }
   const stories = await host.document.collection<{ selfId: string }>("stories");
   for (const s of stories) {
     const links = await host.document.frameChain(s.selfId);
@@ -904,9 +937,9 @@ export async function refreshLoweredTable(
 }
 
 /** One table a chain placement owns: the table id and what it shows. A
- *  `blank` table belongs to a frame the last pagination did not need (the
- *  wire has no table-delete op, so it is emptied, kept, and reused when the
- *  range needs more frames again). */
+ *  `blank` table belongs to a frame the last pagination did not need, on a
+ *  host without the 66 `deleteTable` door: it is emptied, kept, and reused
+ *  when the range needs more frames again. */
 export interface ChainTable {
   tableId: string;
   content: LoweredContent;
@@ -948,13 +981,40 @@ function blankContent(like: LoweredContent): LoweredContent {
   };
 }
 
+/** Delete `tables` from `storyId` in one batch through the 66
+ *  `deleteTable` door. False when the host lacks the door (remembered, so
+ *  it is asked once per host) or refused the batch — the caller then empties
+ *  the tables instead. */
+async function deleteTables(
+  host: BundleHost,
+  storyId: string,
+  tables: readonly ChainTable[],
+): Promise<boolean> {
+  const doors = doors66(host);
+  if (doors.deleteTable === false) return false;
+  const r = await host.document.mutate({
+    op: "batch",
+    args: { ops: tables.map((t) => deleteTableOp(storyId, t.tableId)) },
+  });
+  if (r.applied) {
+    doors.deleteTable = true;
+    return true;
+  }
+  if (isUnknownVariant(r, "deleteTable")) {
+    doors.deleteTable = false;
+  } else {
+    host.log.warn("chain-lower: deleteTable rejected", r);
+  }
+  return false;
+}
+
 /**
  * One pagination pass over a chain (Wave 2D / S-05; Wave 4 replace). Asks
  * the engine to paginate the range into the chain's content boxes (all
  * threading math in Rust), then for page i: REFRESHES the placement's i-th
  * table in place when it has one, else appends a new table (insertTable
  * appends to the story, so story order = page order). Tables the pass no
- * longer needs are emptied (no delete op on the wire). All pages go into the
+ * longer needs are deleted (66 `deleteTable`), else emptied. All pages go into the
  * CHAIN'S story — threaded frames share one story.
  */
 async function paginatePass(
@@ -1008,12 +1068,17 @@ async function paginatePass(
     tables.push({ tableId, content: page.content, widths, blank: false });
     tableIds.push(tableId);
   }
-  // Tables the range no longer needs: emptied, kept for reuse.
+  // Tables the range no longer needs: DELETED where the host has the 66
+  // `deleteTable` door, else emptied and kept for reuse (a pre-66 wire has
+  // no table-delete op).
   const spare = owned.slice(pages.length);
+  if (spare.length > 0 && (await deleteTables(host, storyId, spare))) {
+    return { storyId, chain, pages, tableIds, tables };
+  }
   if (spare.some((t) => !t.blank)) {
     host.log.warn(
       `chain-lower: ${spare.length} table(s) no longer needed were emptied — ` +
-        "the wire has no table-delete op (RFI candidate deleteTable)",
+        "the host has no deleteTable door (protocol 66)",
     );
   }
   for (const t of spare) {
