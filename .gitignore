@@ -23,3 +23,6 @@ packages/sheet-bundle/bin/PACKAGE_HASH
 
 # agent worktrees (campaign agents create git worktrees here)
 .claude/worktrees/
+
+# the counting engine wasm (scripts/build-wasm-perf.sh) — never shipped
+packages/sheet-bundle/bin-perf/
