@@ -2,6 +2,9 @@ name: vitest
 on:
   push:
     branches: [main]
+  # Pre-merge gate: a PR that breaks the bundle goes red BEFORE it lands
+  # (this lane used to run on push to main only).
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -54,9 +57,8 @@ jobs:
           echo "$PWD/binaryen-version_119/bin" >> "$GITHUB_PATH"
       - name: build the engine wasm artifact (100 MB app wasm budget gate)
         run: bash plugin-sheets/scripts/build-wasm.sh
-      # Fail-not-skip belt at the JOB level too: the vitest step below keeps
-      # its deliberate `|| true` (red results still publish to state), so a
-      # missing artifact must redden the job HERE, before vitest can skip.
+      # Fail-not-skip belt at the JOB level too: a missing artifact reddens
+      # the job HERE, before any spec can skip.
       - name: real-engine artifact guard (fail, never skip)
         run: test -f plugin-sheets/packages/sheet-bundle/bin/sheet_js_bg.wasm
       # ------------------------------------------------------------------
@@ -64,15 +66,23 @@ jobs:
         run: pnpm install --frozen-lockfile --dir plugin-sheets
       - name: contract-import lint (fail fast)
         run: node plugin-sheets/scripts/check-contract-imports.mjs
-      - name: vitest (junit per package; red results still publish)
+      # A red spec FAILS this job. It used to end in `|| true` (so red
+      # results would still be published as evidence), which also meant the
+      # TS lane could never go red: a failing spec merged green. Evidence
+      # still ships — the JUnit steps below run under `!cancelled()`.
+      - name: vitest (junit per package)
         env:
-          # The spec-level half of the dual gate (engine-real.spec.ts):
-          # under this env a missing artifact FAILS the suite instead of
-          # letting the skipIf gate silently pass a vacuous run.
+          # The spec-level half of the dual gate (engine-real.spec.ts,
+          # wasm-fresh.spec.ts, session-persist.spec.ts): under this env a
+          # missing artifact FAILS the suite instead of letting the skipIf
+          # gate silently pass a vacuous run.
           REQUIRE_REAL_ENGINE: "1"
         run: |
           pnpm -r --no-bail --dir plugin-sheets exec \
-            vitest run --reporter=junit --outputFile=junit.xml || true
+            vitest run --reporter=default --reporter=junit --outputFile.junit=junit.xml
+      - name: collect junit
+        if: ${{ !cancelled() }}
+        run: |
           cat plugin-sheets/packages/*/junit.xml > junit-all.xml
           [ -s junit-all.xml ]
       # Evidence hand-off, INVERTED (2026-07-25). This step used to call

@@ -15,6 +15,7 @@ packages/sheet-bundle/bin/*.wasm
 packages/sheet-bundle/bin/*.js
 packages/sheet-bundle/bin/*.d.ts
 packages/sheet-bundle/bin/SOURCE_HASH
+packages/sheet-bundle/bin/PACKAGE_HASH
 
 # oracle venv (LibreOffice harness tooling, if ever local)
 .venv/

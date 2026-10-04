@@ -27,10 +27,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Each guard fails explicitly. They used to be two `! (… | grep …)`
+      # lines: bash's errexit ignores a `!`-negated command, so only the
+      # LAST line's status reached the step and the sheet-fn guard could
+      # never fail.
       - name: dependency guards (spec §4 rules)
         run: |
-          ! (cargo tree -p sheet-fn --edges normal | grep -E 'sheet-(calc|parser|xlsx|lower|js)')
-          ! (cargo tree -p sheet-js --target wasm32-unknown-unknown | grep -E 'sheet-conformance|proptest')
+          if cargo tree -p sheet-fn --edges normal | grep -E 'sheet-(calc|parser|xlsx|lower|js)'; then
+            echo "LEAK: sheet-fn depends on a calc/parser/xlsx/lower/js crate"; exit 1
+          fi
+          if cargo tree -p sheet-js --target wasm32-unknown-unknown | grep -E 'sheet-conformance|proptest'; then
+            echo "LEAK: the wasm tree pulls a test-only crate"; exit 1
+          fi
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   test:

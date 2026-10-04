@@ -2,21 +2,62 @@ name: publish
 
 # Publish @paged-media/sheet to npm via OIDC TRUSTED PUBLISHING (tokenless).
 # Requires a Trusted Publisher on npm: org paged-media, this repo, workflow
-# publish.yml. Pre-1.0 -canary.N under the `canary` dist-tag; unchanged skip.
+# publish.yml (keep this FILE NAME: the trusted publisher is bound to it).
+# Pre-1.0 -canary.N under the `canary` dist-tag.
+#
+# Runs only after `vitest` AND `rust` succeeded on main, on exactly the
+# commit they tested, and runs the TS suite against the wasm it builds
+# before packing. It used to run on every push in parallel with CI and test
+# nothing, so a commit that failed CI could still reach npm.
+#
+# A version already on npm is skipped — and since that turned "changed the
+# code, forgot the bump" into a green run that shipped nothing (the ADR 031
+# fix sat behind canary.8), scripts/package-hash.mjs --check now FAILS the
+# run when the sources differ from the published version's PACKAGE_HASH.
 on:
-  push:
+  workflow_run:
+    workflows: [vitest]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   id-token: write   # OIDC token for trusted publishing
   contents: read
+  actions: read     # look up the rust run for the same commit
 
 jobs:
   publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
+      # workflow_run fires per workflow; `vitest` triggers this one, and
+      # `rust` (fmt, clippy, nextest, coverage gate) must be green for the
+      # same commit too. Wait for it if it is still running.
+      - name: rust CI green for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 90); do
+            run=$(gh api "repos/${{ github.repository }}/actions/workflows/rust.yml/runs?head_sha=$SHA&event=push&per_page=1" \
+                    --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"' || true)
+            echo "rust @ $SHA: ${run:-none}"
+            case "$run" in
+              "completed success") exit 0 ;;
+              completed*) echo "rust CI did not succeed for $SHA"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "timed out waiting for rust CI on $SHA"; exit 1
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
       - run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       # The version is READ FROM Cargo.lock, not written here. It used to
@@ -38,8 +79,6 @@ jobs:
         run: |
           curl -fsSL https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-x86_64-linux.tar.gz | tar xz
           echo "$PWD/binaryen-version_119/bin" >> "$GITHUB_PATH"
-      - name: build wasm
-        run: bash scripts/build-wasm.sh
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -48,8 +87,23 @@ jobs:
           node-version: 22   # >= 22.14 for OIDC trusted publishing
       - name: upgrade npm (OIDC needs >= 11.5.1)
         run: npm install -g npm@latest
+      # Fail BEFORE building when the sources changed but the version did
+      # not: the publish below would skip it and ship nothing.
+      - name: version bumped when the sources changed
+        run: node scripts/package-hash.mjs --check
+      - name: build wasm (stamps bin/SOURCE_HASH)
+        run: bash scripts/build-wasm.sh
       - run: pnpm install --frozen-lockfile
+      # The TS suite against the wasm built above (wasm-fresh.spec.ts proves
+      # it is the one these sources build; REQUIRE_REAL_ENGINE turns every
+      # "artifact missing" skip into a failure).
+      - name: test
+        run: node scripts/check-contract-imports.mjs && pnpm -r test
+        env:
+          REQUIRE_REAL_ENGINE: "1"
       - run: pnpm -r build
+      - name: stamp bin/PACKAGE_HASH (read by the next run's bump check)
+        run: node scripts/package-hash.mjs --stamp
       - name: publish via OIDC (canary)
         run: |
           set -e
