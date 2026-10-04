@@ -59,8 +59,15 @@ pub struct TopoOrder {
     /// Cells in a valid evaluation order (every precedent before its
     /// dependent).
     pub order: Vec<CellRef>,
-    /// Cells on a cycle (in-degree never reached zero). Sorted.
+    /// Cells ON a cycle (a strongly connected group of two or more, or a
+    /// cell that reads itself). Sorted.
     pub cycle: Vec<CellRef>,
+    /// Cells DOWNSTREAM of a cycle but not on one, in dependency order: they
+    /// are evaluated after the cycle members settle (from the members'
+    /// stored values). Before 2026-10 they were filed as cycle members, so a
+    /// full recalc (a reload) showed `#REF!` where an incremental edit showed
+    /// the value computed from the cycle's result.
+    pub after: Vec<CellRef>,
 }
 
 /// Order the dirty subgraph `dirty` using `graph`'s edges. Only edges WITHIN
@@ -112,16 +119,143 @@ pub fn order(dirty: &FxHashSet<CellRef>, graph: &DepGraph) -> TopoOrder {
         }
     }
 
-    // Anything not emitted is on a cycle.
+    // Anything not emitted is on a cycle or downstream of one.
     let emitted: FxHashSet<CellRef> = order.iter().copied().collect();
-    let mut cycle: Vec<CellRef> = dirty
+    let mut rest: Vec<CellRef> = dirty
         .iter()
         .filter(|c| !emitted.contains(c))
         .copied()
         .collect();
-    cycle.sort();
+    rest.sort();
+    if rest.is_empty() {
+        return TopoOrder {
+            order,
+            cycle: Vec::new(),
+            after: Vec::new(),
+        };
+    }
+    let rest_set: FxHashSet<CellRef> = rest.iter().copied().collect();
+    let on_cycle = cycle_members(&rest, &rest_set, &dependents);
 
-    TopoOrder { order, cycle }
+    // Order the downstream remainder with the cycle members taken as settled.
+    let mut deg: FxHashMap<CellRef, usize> = rest
+        .iter()
+        .filter(|c| !on_cycle.contains(c))
+        .map(|c| (*c, 0))
+        .collect();
+    for c in &rest {
+        if on_cycle.contains(c) {
+            continue;
+        }
+        for d in dependents.get(c).into_iter().flatten() {
+            if let Some(n) = deg.get_mut(d) {
+                *n += 1;
+            }
+        }
+    }
+    let mut frontier: BinaryHeap<Reverse<CellRef>> = deg
+        .iter()
+        .filter(|(_, &n)| n == 0)
+        .map(|(c, _)| Reverse(*c))
+        .collect();
+    let mut after = Vec::with_capacity(deg.len());
+    while let Some(Reverse(cell)) = frontier.pop() {
+        after.push(cell);
+        let mut deps = dependents.get(&cell).cloned().unwrap_or_default();
+        deps.sort();
+        for d in deps {
+            if let Some(n) = deg.get_mut(&d) {
+                *n -= 1;
+                if *n == 0 {
+                    frontier.push(Reverse(d));
+                }
+            }
+        }
+    }
+    let mut cycle: Vec<CellRef> = rest.into_iter().filter(|c| on_cycle.contains(c)).collect();
+    cycle.sort();
+    TopoOrder {
+        order,
+        cycle,
+        after,
+    }
+}
+
+/// The cells of `nodes` that lie ON a cycle: members of a strongly connected
+/// component of two or more, or with an edge to themselves (Tarjan,
+/// iterative so a long chain cannot overflow the stack).
+fn cycle_members(
+    nodes: &[CellRef],
+    in_set: &FxHashSet<CellRef>,
+    dependents: &FxHashMap<CellRef, Vec<CellRef>>,
+) -> FxHashSet<CellRef> {
+    let succ = |c: &CellRef| -> Vec<CellRef> {
+        dependents
+            .get(c)
+            .map(|v| v.iter().filter(|d| in_set.contains(d)).copied().collect())
+            .unwrap_or_default()
+    };
+    let mut index: FxHashMap<CellRef, usize> = FxHashMap::default();
+    let mut low: FxHashMap<CellRef, usize> = FxHashMap::default();
+    let mut on_stack: FxHashSet<CellRef> = FxHashSet::default();
+    let mut stack: Vec<CellRef> = Vec::new();
+    let mut out: FxHashSet<CellRef> = FxHashSet::default();
+    let mut next = 0usize;
+    for &root in nodes {
+        if index.contains_key(&root) {
+            continue;
+        }
+        // (node, its successors, next successor position)
+        let mut work: Vec<(CellRef, Vec<CellRef>, usize)> = vec![(root, succ(&root), 0)];
+        index.insert(root, next);
+        low.insert(root, next);
+        next += 1;
+        stack.push(root);
+        on_stack.insert(root);
+        while let Some((v, ws, i)) = work.last_mut() {
+            let v = *v;
+            if *i < ws.len() {
+                let w = ws[*i];
+                *i += 1;
+                if !index.contains_key(&w) {
+                    index.insert(w, next);
+                    low.insert(w, next);
+                    next += 1;
+                    stack.push(w);
+                    on_stack.insert(w);
+                    let sw = succ(&w);
+                    work.push((w, sw, 0));
+                } else if on_stack.contains(&w) {
+                    let lw = index[&w];
+                    let lv = low.get_mut(&v).expect("indexed");
+                    *lv = (*lv).min(lw);
+                }
+                continue;
+            }
+            work.pop();
+            if let Some((parent, _, _)) = work.last() {
+                let lv = low[&v];
+                let lp = low.get_mut(parent).expect("indexed");
+                *lp = (*lp).min(lv);
+            }
+            if low[&v] == index[&v] {
+                let mut comp = Vec::new();
+                loop {
+                    let w = stack.pop().expect("tarjan stack");
+                    on_stack.remove(&w);
+                    comp.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let self_loop = comp.len() == 1 && succ(&v).contains(&v);
+                if comp.len() > 1 || self_loop {
+                    out.extend(comp);
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

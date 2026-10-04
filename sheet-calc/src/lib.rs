@@ -492,18 +492,7 @@ impl Engine {
             // evaluate rich, materialize the 2-D block (or `#SPILL!` on
             // collision). Every other cell stays on the scalar path.
             for cref in &to.order {
-                if self.cell_spills(*cref) {
-                    self.recompute_spill_anchor(*cref, &mut changed);
-                } else {
-                    // A non-spilling formula that USED to be a spill anchor must
-                    // release its old region (e.g. edited from SEQUENCE to a
-                    // scalar formula).
-                    self.clear_spill_region(*cref, &mut changed);
-                    let new_value = self.evaluate_cell(*cref);
-                    if self.commit_value(*cref, new_value) {
-                        changed.push(*cref);
-                    }
-                }
+                self.evaluate_in_order(*cref, &mut changed);
             }
 
             // Cycle members. Two policies (registry `sheet.calc.iterative.*`,
@@ -528,6 +517,10 @@ impl Engine {
                 if pass_n == 0 {
                     circular = to.cycle;
                 }
+            }
+            // Cells downstream of a cycle read its settled values.
+            for cref in &to.after {
+                self.evaluate_in_order(*cref, &mut changed);
             }
         }
 
@@ -570,6 +563,23 @@ impl Engine {
     }
 
     // ---- internals ----
+
+    /// Evaluate one ordered cell: the spill path for a spilling root, the
+    /// scalar path otherwise (a former anchor releases its old region).
+    fn evaluate_in_order(&mut self, cref: CellRef, changed: &mut Vec<CellRef>) {
+        if self.cell_spills(cref) {
+            self.recompute_spill_anchor(cref, changed);
+        } else {
+            // A non-spilling formula that USED to be a spill anchor must
+            // release its old region (e.g. edited from SEQUENCE to a scalar
+            // formula).
+            self.clear_spill_region(cref, changed);
+            let new_value = self.evaluate_cell(cref);
+            if self.commit_value(cref, new_value) {
+                changed.push(cref);
+            }
+        }
+    }
 
     /// Evaluate a single formula cell's expression (a literal cell evaluates
     /// to its stored value — it is never in the dirty cut as a formula, but
@@ -991,7 +1001,11 @@ impl Engine {
         for ((row, col), area) in old_arrays {
             let coord = if axis == EditAxis::Row { row } else { col };
             if let Some(nc) = shift_coord(coord, kind, at, n) {
-                let key = if axis == EditAxis::Row { (nc, col) } else { (row, nc) };
+                let key = if axis == EditAxis::Row {
+                    (nc, col)
+                } else {
+                    (row, nc)
+                };
                 ws.array_formulas.insert(key, area);
             }
         }

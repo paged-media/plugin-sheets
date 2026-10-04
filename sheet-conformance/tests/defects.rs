@@ -50,9 +50,9 @@ use sheet_js::core::SheetSession;
 /// `recalc_all`) must settle the cycle the same way — instead a dependent
 /// shows `#NAME?` (the first error in range order) on one path and `#REF!`
 /// on the other. The display a user sees depends on how the workbook got
-/// into memory.
+/// into memory. FIXED 2026-10-04: a full recalc filed every cell DOWNSTREAM
+/// of a cycle as a cycle member; it now evaluates them after the members.
 #[test]
-#[should_panic(expected = "incremental and full recalc disagree")]
 fn defect_cycle_settles_differently_after_reload__feat__sheet_calc_engine() {
     let mut s = SheetSession::new();
     s.set_cell(0, 2, 0, "=SUM($A$1:B3)").unwrap();
