@@ -60,14 +60,18 @@ impl Dirty {
     /// Mark a single formula cell dirty (no propagation). Used to seed an
     /// initial cut before [`Dirty::propagate_from`].
     pub fn mark(&mut self, cell: CellRef) {
-        self.set.insert(cell);
+        if self.set.insert(cell) {
+            perf_count!(cells_marked_dirty, 1);
+        }
     }
 
     /// Mark EVERY formula cell dirty (the `recalc_all` seed and the
     /// `Engine::new` "everything dirty" state).
     pub fn mark_all(&mut self, graph: &DepGraph) {
         for c in graph.formula_cells_sorted() {
-            self.set.insert(c);
+            if self.set.insert(c) {
+                perf_count!(cells_marked_dirty, 1);
+            }
         }
     }
 
@@ -96,6 +100,7 @@ impl Dirty {
         let mut stack: Vec<CellRef> = graph.dependents_of(origin);
         while let Some(c) = stack.pop() {
             if self.set.insert(c) {
+                perf_count!(cells_marked_dirty, 1);
                 // Newly dirtied — its own dependents may now be dirty too.
                 for d in graph.dependents_of(c) {
                     if !self.set.contains(&d) {

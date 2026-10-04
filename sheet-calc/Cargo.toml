@@ -16,3 +16,14 @@ sheet-parser = { path = "../sheet-parser" }
 sheet-fn = { path = "../sheet-fn" }
 rustc-hash.workspace = true
 smallvec.workspace = true
+
+[features]
+# Thread-local work counters (src/perf.rs) for the perf budgets and benches.
+# OFF in every shipped build: the release wasm (scripts/build-wasm.sh builds
+# sheet-js with no features) carries no counter code at all.
+perf-counters = []
+
+[dev-dependencies]
+# The crate's own tests/benches run WITH the counters (tests/perf_budgets.rs,
+# benches/). A dev-dependency feature never reaches a non-test build.
+sheet-calc = { path = ".", features = ["perf-counters"] }

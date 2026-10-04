@@ -659,6 +659,7 @@ name = "sheet-calc"
 version = "0.0.0"
 dependencies = [
  "rustc-hash",
+ "sheet-calc",
  "sheet-core",
  "sheet-fn",
  "sheet-parser",

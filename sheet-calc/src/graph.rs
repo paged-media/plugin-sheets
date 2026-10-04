@@ -239,6 +239,8 @@ impl DepGraph {
         if let Some(set) = self.cell_dependents.get(&key) {
             out.extend(set.iter().copied());
         }
+        perf_count!(range_probes, 1);
+        perf_count!(range_keys_scanned, self.range_dependents.len());
         for (rk, deps) in &self.range_dependents {
             if rk.contains(key.sheet, key.row, key.col) {
                 out.extend(deps.iter().copied());
@@ -267,6 +269,7 @@ impl DepGraph {
             }
         }
         if let Some(keys) = self.range_deps_of.get(&cell) {
+            perf_count!(precedent_candidates_scanned, keys.len() * candidate.len());
             for k in keys {
                 // Any candidate formula cell inside this range box is a
                 // precedent (intra-dirty-cut edge).

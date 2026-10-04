@@ -80,12 +80,23 @@
 //! ([`volatile::cell_seed`]) — so `RAND` varies across passes yet is
 //! reproducible under a fixed seed.
 
+/// Bump a work counter (`perf.rs`). Expands to NOTHING without the
+/// `perf-counters` feature — the argument is not even evaluated.
+macro_rules! perf_count {
+    ($field:ident, $n:expr) => {{
+        #[cfg(feature = "perf-counters")]
+        $crate::perf::bump(|c| c.$field += ($n) as u64);
+    }};
+}
+
 pub mod argview;
 pub mod dirty;
 pub mod eval;
 pub mod external;
 pub mod graph;
 pub mod iterate;
+#[cfg(feature = "perf-counters")]
+pub mod perf;
 pub mod spill;
 pub mod topo;
 pub mod volatile;
@@ -394,6 +405,7 @@ impl Engine {
         // Volatile cells reseed ONCE per recalc (not per spill sub-pass — that
         // would keep the fixpoint alive forever whenever any volatile exists).
         self.dirty.reseed_volatile();
+        perf_count!(recalcs, 1);
 
         // Bounded fixpoint: each iteration drains the current dirty cut; spill
         // materialization writes engine-owned cells and dirties their
@@ -406,6 +418,7 @@ impl Engine {
                 break;
             }
             self.pass = self.pass.wrapping_add(1);
+            perf_count!(recalc_passes, 1);
 
             let to = topo::order(&cut, &self.graph);
 
@@ -513,6 +526,8 @@ impl Engine {
         };
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
+        perf_count!(evaluations, 1);
+        perf_count!(ast_clones, 1);
         eval::eval_expr(&self.model, &f.root.clone(), &ctx, &self.spills)
     }
 
@@ -651,6 +666,8 @@ impl Engine {
         };
         let seed = volatile::cell_seed(self.config.rng_seed, self.pass, cref);
         let ctx = eval::ctx_for(&self.model, cref, self.config.now_serial, seed);
+        perf_count!(evaluations, 1);
+        perf_count!(ast_clones, 1);
         eval::eval_expr_rich(&self.model, &f.root.clone(), &ctx, &self.spills)
     }
 

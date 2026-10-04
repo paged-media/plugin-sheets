@@ -102,6 +102,8 @@ pub fn materialize_range(model: &SheetModel, range: RangeRef) -> RangeBuf {
     let rows = n.rows();
     let cols = n.cols();
     let mut cells = Vec::with_capacity(rows.saturating_mul(cols) as usize);
+    perf_count!(ranges_materialized, 1);
+    perf_count!(cells_materialized, u64::from(rows) * u64::from(cols));
     for r in n.start.row..=n.end.row {
         for c in n.start.col..=n.end.col {
             cells.push(cell_value(
@@ -141,6 +143,8 @@ pub fn materialize_range_masked(
     let rows = n.rows();
     let cols = n.cols();
     let mut cells = Vec::with_capacity(rows.saturating_mul(cols) as usize);
+    perf_count!(ranges_materialized, 1);
+    perf_count!(cells_materialized, u64::from(rows) * u64::from(cols));
     for r in n.start.row..=n.end.row {
         for c in n.start.col..=n.end.col {
             let cell = CellRef {

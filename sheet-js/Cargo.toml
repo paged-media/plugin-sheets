@@ -39,3 +39,15 @@ zip.workspace = true
 wasm-bindgen.workspace = true
 serde-wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
+
+[features]
+# Exposes `perfCounters()` / `resetPerfCounters()` on the wasm (the
+# sheet-calc work counters). OFF in the shipped wasm: scripts/build-wasm.sh
+# builds with no features; scripts/build-wasm-perf.sh builds this one into
+# a separate directory.
+perf-counters = ["sheet-calc/perf-counters"]
+
+[dev-dependencies]
+# tests/perf_budgets.rs reads sheet_calc::perf; a dev-dependency feature
+# never reaches the wasm build.
+sheet-calc = { path = "../sheet-calc", features = ["perf-counters"] }

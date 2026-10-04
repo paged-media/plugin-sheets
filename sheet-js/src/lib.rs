@@ -458,6 +458,52 @@ mod wasm {
             .to_string()
     }
 
+    /// The engine's work counters (`sheet_calc::perf`) as a plain object —
+    /// ONLY in a wasm built with the `perf-counters` feature
+    /// (`scripts/build-wasm-perf.sh`); the shipped wasm has no such export.
+    /// The TS perf harness reads it beside its own door counts.
+    #[cfg(feature = "perf-counters")]
+    #[wasm_bindgen(js_name = perfCounters)]
+    pub fn perf_counters() -> JsValue {
+        // f64, not u64: serde-wasm-bindgen turns u64 into a BigInt, and the
+        // harness wants plain numbers (a count never nears 2^53).
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Out {
+            range_probes: f64,
+            range_keys_scanned: f64,
+            precedent_candidates_scanned: f64,
+            ranges_materialized: f64,
+            cells_materialized: f64,
+            evaluations: f64,
+            ast_clones: f64,
+            recalcs: f64,
+            recalc_passes: f64,
+            cells_marked_dirty: f64,
+        }
+        let c = sheet_calc::perf::snapshot();
+        to_js(&Out {
+            range_probes: c.range_probes as f64,
+            range_keys_scanned: c.range_keys_scanned as f64,
+            precedent_candidates_scanned: c.precedent_candidates_scanned as f64,
+            ranges_materialized: c.ranges_materialized as f64,
+            cells_materialized: c.cells_materialized as f64,
+            evaluations: c.evaluations as f64,
+            ast_clones: c.ast_clones as f64,
+            recalcs: c.recalcs as f64,
+            recalc_passes: c.recalc_passes as f64,
+            cells_marked_dirty: c.cells_marked_dirty as f64,
+        })
+        .unwrap_or(JsValue::NULL)
+    }
+
+    /// Zero the engine's work counters (`perf-counters` builds only).
+    #[cfg(feature = "perf-counters")]
+    #[wasm_bindgen(js_name = resetPerfCounters)]
+    pub fn reset_perf_counters() {
+        sheet_calc::perf::reset();
+    }
+
     /// Install the panic hook once (readable wasm panics in the console).
     #[wasm_bindgen(start)]
     fn start() {
