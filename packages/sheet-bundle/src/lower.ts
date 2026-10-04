@@ -65,6 +65,11 @@ import {
   tableDecorOps,
   tableInsertOp,
   tableRefreshOps,
+  cellCharacterStyleApplies,
+  cellCharacterStyleMints,
+  cellCharacterStyles,
+  cellsNeedingRestyle,
+  cellTextSwatchOps,
   type LoweredContent,
   type Page,
   type Placement,
@@ -274,6 +279,59 @@ async function pourCellContent(
   if (ops.length > 0) {
     const r = await host.document.mutate({ op: "batch", args: { ops } });
     if (!r.applied) host.log.warn("lower: cell decor batch rejected", r);
+  }
+  // The cells' text formatting (bold, size, face, colour) — the widths
+  // were measured in it, so the pour now renders in it too.
+  await styleCellText(host, content, storyId, tableId);
+}
+
+/** The document's character-style ids, or null when the read failed. */
+async function readKnownCharacterStyleIds(
+  host: BundleHost,
+): Promise<Set<string> | null> {
+  try {
+    const rows = await host.document.collection<{ selfId: string }>("characterStyles");
+    return new Set(rows.map((r) => r.selfId));
+  } catch (err) {
+    host.log.warn("cell text styles: character-style read failed", err);
+    return null;
+  }
+}
+
+/** Style the cells' TEXT (Wave 4): mint the character styles the content's
+ *  cell formats need (+ the text-colour swatches they name), then apply one
+ *  per cell (`only` = just these `row:col` cells, reset-to-none included —
+ *  a refresh). Costs no read when no cell carries a character facet. */
+async function styleCellText(
+  host: BundleHost,
+  content: LoweredContent,
+  storyId: string,
+  tableId: string,
+  only?: ReadonlySet<string>,
+): Promise<void> {
+  if (cellCharacterStyles(content).size > 0) {
+    const [styles, swatches] = await Promise.all([
+      readKnownCharacterStyleIds(host),
+      readKnownSwatchIds(host),
+    ]);
+    const mints = [
+      ...cellTextSwatchOps(content, swatches),
+      ...cellCharacterStyleMints(content, styles),
+    ];
+    if (mints.length > 0) {
+      const r = await host.document.mutate({ op: "batch", args: { ops: mints } });
+      if (!r.applied) host.log.warn("cell text styles: style mint rejected", r);
+    }
+  } else if (!only) {
+    return;
+  }
+  const applies = cellCharacterStyleApplies(content, storyId, tableId, {
+    cells: only,
+    includeDefault: only !== undefined,
+  });
+  for (const op of applies) {
+    const r = await host.document.mutate(op);
+    if (!r.applied) host.log.debug("cell text styles: applyStyle rejected", r);
   }
 }
 
@@ -676,6 +734,8 @@ async function applyTableRefresh(
     const r = await host.document.mutate({ op: "batch", args: { ops: decor } });
     if (!r.applied) host.log.warn("refresh: cell decor rejected", r);
   }
+  const restyle = cellsNeedingRestyle(prev, next);
+  if (restyle.size > 0) await styleCellText(host, next, storyId, tableId, restyle);
   return calls;
 }
 

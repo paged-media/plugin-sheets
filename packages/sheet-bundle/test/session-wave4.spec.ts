@@ -182,6 +182,22 @@ describe.skipIf(!built)("placed tables: styled door + refresh in place [sheet.lo
     session.dispose();
   });
 
+  it("the placed table's cell text carries the workbook's fonts (character styles)", async () => {
+    const { host, mutations } = fakeDoc();
+    const session = createWorkbookSession(host);
+    await session.import(corpus("03-styles.xlsx"), "03-styles.xlsx");
+    session.setRange("A1:D6");
+    expect(await session.lowerSelection()).not.toBeNull();
+    const all = ops(mutations);
+    expect(all.some((m) => m.op === "createCharacterStyle")).toBe(true);
+    const applied = all.filter((m) => m.op === "applyStyle") as Array<{
+      args: { cell?: unknown; scope: string };
+    }>;
+    expect(applied.length).toBeGreaterThan(0);
+    expect(applied.every((m) => m.args.cell && m.args.scope === "character")).toBe(true);
+    session.dispose();
+  });
+
   it("an edit re-pours only the changed cell and re-stamps the binding version", async () => {
     vi.useFakeTimers();
     const { host, mutations } = fakeDoc();

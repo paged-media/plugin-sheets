@@ -164,3 +164,12 @@ export {
   textOffsetLength,
   type TableRefreshOps,
 } from "./table-refresh";
+
+export {
+  NO_CHARACTER_STYLE,
+  cellCharacterStyleApplies,
+  cellCharacterStyleId,
+  cellCharacterStyleMints,
+  cellCharacterStyles,
+  cellsNeedingRestyle,
+} from "./cell-character-styles";
