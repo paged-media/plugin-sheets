@@ -1,99 +1,96 @@
 # Status
 
-What `paged.sheet` ships and what it does not, read from the code at commit `71f37d7`
-(`@paged-media/sheet` 0.1.0-canary.8). How the parts fit is in [`architecture.md`](architecture.md).
-The gaps against the everyday fundamentals of a spreadsheet, with their classes and the order
-in which they are closed, are in [`design/analysis-2026-10-04.md`](design/analysis-2026-10-04.md).
+What `paged.sheet` ships and what it does not, read from the development branch on 2026-10-04
+(`@paged-media/sheet` 0.1.0-canary.10, not yet published; npm `canary` is 0.1.0-canary.8). How
+the parts fit is in [`architecture.md`](architecture.md). The analysis behind this round of work,
+and what changed against it, is in [`design/analysis-2026-10-04.md`](design/analysis-2026-10-04.md).
 
 ## Shipped
 
-- **Open a workbook.** An `.xlsx` file reaches the plugin through the host's importer, the "Import workbook (.xlsx)" command
-  (host file picker) or the Workbook panel's file input. The bytes are stored in the document when the host supports container
-  parts, and also in the browser's per-plugin store when the host has one; `restore` loads them again when the plugin activates.
-- **Calculation.** 259 registered functions, all implemented, among them `LET`, `LAMBDA` and
-  its helpers (`MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL`, `MAKEARRAY`); dynamic arrays that spill
-  and that nest as arguments (`SUM(SEQUENCE(3))`, `INDEX(VSTACK(…),2,1)`);
-  Excel tables with structured references; recalculation after every cell edit; the cells
-  of a circular reference show `#REF!`. Number formats render in five display locales.
-- **Workbook panel.** Pick a sheet and a range, place the range on the page, sort a range,
-  find and replace, list and author charts, create a cell style from a selected cell, see an
-  inventory of frozen panes, data validations and comments, browse the function list.
-- **Grid panel.** The active sheet drawn as SVG, scrolled with buttons, with click
-  selection, a cell editor with function completion, and copy and paste of cell ranges.
-- **A range on the page.** One text frame holding a native table: formatted cell text,
-  merged cells, column widths measured with the document's font metrics, row heights, grid
-  rules as cell edges. The frame carries the binding to its sheet and range.
-- **Editing in place.** A double-click on a sheet frame shows the grid inside the frame.
-  Click selects a cell, typing edits it, Enter commits, Escape cancels. Undo and redo work on
-  cell edits while the context is active; a sort, a replace-all or a paste is one step.
-- **Charts.** Ten kinds, read from the workbook's chart parts or authored over a range,
-  placed on the page as vector paths and text frames with document swatches.
-- **Host panels in the sheet context.** The host's Swatches panel shows the colours of the workbook's charts and
-  can edit one; a workbook without charts leaves the panel on the document's own swatches. The host's Character
-  and Paragraph panels show font family, style and size of the selected cells, read-only.
+- **Open and keep a workbook.** An `.xlsx` file reaches the plugin through the host's importer,
+  the "Import workbook (.xlsx)" command or the Workbook panel; CSV and TSV import as a one-sheet
+  workbook, typed by locale; "New workbook" starts a blank one. The bytes are stored in the
+  document when the host supports container parts, and in the browser's per-plugin store when it
+  has one. Every committed edit re-saves the workbook after a short quiet period, and
+  deactivation flushes, so a reload restores the edited workbook.
+- **Calculation.** 259 registered functions, all implemented, among them `LET`, `LAMBDA` and its
+  helpers; dynamic arrays that spill and nest; Excel tables with structured references;
+  incremental recalculation with an interval index for range dependencies; dependents of
+  volatile cells recalculate with them; iterative calculation when the workbook's `calcPr`
+  asks for it; `NOW` and `TODAY` follow the host clock. Number formats render in five display
+  locales. Expected values are recorded from Excel and replayed in CI.
+- **Workbook panel.** Sheets (add, rename, delete), a range, placement on the page, sort (formula
+  cells move with their row), find and replace, charts, cell styles, a Format & Layout section
+  (number format, font, fill, borders, alignment, wrap, merge, column width, row height, freeze,
+  defined names), rows and columns inserted and deleted, the function list.
+- **Grid panel and in-frame grid.** Range selection by click, drag and shift; arrows, Tab, F2,
+  Delete and scrolling in the frame; a cell editor with function completion; copy and paste of
+  ranges with relative references re-addressed; the fill handle with number, date, weekday and
+  month series; Fill Down / Fill Right; find in the sheet.
+- **Undo.** In the edit context, every committed cell edit is one step, and so is each bulk
+  operation (sort, replace-all, paste, fill, clear) and each format change (style, borders,
+  merge, sizes, freeze, names, and the formats a fill carries). Outside it, the host's undo takes
+  a placed table back and the workbook follows the version the table shows.
+- **A range on the page.** One text frame holding a native table: the workbook's fills, borders,
+  fonts and conditional formatting, numbers aligned right and centred cells centred, Excel's
+  bottom alignment where a row is tall enough to show it, merged cells, column widths measured
+  with the document's font metrics, and conditional-format data bars drawn under the table. The
+  frame lands at the current selection. Placing a range is two document writes; the content is
+  one undo step.
+- **Placed tables follow the workbook.** After an edit the table is refreshed in place: only
+  changed cells are re-poured, rows and columns reshaped, data bars redrawn, the binding's
+  content version stamped, all in one document write and one undo step. A table placed in an
+  earlier session is found again on restore and refreshes the same way; one whose page no longer
+  shows the saved workbook is replaced.
+- **Pagination.** A command threads a range over linked frames, repeats the header rows with
+  their formatting in every frame, and re-paginates when a frame is resized, refreshing its own
+  tables rather than adding new ones.
+- **Charts.** Ten kinds, read from the workbook or authored over a range, placed as vector paths
+  and labelled text frames in one document write, and replaced in one write when their data
+  changes.
+- **Host panels in the sheet context.** The host's Swatches panel shows and edits the workbook
+  chart colours; the Character and Paragraph panels show the selected cells' type, read-only.
 - **Datasets.** A panel lists the datasets the host offers and fills a new workbook from one.
-- **Export.** An `.xlsx` exporter. Parts the session did not touch are written back with
-  their original bytes, including pivot caches, macros and other parts never interpreted.
+- **Export.** An `.xlsx` exporter. Parts the session did not touch are written back with their
+  original bytes, including pivot caches, macros and other parts never interpreted.
 
 ## Limits of what is shipped
 
-- **Edits are not stored.** The workbook is stored on import only (`persistWorkbook` in
-  `packages/sheet-bundle/src/session.ts`). Cell edits, sorts, replacements, pastes, authored
-  charts and a dataset-sourced workbook stay in memory and reach a file only through the
-  exporter. Authored charts are never written to XLSX. One workbook is stored at a time;
-  importing another replaces it.
-- **The page table does not follow edits.** Leaving the edit context clears the journal and
-  the in-frame grid; nothing lowers the range again. `contentVersion` in the binding is
-  always 0, and the binding is read only to recognise the frame.
-- **The page table is unstyled.** The lowering the bundle calls (`get_range_lowered`)
-  carries no workbook fonts, fills, borders or conditional formatting, and cell alignment is
-  not applied. The translator can write cell fills and style borders, and those paths are
-  tested, but this call gives it no styles.
-- **One frame per range**, placed 24 pt from the top-left of the active page and clamped to
-  540 x 720 pt. A range of more than 1,048,576 cells is refused.
-- **The in-frame grid** always shows the session's active sheet from its first row and
-  column, whatever the frame is bound to. It does not scroll, and draws text left-aligned in
-  one style with no text cursor.
-- **Undo** of cell edits is reachable only inside the `sheet` edit context; the journal is
-  cleared on exit and on load. Placing a range is not one undo step in the document: the
-  frame, the table, each cell's text and the cell decoration are separate writes.
-- **Sorting** moves formula cells with their row, re-addressing relative references as Excel
-  does; it refuses a range holding spilled cells. **Filter views** (`set_filter` /
-  `clear_filter`: equals, contains, top, bottom) hide rows from the page lowering; they are not
-  written into the xlsx and no panel calls them yet. **Cell style from
-  selection** creates and fills the style and applies it to the selected cell; the panel
-  reports whether the host accepted the apply.
-- **Clock.** The engine takes the current time as an injected serial; the bundle never sets
-  it, so `NOW` and `TODAY` evaluate from serial 0. The random seed is a fixed default.
-- **Formulas** are the Excel en-US dialect only. On load, a formula with an unregistered
-  function is not parsed and the cell keeps its cached value; the `_xlfn.`/`_xlpm.` storage
-  prefixes are removed before parsing and written back on save. `TREND` fits one regressor
-  only. A typed date is stored as text.
-- **Locale.** The display locale is taken from the workbook's number formats on load; there is no setting for it.
-- **Saving an edited sheet** drops unknown attributes on its rows and cells and unknown
-  elements inside `<sheetData>` (row heights and hidden rows are kept); unknown children of
-  `<worksheet>`, among them `<autoFilter>`, are kept.
-- **Verification.** Both LibreOffice oracle tests end in `todo!()`. The real-workbook tests
-  are opt-in, need a corpus that is not in this repo, and assert that files open or are
-  refused, not that values match. In the vitest workflow a failing spec does not fail the job.
+- **Document writes.** Placing a range takes two writes and so two undo steps (frame and table,
+  then content); one write needs the engine to resolve a table handle inside a batch, which
+  is in the unreleased protocol-66 engine. Each in-frame grid change still invalidates every
+  page cache on a released engine; per-page invalidation is in the same engine batch.
+- **Protocol-66 doors are used when present.** With them, a shrinking pagination deletes the
+  tables it no longer needs (otherwise they are emptied and kept), placed elements are read back
+  from the batch's own list (otherwise from a scene-tree difference), and a frame's story is one
+  read (otherwise a walk over the stories).
+- **Data bars** are page paths stacked one step under the table's frame: a frame that later had
+  another item stacked directly over it gets its bars under that item. Paginated chains and
+  tables rediscovered from an earlier session draw no bars.
+- **Rediscovery** finds tables placed by this version; a table placed before the binding
+  carried its table record is not found again. Charts and paginated chains are not
+  rediscovered.
+- **Colours.** `getStyle` resolves theme and indexed colours through the theme part and the
+  workbook palette; the page lowering still resolves theme colours with a six-slot default.
+- **One workbook** is stored at a time; importing another replaces it.
+- **Filter views** hide rows from the page lowering; they are not written into the xlsx and no
+  panel calls them yet.
+- **Formulas** are the Excel en-US dialect only. On load, a formula with an unregistered function
+  keeps its cached value. `TREND` fits one regressor only. A typed date is stored as text.
+- **Locale.** The display locale is taken from the workbook's number formats on load.
+- **Saving an edited sheet** drops unknown attributes on its rows and cells and unknown elements
+  inside `<sheetData>`; unknown children of `<worksheet>` are kept.
 
 ## Not built
 
-- **Pagination across linked frames from the UI.** The engine paginates a range over a list
-  of frame boxes, and `lowerPaginatedToChain` and `subscribeChainReflow` are exported and
-  tested, but no command or panel calls them.
-- **Refreshing a placed table** after an edit, and saving edits to the stored workbook.
-- **Inserting and deleting rows or columns:** `Engine::apply_edit` exists, `SheetSession`
-  has no method for it. **Iterative calculation:** the engine supports it, but neither the
-  XLSX reader nor `SheetSession` turns it on.
-- **Conditional formatting on the page.** `lower_range_condfmt` is tested but not called by
-  `sheet-js`; the grid draws data bars only.
-- **The tab-separated lane with drawn rules** as a user choice: it runs only through an
-  option the bundle never sets. The runtime fallback pours text without rules.
-- **Exact decimal arithmetic:** a Cargo feature `sheet-js` does not enable ([ADR 501](adr/501-f64-numbers.md)).
+- **The tab-separated lane with drawn rules** as a user choice: it runs only through an option
+  the bundle never sets.
+- **Exact decimal arithmetic:** a Cargo feature `sheet-js` does not enable
+  ([ADR 501](adr/501-f64-numbers.md)).
 - **Interpreting pivot tables, data validation, external links or macros**
   ([ADR 504](adr/504-publishing-first-scope.md)). External links are never followed.
-- **Other file formats.** `.xlsx` is the only one read or written; a legacy `.xls` is refused.
+- **Other file formats.** `.xlsx`, CSV and TSV are read; `.xlsx` is written; a legacy `.xls` is
+  refused.
 - **Localised function names and argument separators**, and CJK display locales.
 - **A worker-hosted engine.** The manifest declares no worker capability.
 - **Three registry rows marked `planned`:** `sheet.chart.design-markers`,
