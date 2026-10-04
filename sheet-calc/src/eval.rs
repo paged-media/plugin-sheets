@@ -765,6 +765,27 @@ fn plan_args<'m>(
             // function (`SUM(OFFSET(A1,0,0,3,1))`) sees the whole area, not just
             // the top-left (M2 Phase A). An unresolvable target degrades to the
             // scalar `#REF!`/`#VALUE!` the special-form scalar path emits.
+            // INDEX selecting a whole row/column (a 0 selector) and the
+            // range operator between references are REFERENCE arguments.
+            Expr::Func(ffid, fargs)
+                if sheet_core::funcs::meta(*ffid).name == "INDEX"
+                    && index_selects_vector(model, fargs, ctx, spills) =>
+            {
+                match eval_as_ref(model, arg, ctx, spills) {
+                    Some(r) => {
+                        bufs.push(materialize(model, r));
+                        plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                    }
+                    None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
+                }
+            }
+            Expr::Binary(BinOp::Range, _, _) => match eval_as_ref(model, arg, ctx, spills) {
+                Some(r) => {
+                    bufs.push(materialize(model, r));
+                    plans.push(ArgPlan::BufAt(bufs.len() - 1));
+                }
+                None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
+            },
             Expr::Func(ffid, _) if sheet_core::funcs::meta(*ffid).special_form => {
                 match eval_as_ref(model, arg, ctx, spills) {
                     Some(r) => {
@@ -986,6 +1007,27 @@ fn eval_as_ref(
         }),
         Expr::StructuredRef(s) => resolve_structured_ref(model, s, ctx).ok(),
         Expr::SpillRef(inner) => spill_ref_range(spills, inner).map(spill_rect_to_range),
+        // `a:b` between two references is the bounding box of both
+        // (`$AC$15:INDEX($AC$15:$AC$114,n)` — a dynamic range in a name).
+        Expr::Binary(BinOp::Range, a, b) => {
+            let a = eval_as_ref(model, a, ctx, spills)?.normalized();
+            let b = eval_as_ref(model, b, ctx, spills)?.normalized();
+            if a.start.sheet != b.start.sheet {
+                return None;
+            }
+            let mut start = a.start;
+            let mut end = a.end;
+            start.row = start.row.min(b.start.row);
+            start.col = start.col.min(b.start.col);
+            end.row = end.row.max(b.end.row);
+            end.col = end.col.max(b.end.col);
+            Some(RangeRef { start, end })
+        }
+        // INDEX returns a REFERENCE (Excel): the cell, or with a 0 row/col
+        // the whole column/row of its range.
+        Expr::Func(fid, fargs) if sheet_core::funcs::meta(*fid).name == "INDEX" => {
+            index_target(model, fargs, ctx, spills)
+        }
         // A nested reference-returning special form (OFFSET / INDIRECT).
         Expr::Func(fid, fargs) => {
             let meta = sheet_core::funcs::meta(*fid);
@@ -1000,6 +1042,55 @@ fn eval_as_ref(
         }
         _ => None,
     }
+}
+
+/// Whether an INDEX call selects more than one cell (a 0 row or column).
+fn index_selects_vector(
+    model: &SheetModel,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> bool {
+    index_target(model, args, ctx, spills).is_some_and(|r| r.rows() > 1 || r.cols() > 1)
+}
+
+/// The reference `INDEX(reference, row, [col])` denotes: 1-based, a 0 (or
+/// an omitted col on a 2-D range) selects the whole column/row. `None` when
+/// the first argument is not a reference or an index is out of range.
+fn index_target(
+    model: &SheetModel,
+    args: &[Expr],
+    ctx: &EvalCtx,
+    spills: &SpillState,
+) -> Option<RangeRef> {
+    let base = eval_as_ref(model, args.first()?, ctx, spills)?.normalized();
+    let (rows, cols) = (base.rows() as i64, base.cols() as i64);
+    let a = arg_to_i64(model, args.get(1)?, ctx, spills).ok()?;
+    let b = match args.get(2) {
+        Some(e) => Some(arg_to_i64(model, e, ctx, spills).ok()?),
+        None => None,
+    };
+    // One selector on a vector addresses its only axis.
+    let (r, c) = match b {
+        None if rows == 1 => (1, a),
+        None if cols == 1 => (a, 1),
+        None => (a, 0),
+        Some(b) => (a, b),
+    };
+    if r < 0 || c < 0 || r > rows || c > cols {
+        return None;
+    }
+    let mut start = base.start;
+    let mut end = base.end;
+    if r > 0 {
+        start.row = base.start.row + (r - 1) as u32;
+        end.row = start.row;
+    }
+    if c > 0 {
+        start.col = base.start.col + (c - 1) as u32;
+        end.col = start.col;
+    }
+    Some(RangeRef { start, end })
 }
 
 /// `OFFSET(reference, rows, cols, [height], [width])` (ECMA-376 §18.17.7,

@@ -7,5 +7,5 @@ unichar-upper-a	=UNICHAR(65)	-	A
 unichar-euro	=UNICHAR(8364)	-	€
 unichar-zero-is-value	=UNICHAR(0)	-	#VALUE!
 unichar-negative-is-value	=UNICHAR(-3)	-	#VALUE!
-unichar-surrogate-is-value	=UNICHAR(55296)	-	#VALUE!
+unichar-surrogate-is-value	=UNICHAR(55296)	-	#N/A
 unichar-error-propagates	=UNICHAR(A1)	A1=#VALUE!	#VALUE!

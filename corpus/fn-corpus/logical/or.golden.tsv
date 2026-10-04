@@ -13,4 +13,4 @@ range-all-false	=OR(A1:A3)	A1=FALSE;A2=0;A3=FALSE	FALSE
 range-text-skipped	=OR(A1:A3)	A1=FALSE;A2=skip;A3=1	TRUE
 range-error-propagates	=OR(A1:A2)	A1=FALSE;A2=#DIV/0!	#DIV/0!
 range-no-logical-value	=OR(A1:A2)	A1=x;A2=	#VALUE!
-scalar-non-bool-text	=OR(FALSE;"nope")		#VALUE!
+scalar-non-bool-text	=OR(FALSE;"nope")		FALSE

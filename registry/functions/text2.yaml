@@ -153,7 +153,7 @@
   range_aware: false
   rust: text2::dollar
   status: implemented
-  provenance: ["ECMA-376 §18.17.7 (DOLLAR) — number, [decimals] with currency format. Rulings (text2.rs module docs): currency symbol is the T0 '$' literal (D-8, no locale tailoring); a negative value uses the simple leading-minus form (-$1,235), NOT Excel's parenthesized form (($1,235)) — documented bug-for-bug deviation"]
+  provenance: ["ECMA-376 §18.17.7 (DOLLAR) — number, [decimals] with currency format. Rulings (text2.rs module docs): currency symbol is the T0 '$' literal (D-8, no locale tailoring); a negative value uses the en-US currency negative pattern (($1,235)), as Excel 16 (recorded)"]
   tests:
     rust: ["sheet-conformance/tests/fn_text2.rs::sheet_fn_text2_dollar"]
     corpus: ["corpus/fn-corpus/text2/dollar.golden.tsv"]

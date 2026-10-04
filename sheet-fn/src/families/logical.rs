@@ -148,6 +148,10 @@ pub fn iferror(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     let primary = arg_value(&args[0]);
     if matches!(primary, CellValue::Error(_)) {
         arg_value(&args[1])
+    } else if primary == CellValue::Empty {
+        // A blank cell is dereferenced to a number (Excel 16:
+        // IFERROR(blank, 7) is 0).
+        CellValue::Number(0.0)
     } else {
         primary
     }
@@ -193,6 +197,10 @@ fn fold_bools(args: &[Arg], init: bool, op: fn(bool, bool) -> bool) -> CellValue
                     acc = op(acc, b);
                     saw_logical = true;
                 }
+                // Text that is not TRUE/FALSE is ignored like text in a
+                // range (Excel 16: AND(TRUE,"nope") is TRUE); with no
+                // logical value at all the result is still #VALUE!.
+                Err(_) if matches!(v, CellValue::Text(_)) => {}
                 Err(e) => return CellValue::Error(e),
             },
             Arg::Range(rv) => match fold_range(rv, &mut acc, op) {

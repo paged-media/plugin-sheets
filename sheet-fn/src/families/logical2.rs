@@ -161,6 +161,8 @@ pub fn xor(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
                     }
                     saw_logical = true;
                 }
+                // Non-boolean text is ignored (Excel 16: XOR(TRUE,"nope")).
+                Err(_) if matches!(v, CellValue::Text(_)) => {}
                 Err(e) => return CellValue::Error(e),
             },
             Arg::Range(rv) => match count_true_in_range(rv) {
@@ -192,6 +194,9 @@ pub fn ifna(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     let primary = arg_value(&args[0]);
     if matches!(primary, CellValue::Error(CellError::Na)) {
         arg_value(&args[1])
+    } else if primary == CellValue::Empty {
+        // As IFERROR: a blank cell reads as 0.
+        CellValue::Number(0.0)
     } else {
         primary
     }
@@ -421,9 +426,10 @@ mod tests {
         // Numbers coerce (non-zero TRUE, zero FALSE).
         assert_eq!(xor(&[s(num(1.0)), s(num(0.0))], &ctx()), b(true));
         assert_eq!(xor(&[s(num(2.0)), s(num(3.0))], &ctx()), b(false));
-        // Non-boolean scalar text → #VALUE!.
+        // Non-boolean scalar text is ignored (Excel 16); alone it is #VALUE!.
+        assert_eq!(xor(&[s(b(true)), s(txt("nope"))], &ctx()), b(true));
         assert_eq!(
-            xor(&[s(b(true)), s(txt("nope"))], &ctx()),
+            xor(&[s(txt("nope"))], &ctx()),
             CellValue::Error(CellError::Value)
         );
     }

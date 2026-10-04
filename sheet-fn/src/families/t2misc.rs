@@ -668,25 +668,17 @@ pub fn hyperlink(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
         Some(Arg::Range(view)) => view.get(0, 0),
         None => return CellValue::Error(CellError::Value),
     };
-    match args.get(1) {
-        Some(Arg::Scalar(v)) => {
-            let t = coerce::to_text(v);
-            if t.is_empty() {
-                CellValue::Text(coerce::to_text(&link))
-            } else {
-                CellValue::Text(t)
-            }
-        }
-        Some(Arg::Range(view)) => {
-            let v = view.get(0, 0);
-            let t = coerce::to_text(&v);
-            if t.is_empty() {
-                CellValue::Text(coerce::to_text(&link))
-            } else {
-                CellValue::Text(t)
-            }
-        }
-        None => CellValue::Text(coerce::to_text(&link)),
+    // A given friendly_name is the cell's value AS IS (Excel 16: a number
+    // stays a number, "" shows empty); only an absent/blank one shows the
+    // link.
+    let friendly = match args.get(1) {
+        Some(Arg::Scalar(v)) => Some(v.clone()),
+        Some(Arg::Range(view)) => Some(view.get(0, 0)),
+        None => None,
+    };
+    match friendly {
+        Some(CellValue::Empty) | None => CellValue::Text(coerce::to_text(&link)),
+        Some(v) => v,
     }
 }
 

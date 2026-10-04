@@ -6,6 +6,6 @@
 largest	=LARGE(A1:A5,1)	A1=3;A2=1;A3=4;A4=1;A5=5	5
 second	=LARGE(A1:A5,2)	A1=3;A2=1;A3=4;A4=1;A5=5	4
 third	=LARGE(A1:A5,3)	A1=3;A2=1;A3=4;A4=1;A5=5	3
-k-truncates	=LARGE(A1:A5,2.9)	A1=3;A2=1;A3=4;A4=1;A5=5	4
+k-truncates	=LARGE(A1:A5,2.9)	A1=3;A2=1;A3=4;A4=1;A5=5	3
 k-too-big-num	=LARGE(A1:A3,4)	A1=3;A2=1;A3=4	#NUM!
 k-zero-num	=LARGE(A1:A3,0)	A1=3;A2=1;A3=4	#NUM!

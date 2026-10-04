@@ -310,7 +310,9 @@ fn collect_nonneg_ints(args: &[Arg]) -> Result<Vec<u64>, CellError> {
                             }
                             out.push(t as u64);
                         }
-                        // text/bool/blank inside a range skip (aggregation).
+                        // Text in a range is #VALUE! (Excel 16: GCD over
+                        // {12,"hi",18,30}); bool/blank skip.
+                        CellValue::Text(_) => return Err(CellError::Value),
                         _ => {}
                     }
                 }
@@ -545,7 +547,8 @@ pub fn decimal(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 
     let s = text.trim();
     if s.is_empty() {
-        return CellValue::Error(CellError::Num);
+        // Excel 16: DECIMAL("",16) is 0.
+        return CellValue::Number(0.0);
     }
     let mut acc = F64(0.0);
     let r = F64::from_f64(radix as f64);

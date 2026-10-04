@@ -6,6 +6,6 @@
 textbefore-first	=TEXTBEFORE("a-b-c","-")	-	a
 textbefore-second	=TEXTBEFORE("a-b-c","-",2)	-	a-b
 textbefore-from-end	=TEXTBEFORE("a-b-c","-",-1)	-	a-b
-textbefore-case-insensitive	=TEXTBEFORE("aXbXc","x")	-	a
+textbefore-case-insensitive	=TEXTBEFORE("aXbXc","x")	-	#N/A
 textbefore-not-found	=TEXTBEFORE("abc","-")	-	#N/A
 textbefore-cell	=TEXTBEFORE(A1,"@")	A1=text:user@example.com	user

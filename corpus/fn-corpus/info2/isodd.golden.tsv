@@ -8,6 +8,6 @@ odd-is-true	=ISODD(3)		TRUE
 even-is-false	=ISODD(4)		FALSE
 zero-is-not-odd	=ISODD(0)		FALSE
 truncates-toward-zero	=ISODD(3.9)		TRUE
-true-coerces-to-one-odd	=ISODD(TRUE)		TRUE
+true-coerces-to-one-odd	=ISODD(TRUE)		#VALUE!
 non-numeric-text-is-value	=ISODD("x")		#VALUE!
 error-propagates	=ISODD(A1)	A1=#NUM!	#NUM!

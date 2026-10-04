@@ -363,8 +363,17 @@ fn kth(args: &[Arg], largest: bool) -> CellValue {
         Err(e) => return CellValue::Error(e),
     };
     let n = nums.len();
-    let k = k_raw.trunc();
-    // k must be an integer in 1..=n (Excel truncates k, then bounds-checks).
+    // Excel computes LARGE(k) as SMALL(n+1-k) and truncates that position:
+    // LARGE(r,2.9) of 5 values is the 3rd largest, SMALL(r,3.9) the 3rd
+    // smallest (both recorded on Excel 16). Then bounds-check 1..=n.
+    if k_raw < 1.0 {
+        return CellValue::Error(CellError::Num);
+    }
+    let k = if largest {
+        n as f64 + 1.0 - (n as f64 + 1.0 - k_raw).trunc()
+    } else {
+        k_raw.trunc()
+    };
     if n == 0 || k < 1.0 || k > n as f64 {
         return CellValue::Error(CellError::Num);
     }

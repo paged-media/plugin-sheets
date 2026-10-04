@@ -391,16 +391,17 @@ fn sheet_fn_lookup_index_bounds_and_zero_and_error() {
         call("INDEX", &[Arg::Range(v), s(num(3.0)), s(num(1.0))], &c),
         err(CellError::Ref)
     );
-    // Index 0 (T0 degrade: whole-row/col array form not implemented) -> #VALUE!.
+    // Index 0 selects the whole column; as a value it shows the first
+    // element (Excel 16 spills from it; recorded n:1).
     let v = RangeView::from_slice(cr(0, 0), 2, 2, &cells);
     assert_eq!(
         call("INDEX", &[Arg::Range(v), s(num(0.0)), s(num(1.0))], &c),
-        err(CellError::Value)
+        cells[0].clone()
     );
     let v = RangeView::from_slice(cr(0, 0), 2, 2, &cells);
     assert_eq!(
         call("INDEX", &[Arg::Range(v), s(num(1.0)), s(num(0.0))], &c),
-        err(CellError::Value)
+        cells[0].clone()
     );
     // Error in the row argument propagates.
     let v = RangeView::from_slice(cr(0, 0), 2, 2, &cells);

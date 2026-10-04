@@ -220,9 +220,9 @@ fn single_cell_table(key: &CellValue, cell: &CellValue, args: &[Arg], axis: Axis
 /// 1-based `(row, col)` of `range`. For a single-row or single-column range
 /// the second argument may address along the only axis and `col` is omitted.
 ///
-/// **T0 ruling:** `row`/`col` `0` (Excel's "entire row/column" array form)
-/// returns `#VALUE!` — the whole-vector result needs the T1 spill machinery
-/// and is out of T0 scope (documented degrade, module header). Out-of-bounds
+/// `row`/`col` `0` is Excel's "entire row/column": as an argument the
+/// evaluator passes the whole vector (a reference); as a value the first
+/// element shows. Out-of-bounds
 /// indices are `#REF!`; an error in any scalar argument propagates.
 pub fn index(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     if let Some(e) = first_scalar_error(&args[1..]) {
@@ -252,11 +252,12 @@ pub fn index(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
         None => None,
     };
 
-    // T0 degrade: the whole-row/whole-column (index 0) array forms are not
-    // implemented (need spill). Treat a 0 in an addressing slot as #VALUE!.
-    if row_arg == 0 || matches!(col_arg, Some(0)) {
-        return CellValue::Error(CellError::Value);
-    }
+    // A 0 selects the whole row/column: as an argument the evaluator hands
+    // the outer function that reference (sheet-calc `index_target`); as a
+    // value the cell shows the vector's first element (the anchor Excel 365
+    // spills from).
+    let row_arg = if row_arg == 0 { 1 } else { row_arg };
+    let col_arg = col_arg.map(|c| if c == 0 { 1 } else { c });
 
     let (r, c) = if rv.rows() == 1 && col_arg.is_none() {
         // Single-row range, one selector: it addresses the column.

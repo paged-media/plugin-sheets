@@ -184,11 +184,10 @@ fn sheet_fn_logical_and_coercion() {
     // Numbers coerce: non-zero TRUE, zero FALSE.
     assert_eq!(call("AND", &[s(num(1.0)), s(num(3.0))], &c), b(true));
     assert_eq!(call("AND", &[s(num(1.0)), s(num(0.0))], &c), b(false));
-    // Non-boolean scalar text is #VALUE!.
-    assert_eq!(
-        call("AND", &[s(b(true)), s(txt("nope"))], &c),
-        err(CellError::Value)
-    );
+    // Non-boolean scalar text is ignored when a logical exists (Excel 16,
+    // recorded); with no logical at all it is #VALUE!.
+    assert_eq!(call("AND", &[s(b(true)), s(txt("nope"))], &c), b(true));
+    assert_eq!(call("AND", &[s(txt("nope"))], &c), err(CellError::Value));
 }
 
 #[test]
@@ -245,11 +244,10 @@ fn sheet_fn_logical_or_coercion() {
     let c = ctx();
     assert_eq!(call("OR", &[s(num(0.0)), s(num(0.0))], &c), b(false));
     assert_eq!(call("OR", &[s(num(0.0)), s(num(2.0))], &c), b(true));
-    // Non-boolean scalar text -> #VALUE!.
-    assert_eq!(
-        call("OR", &[s(b(false)), s(txt("nope"))], &c),
-        err(CellError::Value)
-    );
+    // Non-boolean scalar text is ignored when a logical exists (Excel 16,
+    // recorded); with no logical at all it is #VALUE!.
+    assert_eq!(call("OR", &[s(b(false)), s(txt("nope"))], &c), b(false));
+    assert_eq!(call("OR", &[s(txt("nope"))], &c), err(CellError::Value));
 }
 
 #[test]
@@ -401,10 +399,11 @@ fn sheet_fn_logical_iferror_catches_all_codes() {
 #[test]
 fn sheet_fn_logical_iferror_passes_through_non_errors() {
     let c = ctx();
-    // Blank, text, bool, and number primaries all pass through unchanged.
+    // A blank primary reads as 0 (Excel 16, recorded); text, bool and
+    // number primaries pass through unchanged.
     assert_eq!(
         call("IFERROR", &[s(CellValue::Empty), s(num(9.0))], &c),
-        CellValue::Empty
+        num(0.0)
     );
     assert_eq!(call("IFERROR", &[s(txt("ok")), s(num(9.0))], &c), txt("ok"));
     assert_eq!(call("IFERROR", &[s(b(true)), s(num(9.0))], &c), b(true));

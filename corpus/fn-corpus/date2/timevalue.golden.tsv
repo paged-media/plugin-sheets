@@ -9,6 +9,6 @@ timevalue.evening	=TIMEVALUE("18:30")		0.770833333333333
 timevalue.with-seconds	=TIMEVALUE("08:15:30")		0.344097222222222
 timevalue.midnight	=TIMEVALUE("00:00")		0
 timevalue.from-cell	=TIMEVALUE(A1)	A1=text:12:00	0.5
-timevalue.out-of-range	=TIMEVALUE("25:00")		#VALUE!
+timevalue.out-of-range	=TIMEVALUE("25:00")		0.041666666666667
 timevalue.unparseable	=TIMEVALUE("noon")		#VALUE!
 timevalue.error-prop	=TIMEVALUE(NA())		#N/A

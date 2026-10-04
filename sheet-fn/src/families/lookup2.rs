@@ -535,13 +535,14 @@ pub fn address(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
         None => true,
     };
 
-    // Grid bounds: 1-based row/col must be within Excel's 1..=MAX+1 range.
+    // Grid bounds: 1-based row/col must be within Excel's 1..=MAX+1 range;
+    // outside it Excel answers #VALUE! (recorded: ADDRESS(0,1)).
     if row < 1
         || col < 1
         || row > (sheet_core::MAX_ROW as i64 + 1)
         || col > (sheet_core::MAX_COL as i64 + 1)
     {
-        return CellValue::Error(CellError::Ref);
+        return CellValue::Error(CellError::Value);
     }
     let col0 = (col - 1) as u32;
 

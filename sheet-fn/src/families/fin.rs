@@ -352,7 +352,8 @@ pub fn nper(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 
     let result = if r == 0.0 {
         if pmt == 0.0 {
-            return CellValue::Error(CellError::Num);
+            // Excel divides by pmt here: NPER(0,0,…) is #DIV/0! (recorded).
+            return CellValue::Error(CellError::Div0);
         }
         -(pv + fv) / pmt
     } else {
@@ -628,7 +629,8 @@ pub fn xnpv(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
         Ok(v) => v,
         Err(e) => return CellValue::Error(e),
     };
-    if rate <= -1.0 {
+    // Excel 16 rejects a zero rate too (XNPV(0,…) is #NUM!, recorded).
+    if rate <= -1.0 || rate == 0.0 {
         return CellValue::Error(CellError::Num);
     }
     let (values, dates) = match dated_flows(&args[1], &args[2]) {

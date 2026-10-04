@@ -11,5 +11,5 @@ r1c1-abs	=ADDRESS(2,3,1,FALSE)	-	R2C3
 r1c1-rel	=ADDRESS(2,3,4,FALSE)	-	R[2]C[3]
 sheet-plain	=ADDRESS(1,1,1,TRUE,"Sheet1")	-	Sheet1!$A$1
 sheet-quoted	=ADDRESS(1,1,1,TRUE,"My Sheet")	-	'My Sheet'!$A$1
-row-lt1-ref	=ADDRESS(0,1)	-	#REF!
+row-lt1-ref	=ADDRESS(0,1)	-	#VALUE!
 absnum-oob-value	=ADDRESS(1,1,5)	-	#VALUE!

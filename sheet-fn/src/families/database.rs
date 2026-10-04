@@ -263,6 +263,15 @@ fn for_each_matching(
     None
 }
 
+/// A criteria table with no condition row (its header alone) is #VALUE! in
+/// Excel 16 (recorded for every D-function), not "match every record".
+fn header_only_criteria(args: &[Arg]) -> Option<CellValue> {
+    match args.get(2) {
+        Some(Arg::Range(rv)) if rv.rows() <= 1 => Some(CellValue::Error(CellError::Value)),
+        _ => None,
+    }
+}
+
 /// Does database record `dr` satisfy the criteria table?
 ///
 /// AND within a criteria row, OR across criteria rows; a fully-blank criteria
@@ -370,6 +379,9 @@ fn numeric_aggregate(args: &[Arg], aggregate: impl Fn(&[f64]) -> CellValue) -> C
 /// `DSUM(database, field, criteria)` — sum of the field over matching records.
 /// Empty matching set sums to `0` (Excel).
 pub fn dsum(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     numeric_aggregate(args, |nums| {
         let mut sum = F64::from_f64(0.0);
         for &n in nums {
@@ -382,6 +394,9 @@ pub fn dsum(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// `DPRODUCT(database, field, criteria)` — product of the field over matching
 /// records. Empty matching set yields `0` (Excel: DPRODUCT of no values).
 pub fn dproduct(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     numeric_aggregate(args, |nums| {
         if nums.is_empty() {
             return CellValue::Number(0.0);
@@ -397,6 +412,9 @@ pub fn dproduct(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// `DMAX(database, field, criteria)` — largest field value over matching
 /// records; **of no numbers, `0`** (Excel, like `MAX`).
 pub fn dmax(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     numeric_aggregate(args, |nums| {
         let m = nums.iter().copied().fold(None, |acc: Option<f64>, n| {
             Some(acc.map_or(n, |a| a.max(n)))
@@ -408,6 +426,9 @@ pub fn dmax(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// `DMIN(database, field, criteria)` — smallest field value over matching
 /// records; **of no numbers, `0`** (Excel, like `MIN`).
 pub fn dmin(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     numeric_aggregate(args, |nums| {
         let m = nums.iter().copied().fold(None, |acc: Option<f64>, n| {
             Some(acc.map_or(n, |a| a.min(n)))
@@ -419,6 +440,9 @@ pub fn dmin(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// `DAVERAGE(database, field, criteria)` — mean of the field over matching
 /// records; **of no numbers, `#DIV/0!`** (Excel).
 pub fn daverage(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     numeric_aggregate(args, |nums| {
         if nums.is_empty() {
             return CellValue::Error(CellError::Div0);
@@ -438,6 +462,9 @@ pub fn daverage(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// propagate range errors). Counts the matching numeric cells via the same
 /// scan, ignoring an error cell rather than propagating it.
 pub fn dcount(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     let (Some(db_arg), Some(field_arg), Some(crit_arg)) = (args.first(), args.get(1), args.get(2))
     else {
         return CellValue::Error(CellError::Value);
@@ -468,6 +495,9 @@ pub fn dcount(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// over matching records (text/number/bool/error all count; only a truly
 /// blank field cell is skipped). Total; never errors.
 pub fn dcounta(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     let (Some(db_arg), Some(field_arg), Some(crit_arg)) = (args.first(), args.get(1), args.get(2))
     else {
         return CellValue::Error(CellError::Value);
@@ -496,6 +526,9 @@ pub fn dcounta(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// (ECMA-376 §18.17.7). Returns the matching field cell verbatim (its own type
 /// — text, number, bool, or even an error cell — is passed through).
 pub fn dget(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     let (Some(db_arg), Some(field_arg), Some(crit_arg)) = (args.first(), args.get(1), args.get(2))
     else {
         return CellValue::Error(CellError::Value);
@@ -560,6 +593,9 @@ fn d_variance(args: &[Arg], population: bool) -> CellValue {
 /// `DSTDEV(database, field, criteria)` — **sample** standard deviation
 /// (`n−1`) of the field over matching records.
 pub fn dstdev(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     match d_variance(args, false) {
         CellValue::Number(v) => CellValue::Number(v.sqrt()),
         other => other,
@@ -569,6 +605,9 @@ pub fn dstdev(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// `DSTDEVP(database, field, criteria)` — **population** standard deviation
 /// (`n`) of the field over matching records.
 pub fn dstdevp(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     match d_variance(args, true) {
         CellValue::Number(v) => CellValue::Number(v.sqrt()),
         other => other,
@@ -578,12 +617,18 @@ pub fn dstdevp(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 /// `DVAR(database, field, criteria)` — **sample** variance (`n−1`) of the
 /// field over matching records.
 pub fn dvar(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     d_variance(args, false)
 }
 
 /// `DVARP(database, field, criteria)` — **population** variance (`n`) of the
 /// field over matching records.
 pub fn dvarp(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
+    if let Some(e) = header_only_criteria(args) {
+        return e;
+    }
     d_variance(args, true)
 }
 

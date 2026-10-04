@@ -5,5 +5,5 @@ ceiling-up	=CEILING(2.5,1)	-	3
 ceiling-step2	=CEILING(2.5,2)	-	4
 ceiling-neg-both	=CEILING(-2.5,-1)	-	-3
 ceiling-zero-sig	=CEILING(5,0)	-	0
-ceiling-sign-mismatch	=CEILING(-2,3)	-	#NUM!
+ceiling-sign-mismatch	=CEILING(-2,3)	-	0
 ceiling-already	=CEILING(6,2)	-	6

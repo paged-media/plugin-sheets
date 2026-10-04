@@ -266,6 +266,14 @@ fn sheet_fn_math_gcd_variadic_and_range() {
         CellValue::Number(18.0),
     ];
     let view = RangeView::from_slice(cell(), 1, 4, &cells);
+    // Text in a range is #VALUE! (Excel 16, recorded); blanks skip.
+    assert_eq!(call("GCD", &[Arg::Range(view)]), e(CellError::Value));
+    let cells = [
+        CellValue::Number(12.0),
+        CellValue::Empty,
+        CellValue::Number(18.0),
+    ];
+    let view = RangeView::from_slice(cell(), 1, 3, &cells);
     assert_eq!(call("GCD", &[Arg::Range(view)]), n(6.0));
     // Negative operand -> #NUM!; un-parseable scalar -> #VALUE!.
     assert_eq!(call("GCD", &[num(-4.0), num(6.0)]), e(CellError::Num));
@@ -463,10 +471,11 @@ fn sheet_fn_math_decimal_parse() {
     assert_eq!(call("DECIMAL", &[txt("  Z "), num(36.0)]), n(35.0));
     // BASE/DECIMAL round-trip.
     assert_eq!(call("DECIMAL", &[txt("00000111"), num(2.0)]), n(7.0));
-    // Domain: out-of-range radix, invalid digit, empty -> #NUM!.
+    // Domain: out-of-range radix, invalid digit -> #NUM!; empty is 0
+    // (Excel 16, recorded).
     assert_eq!(call("DECIMAL", &[txt("10"), num(1.0)]), e(CellError::Num));
     assert_eq!(call("DECIMAL", &[txt("2"), num(2.0)]), e(CellError::Num));
-    assert_eq!(call("DECIMAL", &[txt(""), num(16.0)]), e(CellError::Num));
+    assert_eq!(call("DECIMAL", &[txt(""), num(16.0)]), n(0.0));
     // Error propagation + arity.
     assert_eq!(
         call("DECIMAL", &[err(CellError::Na), num(16.0)]),

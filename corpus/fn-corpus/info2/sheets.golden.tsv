@@ -10,4 +10,4 @@ no-arg-is-one	=SHEETS()		1
 single-cell-range-is-one	=SHEETS(A1:A1)	A1=5	1
 multi-cell-range-is-one	=SHEETS(A1:B2)	A1=1;B2=4	1
 wide-range-is-one	=SHEETS(A1:D4)		1
-scalar-arg-is-one	=SHEETS(7)		1
+scalar-arg-is-one	=SHEETS(7)		#N/A

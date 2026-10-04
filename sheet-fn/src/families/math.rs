@@ -400,10 +400,13 @@ pub fn ceiling(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
         if sig == 0.0 {
             return CellValue::Number(0.0);
         }
-        if x.signum() != sig.signum() && x != 0.0 {
+        // Excel 2010+: a negative number with a positive significance rounds
+        // toward zero (CEILING(-2,3) is 0); only a positive number with a
+        // negative significance is #NUM!.
+        if x > 0.0 && sig < 0.0 {
             return CellValue::Error(CellError::Num);
         }
-        finite((x / sig).ceil() * sig)
+        finite((x / sig).ceil() * sig + 0.0)
     })
 }
 
@@ -413,6 +416,10 @@ pub fn ceiling(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// `#NUM!` when the signs differ.
 pub fn floor(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     binary(args, |x, sig| {
+        if x == 0.0 {
+            // Zero is a multiple of everything: FLOOR(0,0) is 0 in Excel.
+            return CellValue::Number(0.0);
+        }
         if sig == 0.0 {
             // Classic FLOOR divides by significance → #DIV/0! at zero.
             return CellValue::Error(CellError::Div0);
@@ -569,8 +576,11 @@ mod tests {
 
     #[test]
     fn ceiling_floor_sign_rule() {
+        // Excel 2010+: negative number, positive significance rounds toward
+        // zero; positive number, negative significance is #NUM!.
+        assert_eq!(ceiling(&[n(-2.0), n(3.0)], &ctx()), CellValue::Number(0.0));
         assert_eq!(
-            ceiling(&[n(-2.0), n(3.0)], &ctx()),
+            ceiling(&[n(2.0), n(-3.0)], &ctx()),
             CellValue::Error(CellError::Num)
         );
         assert_eq!(

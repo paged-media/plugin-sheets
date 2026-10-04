@@ -167,7 +167,11 @@ pub fn error_type(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 pub fn sheet(args: &[Arg], ctx: &EvalCtx) -> CellValue {
     let sheet_id = match args.first() {
         Some(Arg::Range(rv)) => rv.origin().sheet,
-        // No arg, or a scalar (no recoverable reference): the current cell.
+        // A non-reference, non-name value (SHEET(99)) is #N/A (Excel 16).
+        Some(Arg::Scalar(v)) if !matches!(v, CellValue::Text(_)) => {
+            return CellValue::Error(CellError::Na)
+        }
+        // No arg, or sheet-name text (unsupported): the current cell.
         _ => ctx.current.sheet,
     };
     CellValue::Number((sheet_id as u32 + 1) as f64)
@@ -186,7 +190,11 @@ pub fn sheet(args: &[Arg], ctx: &EvalCtx) -> CellValue {
 /// single contiguous reference, and (lacking a workbook sheet-count field) a
 /// no-argument call. The honest fix is an additive `EvalCtx::sheet_count`
 /// field plus a 3-D `Arg` variant — flagged in the track report, not faked.
-pub fn sheets(_args: &[Arg], _ctx: &EvalCtx) -> CellValue {
+pub fn sheets(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
+    // A non-reference argument is #N/A (Excel 16: SHEETS(7)).
+    if matches!(args.first(), Some(Arg::Scalar(_))) {
+        return CellValue::Error(CellError::Na);
+    }
     // T1: one contiguous reference spans one sheet; no workbook sheet count.
     CellValue::Number(1.0)
 }
@@ -220,6 +228,10 @@ pub fn isodd(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// truncated integer (computed in `i64`-safe space; magnitudes beyond `i64`
 /// are even by construction since they are exact even doubles).
 fn parity_is_odd(v: &CellValue) -> Result<bool, CellError> {
+    // A logical is not coerced here (Excel 16: ISODD(TRUE) is #VALUE!).
+    if matches!(v, CellValue::Bool(_)) {
+        return Err(CellError::Value);
+    }
     let x = coerce::to_number(v)?.trunc();
     // A truncated f64 with |x| ≥ 2^53 has no odd representable values (it is an
     // exact even integer), so the rem-2 test on the f64 is exact and total.
@@ -359,9 +371,10 @@ mod tests {
 
     #[test]
     fn sheet_scalar_arg_falls_back_to_current() {
-        // T1: a scalar arg has no recoverable reference → current cell sheet.
+        // A non-reference value is #N/A (Excel 16); name text falls back.
         let c = EvalCtx::new(DateSystem::Date1900, cr_at(1, 0, 0), 0.0, 1);
-        assert_eq!(sheet(&[s(num(99.0))], &c), num(2.0));
+        assert_eq!(sheet(&[s(num(99.0))], &c), CellValue::Error(CellError::Na));
+        assert_eq!(sheet(&[s(txt("Sheet1"))], &c), num(2.0));
     }
 
     #[test]
@@ -391,8 +404,12 @@ mod tests {
     fn iseven_isodd_coercion_and_errors() {
         // Numeric text coerces (the general to_number, unlike N).
         assert_eq!(iseven(&[s(txt("8"))], &ctx()), b(true));
-        assert_eq!(isodd(&[s(b(true))], &ctx()), b(true)); // TRUE → 1 → odd
-                                                           // Non-numeric text → #VALUE!.
+        // A logical is not coerced (Excel 16: ISODD(TRUE) is #VALUE!).
+        assert_eq!(
+            isodd(&[s(b(true))], &ctx()),
+            CellValue::Error(CellError::Value)
+        );
+        // Non-numeric text → #VALUE!.
         assert_eq!(
             iseven(&[s(txt("x"))], &ctx()),
             CellValue::Error(CellError::Value)

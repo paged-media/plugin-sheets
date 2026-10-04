@@ -356,8 +356,11 @@ fn sheet_fn_math_ceiling_basic() {
 
 #[test]
 fn sheet_fn_math_ceiling_sign_mismatch_num_error() {
-    // Classic rule: sign(x) != sign(significance) → #NUM!.
-    assert_eq!(call("CEILING", &[num(-2.0), num(3.0)]), e(CellError::Num));
+    // Excel 2010+: a negative number with a positive significance rounds
+    // toward zero (CEILING(-2,3) is 0, recorded); a positive number with a
+    // negative significance is #NUM!.
+    assert_eq!(call("CEILING", &[num(-2.0), num(3.0)]), n(0.0));
+    assert_eq!(call("CEILING", &[num(2.0), num(-3.0)]), e(CellError::Num));
 }
 
 #[test]

@@ -196,7 +196,8 @@ fn sheet_fn_date_datedif_units() {
     assert_eq!(num("DATEDIF", &[n(s), n(e), t("D")], &ctx()), 430.0);
     assert_eq!(num("DATEDIF", &[n(s), n(e), t("MD")], &ctx()), 5.0);
     assert_eq!(num("DATEDIF", &[n(s), n(e), t("YM")], &ctx()), 2.0);
-    assert_eq!(num("DATEDIF", &[n(s), n(e), t("YD")], &ctx()), 64.0);
+    // Excel 16 counts in the start's (leap) year: 65 (recorded).
+    assert_eq!(num("DATEDIF", &[n(s), n(e), t("YD")], &ctx()), 65.0);
     // Unit is case-insensitive.
     assert_eq!(num("DATEDIF", &[n(s), n(e), t("d")], &ctx()), 430.0);
 }
@@ -513,9 +514,14 @@ fn sheet_fn_date_timevalue_formats() {
 
 #[test]
 fn sheet_fn_date_timevalue_errors_and_arity() {
-    // RULING: out-of-range component -> #VALUE!.
+    // Hours past 23 wrap (Excel 16: "25:00" is 1:00); minutes past 59 are
+    // #VALUE!.
     assert_eq!(
         call("TIMEVALUE", &[t("25:00")], &ctx()),
+        CellValue::Number(1.0 / 24.0)
+    );
+    assert_eq!(
+        call("TIMEVALUE", &[t("1:60")], &ctx()),
         CellValue::Error(CellError::Value)
     );
     // Non-time text -> #VALUE!.

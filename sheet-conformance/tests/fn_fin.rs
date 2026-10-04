@@ -507,10 +507,11 @@ fn sheet_fn_fin_nper_logarithmic() {
 
 #[test]
 fn sheet_fn_fin_nper_impossible_is_num() {
-    // r=0, pmt=0 -> division by zero in the linear branch -> #NUM!.
+    // r=0, pmt=0 -> division by pmt in the linear branch -> #DIV/0! (Excel
+    // 16, recorded).
     assert_eq!(
         call("NPER", &[num(0.0), num(0.0), num(-1000.0), num(2000.0)]),
-        e(CellError::Num)
+        e(CellError::Div0)
     );
     // A log of a non-positive ratio -> #NUM! (via `finite`): a positive debt
     // (pv) with a negative "payment" (you keep borrowing) never amortizes.
@@ -645,12 +646,25 @@ fn sheet_fn_fin_irr_range_error_propagates() {
 
 #[test]
 fn sheet_fn_fin_xnpv_actual_365() {
-    // RULING: Actual/365 from the first date. Flows exactly one year apart at
-    // rate 0 -> plain sum.
+    // RULING: Actual/365 from the first date. Flows exactly one year apart
+    // at 10%: -100 + 50/1.1 + 60/1.1^2.
     let v = [-100.0, 50.0, 60.0].map(CellValue::Number);
     let d = [1.0, 366.0, 731.0].map(CellValue::Number);
     approx(
         &call(
+            "XNPV",
+            &[
+                num(0.1),
+                Arg::Range(range_row(&v)),
+                Arg::Range(range_row(&d)),
+            ],
+        ),
+        -100.0 + 50.0 / 1.1 + 60.0 / 1.21,
+        TOL,
+    );
+    // A zero rate is #NUM! in Excel 16 (recorded), not the plain sum.
+    assert_eq!(
+        call(
             "XNPV",
             &[
                 num(0.0),
@@ -658,8 +672,7 @@ fn sheet_fn_fin_xnpv_actual_365() {
                 Arg::Range(range_row(&d)),
             ],
         ),
-        10.0,
-        TOL,
+        e(CellError::Num)
     );
 }
 

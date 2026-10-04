@@ -52,7 +52,7 @@
   ref_args: true
   rust: info2::sheet
   status: implemented
-  provenance: ["Microsoft SHEET (public docs) — 1-based sheet of a reference; current cell's sheet when absent. T1 LIMITATION: sheet-name text arg unsupported (scalar arg -> current sheet)"]
+  provenance: ["Microsoft SHEET (public docs) — 1-based sheet of a reference; current cell's sheet when absent. a non-reference non-text value is #N/A (Excel 16, recorded). T1 LIMITATION: sheet-name text arg unsupported (falls back to the current sheet)"]
   tests:
     rust: ["sheet-conformance/tests/fn_info2.rs::sheet_fn_info_sheet"]
     corpus: ["corpus/fn-corpus/info2/sheet.golden.tsv"]

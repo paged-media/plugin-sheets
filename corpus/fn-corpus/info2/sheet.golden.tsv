@@ -12,5 +12,5 @@
 no-arg-is-current-sheet	=SHEET()		1
 single-cell-range-origin-sheet	=SHEET(A1:A1)	A1=5	1
 multi-cell-range-origin-sheet	=SHEET(A1:B2)	A1=1;B2=4	1
-scalar-value-arg-falls-back	=SHEET(99)		1
+scalar-value-arg-falls-back	=SHEET(99)		#N/A
 scalar-text-name-arg-falls-back	=SHEET("Sheet1")		1

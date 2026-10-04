@@ -560,15 +560,15 @@ fn sheet_fn_lookup_address_r1c1_and_sheet() {
 #[test]
 fn sheet_fn_lookup_address_errors_and_arity() {
     let c = ctx();
-    // row < 1 -> #REF!.
+    // row < 1 -> #VALUE! (Excel 16, recorded).
     assert_eq!(
         call("ADDRESS", &[s(num(0.0)), s(num(1.0))], &c),
-        err(CellError::Ref)
+        err(CellError::Value)
     );
-    // col < 1 -> #REF!.
+    // col < 1 -> #VALUE!.
     assert_eq!(
         call("ADDRESS", &[s(num(1.0)), s(num(0.0))], &c),
-        err(CellError::Ref)
+        err(CellError::Value)
     );
     // abs_num out of 1..=4 -> #VALUE!.
     assert_eq!(

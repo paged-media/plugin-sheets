@@ -267,10 +267,11 @@ fn sheet_fn_text2_unichar_basic() {
 
 #[test]
 fn sheet_fn_text2_unichar_invalid_is_value() {
-    // 0, negative, surrogate (0xD800), and > 0x10FFFF are #VALUE!.
+    // 0, negative, and > 0x10FFFF are #VALUE!; a surrogate (0xD800) is
+    // #N/A (Excel 16, recorded).
     assert_eq!(call("UNICHAR", &[num(0.0)]), e(CellError::Value));
     assert_eq!(call("UNICHAR", &[num(-3.0)]), e(CellError::Value));
-    assert_eq!(call("UNICHAR", &[num(0xD800 as f64)]), e(CellError::Value));
+    assert_eq!(call("UNICHAR", &[num(0xD800 as f64)]), e(CellError::Na));
     assert_eq!(
         call("UNICHAR", &[num(0x110000 as f64)]),
         e(CellError::Value)
@@ -411,8 +412,8 @@ fn sheet_fn_text2_dollar_basic() {
     // Default 2 decimals, leading $, thousands grouping.
     assert_eq!(call("DOLLAR", &[num(1234.567)]), t("$1,234.57"));
     assert_eq!(call("DOLLAR", &[num(1234.5), num(0.0)]), t("$1,235"));
-    // Negative -> the $ sits with the leading minus (T0 simple form).
-    assert_eq!(call("DOLLAR", &[num(-1234.5), num(0.0)]), t("-$1,235"));
+    // Negative -> the en-US currency negative pattern (Excel 16, recorded).
+    assert_eq!(call("DOLLAR", &[num(-1234.5), num(0.0)]), t("($1,235)"));
 }
 
 #[test]
@@ -515,8 +516,16 @@ fn sheet_fn_text2_textafter_basic() {
 
 #[test]
 fn sheet_fn_text2_textbefore_case_insensitive_and_empty_delim() {
-    // Case-insensitive default matching.
-    assert_eq!(call("TEXTBEFORE", &[txt("aXbXc"), txt("x")]), t("a"));
+    // The default match_mode 0 is CASE-SENSITIVE (Excel 16, recorded);
+    // match_mode 1 folds case.
+    assert_eq!(
+        call("TEXTBEFORE", &[txt("aXbXc"), txt("x")]),
+        e(CellError::Na)
+    );
+    assert_eq!(
+        call("TEXTBEFORE", &[txt("aXbXc"), txt("x"), num(1.0), num(1.0)]),
+        t("a")
+    );
     // Empty delimiter: split at position 0 -> "" before, whole text after.
     assert_eq!(call("TEXTBEFORE", &[txt("abc"), txt("")]), t(""));
     assert_eq!(call("TEXTAFTER", &[txt("abc"), txt("")]), t("abc"));
@@ -535,10 +544,10 @@ fn sheet_fn_text2_textsplit_not_found_and_errors() {
         call("TEXTBEFORE", &[txt("a-b"), txt("-"), num(5.0)]),
         e(CellError::Na)
     );
-    // instance 0 is #N/A.
+    // instance 0 is #VALUE! (Excel 16, recorded).
     assert_eq!(
         call("TEXTAFTER", &[txt("a-b"), txt("-"), num(0.0)]),
-        e(CellError::Na)
+        e(CellError::Value)
     );
     // error propagation + arity (min 2).
     assert_eq!(

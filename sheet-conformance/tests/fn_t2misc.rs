@@ -451,13 +451,13 @@ fn sheet_fn_t2misc_hyperlink_display_only() {
         call("HYPERLINK", &[txt("https://paged.media")]),
         t("https://paged.media")
     );
-    // Blank friendly -> falls back to the link text.
+    // A given friendly name is the value as is (Excel 16, recorded): ""
+    // shows empty, a number stays a number.
     assert_eq!(
         call("HYPERLINK", &[txt("https://paged.media"), txt("")]),
-        t("https://paged.media")
+        t("")
     );
-    // A numeric friendly coerces to its General text.
-    assert_eq!(call("HYPERLINK", &[txt("x"), num(42.0)]), t("42"));
+    assert_eq!(call("HYPERLINK", &[txt("x"), num(42.0)]), n(42.0));
     // Error arg propagates.
     assert_eq!(
         call("HYPERLINK", &[err(CellError::Value), txt("y")]),

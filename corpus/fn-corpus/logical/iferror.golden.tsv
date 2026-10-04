@@ -10,5 +10,5 @@ text-passes-through	=IFERROR("ok";"fb")		ok
 na-is-caught	=IFERROR(A1;0)	A1=#N/A	0
 name-is-caught	=IFERROR(A1;0)	A1=#NAME?	0
 fallback-may-be-error	=IFERROR(A1;A2)	A1=#REF!;A2=#NUM!	#NUM!
-blank-primary-passes-through	=IFERROR(A1;7)	A1=	
+blank-primary-passes-through	=IFERROR(A1;7)	A1=	0
 ref-clean-passes	=IFERROR(A1;7)	A1=5	5

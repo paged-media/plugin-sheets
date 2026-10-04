@@ -315,11 +315,10 @@ fn sheet_fn_logical_xor_coercion() {
     // Numbers coerce (non-zero TRUE, zero FALSE).
     assert_eq!(call("XOR", &[s(num(1.0)), s(num(0.0))], &c), b(true));
     assert_eq!(call("XOR", &[s(num(2.0)), s(num(3.0))], &c), b(false));
-    // Non-boolean scalar text → #VALUE!.
-    assert_eq!(
-        call("XOR", &[s(b(true)), s(txt("nope"))], &c),
-        err(CellError::Value)
-    );
+    // Non-boolean scalar text is ignored when a logical exists (Excel 16,
+    // recorded); with no logical at all it is #VALUE!.
+    assert_eq!(call("XOR", &[s(b(true)), s(txt("nope"))], &c), b(true));
+    assert_eq!(call("XOR", &[s(txt("nope"))], &c), err(CellError::Value));
 }
 
 #[test]

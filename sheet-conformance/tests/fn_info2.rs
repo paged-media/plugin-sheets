@@ -217,9 +217,9 @@ fn sheet_fn_info_sheet_range_arg_uses_origin_sheet() {
 
 #[test]
 fn sheet_fn_info_sheet_scalar_arg_falls_back_to_current() {
-    // T1: a scalar arg has no recoverable reference → current cell's sheet.
+    // A non-reference, non-name value is #N/A (Excel 16, recorded).
     let c = EvalCtx::new(DateSystem::Date1900, cr_at(1, 0, 0), 0.0, 1);
-    assert_eq!(call_in("SHEET", &[s(num(99.0))], &c), num(2.0));
+    assert_eq!(call_in("SHEET", &[s(num(99.0))], &c), err(CellError::Na));
     // A sheet-NAME text arg likewise falls back at T1.
     assert_eq!(call_in("SHEET", &[s(txt("Sheet1"))], &c), num(2.0));
 }
@@ -299,8 +299,8 @@ fn sheet_fn_info_isodd_basic_and_truncation() {
 
 #[test]
 fn sheet_fn_info_isodd_coercion_and_errors() {
-    // TRUE → 1 → odd.
-    assert_eq!(call("ISODD", &[s(b(true))]), b(true));
+    // A logical is not coerced: #VALUE! (Excel 16, recorded).
+    assert_eq!(call("ISODD", &[s(b(true))]), err(CellError::Value));
     // Non-numeric text → #VALUE!.
     assert_eq!(call("ISODD", &[s(txt("x"))]), err(CellError::Value));
     // An error argument propagates.

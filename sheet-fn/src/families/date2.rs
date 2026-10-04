@@ -313,26 +313,17 @@ pub fn datedif(args: &[Arg], ctx: &crate::ctx::EvalCtx) -> CellValue {
             months.rem_euclid(12)
         }
         "YD" => {
-            // Day difference ignoring years: place the start in the same year
-            // as the end (or the next, if it would be after the end).
-            let cand_year = ey;
-            let start_in_end_year =
-                ymd_to_serial(cand_year, sm, sd.min(days_in_month(cand_year, sm)), sys);
-            match start_in_end_year {
-                Some(anchor) => {
-                    let mut diff = end as f64 - anchor;
-                    if diff < 0.0 {
-                        // Roll the anchor back one year.
-                        let py = cand_year - 1;
-                        if let Some(prev) =
-                            ymd_to_serial(py, sm, sd.min(days_in_month(py, sm)), sys)
-                        {
-                            diff = end as f64 - prev;
-                        }
-                    }
-                    diff as i64
-                }
-                None => return CellValue::Error(CellError::Num),
+            // Day difference ignoring years — Excel moves the END into the
+            // START's year (the next year if it would fall before the start),
+            // so a leap day in the start's year counts: 2020-01-15 to
+            // 2021-03-20 is 65 (recorded on Excel 16), not 64.
+            let in_start_year = (em, ed) >= (sm, sd);
+            let y = if in_start_year { sy } else { sy + 1 };
+            let moved = ymd_to_serial(y, em, ed.min(days_in_month(y, em)), sys);
+            let start_serial = ymd_to_serial(sy, sm, sd, sys);
+            match (moved, start_serial) {
+                (Some(m), Some(st)) => (m - st) as i64,
+                _ => return CellValue::Error(CellError::Num),
             }
         }
         _ => return CellValue::Error(CellError::Num),
@@ -908,10 +899,12 @@ fn parse_time(s: &str) -> Option<f64> {
     if it.next().is_some() {
         return None;
     }
-    if !(0..24).contains(&h) || !(0..60).contains(&m) || !(0..60).contains(&sec) {
+    // Hours past 23 wrap to the time of day (Excel 16: TIMEVALUE("25:00")
+    // is 1/24); minutes and seconds stay below 60.
+    if !(0..10_000).contains(&h) || !(0..60).contains(&m) || !(0..60).contains(&sec) {
         return None;
     }
-    let total = h * 3600 + m * 60 + sec;
+    let total = (h % 24) * 3600 + m * 60 + sec;
     Some(total as f64 / 86_400.0)
 }
 
@@ -1232,9 +1225,10 @@ mod tests {
         assert!((num(timevalue(&[t("12:00")], &ctx())) - 0.5).abs() < 1e-12);
         // 06:00:00 -> 0.25.
         assert!((num(timevalue(&[t("06:00:00")], &ctx())) - 0.25).abs() < 1e-12);
-        // Out-of-range -> #VALUE!.
+        // Hours past 23 wrap (Excel 16); minutes past 59 -> #VALUE!.
+        assert!((num(timevalue(&[t("25:00")], &ctx())) - 1.0 / 24.0).abs() < 1e-12);
         assert_eq!(
-            timevalue(&[t("25:00")], &ctx()),
+            timevalue(&[t("1:60")], &ctx()),
             CellValue::Error(CellError::Value)
         );
     }

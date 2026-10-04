@@ -14,4 +14,4 @@ range-with-false	=AND(A1:A3)	A1=TRUE;A2=0;A3=TRUE	FALSE
 range-text-skipped	=AND(A1:A3)	A1=TRUE;A2=hello;A3=1	TRUE
 range-all-text-is-value-error	=AND(A1:A2)	A1=foo;A2=bar	#VALUE!
 range-error-propagates	=AND(A1:A2)	A1=TRUE;A2=#N/A	#N/A
-scalar-non-bool-text	=AND(TRUE;"nope")		#VALUE!
+scalar-non-bool-text	=AND(TRUE;"nope")		TRUE

@@ -59,7 +59,7 @@
 //!   `#VALUE!`); `CODE` returns the first character's code point under the
 //!   same latin-1 reading (`sheet.fn.text.char` / `…code`).
 //! - `UNICHAR`/`UNICODE` are the full-Unicode counterparts: `UNICHAR(0)` is
-//!   `#VALUE!`, a surrogate or out-of-range code point is `#VALUE!`
+//!   `#VALUE!`, a surrogate code point is `#N/A`, out of range is `#VALUE!`
 //!   (`sheet.fn.text.unichar` / `…unicode`).
 //! - `NUMBERVALUE` strips the group separator and re-points the decimal
 //!   separator before the shared numeric parse; a trailing `%` divides by 100
@@ -70,9 +70,9 @@
 //! - `REPLACE` is 1-based, char-counted; `start < 1` → `#VALUE!`; a `start`
 //!   past the end appends `new_text` (`sheet.fn.text.replace`).
 //! - `TEXTBEFORE`/`TEXTAFTER` T1 subset: `text`, `delimiter`, optional 1-based
-//!   `instance` (negative counts from the end), case-insensitive matching by
-//!   default; a not-found instance is `#N/A` (`sheet.fn.text.textbefore` /
-//!   `…textafter`).
+//!   `instance` (negative counts from the end; `0` is `#VALUE!`), `match_mode`
+//!   (0 = case-sensitive, the default; 1 folds case) and `if_not_found`; a
+//!   not-found instance is `#N/A` (`sheet.fn.text.textbefore` / `…textafter`).
 
 use compact_str::CompactString;
 use sheet_core::{CellError, CellValue};
@@ -296,7 +296,9 @@ pub fn unichar(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     }
     match char::from_u32(code as u32) {
         Some(ch) => CellValue::Text(CompactString::new(ch.to_string())),
-        // 0 is excluded above; from_u32 also rejects surrogates / > 0x10FFFF.
+        // A surrogate code point is #N/A in Excel 16 (recorded); past
+        // 0x10FFFF stays #VALUE!.
+        None if (0xD800..=0xDFFF).contains(&(code as u32)) => CellValue::Error(CellError::Na),
         None => CellValue::Error(CellError::Value),
     }
 }
@@ -480,12 +482,15 @@ fn format_currency(
     } else {
         format!("\"{prefix}\"")
     };
-    // Negative section repeats the pattern with a leading minus before the
-    // currency prefix. T0 RULING (registry `…fixed`/`…dollar` rows): the
-    // negative form is the simple leading-minus "-$1,234.50", NOT Excel's
-    // parenthesized "($1,234.50)" — a documented bug-for-bug deviation.
+    // Negative section: FIXED (no prefix) writes a leading minus; DOLLAR
+    // uses the en-US currency negative pattern "($1,234.50)" (recorded on
+    // Excel 16 — the earlier leading-minus ruling was a deviation).
     let pos = format!("{quoted_prefix}{group}{frac}");
-    let neg = format!("-{quoted_prefix}{group}{frac}");
+    let neg = if prefix.is_empty() {
+        format!("-{group}{frac}")
+    } else {
+        format!("({quoted_prefix}{group}{frac})")
+    };
     let code = format!("{pos};{neg}");
 
     let compiled = sheet_format::compile(&code).map_err(|_| CellError::Value)?;
@@ -585,9 +590,10 @@ pub fn replace(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
 /// `TEXTBEFORE(text, delimiter, [instance])` → the substring before the
 /// `instance`-th occurrence of `delimiter` (spec §11; Microsoft `TEXTBEFORE`,
 /// T1 subset). `instance` defaults to `1`; a **negative** instance counts
-/// occurrences from the end (`-1` = last). Matching is **case-insensitive** by
-/// default (the T1 reading; `match_mode`/`match_end`/`if_not_found` are deferred
-/// to the full M2 form). A not-found instance (or `0`) is `#N/A`. An empty
+/// occurrences from the end (`-1` = last); `0` is `#VALUE!`. Matching is
+/// **case-sensitive** by default (`match_mode` 1 folds case — Excel 16,
+/// recorded); `if_not_found` replaces `#N/A`; `match_end` is not modelled. An
+/// empty
 /// `delimiter` returns `""` (the whole text is "after" an empty delimiter at
 /// position 0). An error propagates.
 pub fn textbefore(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
@@ -638,10 +644,27 @@ fn textsplit(args: &[Arg], side: Side) -> CellValue {
         }
     };
 
+    // match_mode: 0 (default) is CASE-SENSITIVE, 1 case-insensitive
+    // (Excel 16: TEXTBEFORE("aXbXc","x") is #N/A).
+    let case_insensitive = match args.get(3) {
+        None => false,
+        Some(arg) => match arg_number(arg) {
+            Ok(n) => n.trunc() == 1.0,
+            Err(e) => return CellValue::Error(e),
+        },
+    };
+    // if_not_found: returned instead of #N/A when given.
+    let not_found = || match args.get(5) {
+        Some(Arg::Scalar(v)) => v.clone(),
+        Some(Arg::Range(r)) => r.get(0, 0),
+        None => CellValue::Error(CellError::Na),
+    };
+
     // Excel: empty delimiter -> instance 1 splits at position 0
-    // (TEXTBEFORE -> "", TEXTAFTER -> whole text). A zero instance is #N/A.
+    // (TEXTBEFORE -> "", TEXTAFTER -> whole text). A zero instance is
+    // #VALUE! (recorded on Excel 16).
     if instance == 0 {
-        return CellValue::Error(CellError::Na);
+        return CellValue::Error(CellError::Value);
     }
     let tchars: Vec<char> = text.chars().collect();
     if delim.is_empty() {
@@ -653,20 +676,20 @@ fn textsplit(args: &[Arg], side: Side) -> CellValue {
     let dchars: Vec<char> = delim.chars().collect();
 
     // All occurrence start indices (0-based, char positions), case-insensitive.
-    let occ = find_all_ci(&tchars, &dchars);
+    let occ = find_all(&tchars, &dchars, case_insensitive);
     if occ.is_empty() {
-        return CellValue::Error(CellError::Na);
+        return not_found();
     }
     let idx = if instance > 0 {
         let k = instance as usize;
         if k > occ.len() {
-            return CellValue::Error(CellError::Na);
+            return not_found();
         }
         occ[k - 1]
     } else {
         let k = (-instance) as usize;
         if k > occ.len() {
-            return CellValue::Error(CellError::Na);
+            return not_found();
         }
         occ[occ.len() - k]
     };
@@ -678,10 +701,10 @@ fn textsplit(args: &[Arg], side: Side) -> CellValue {
     CellValue::Text(CompactString::new(out))
 }
 
-/// Every 0-based char start index where `needle` occurs in `hay`,
-/// case-insensitively (ASCII fold). Overlapping matches advance by one (Excel's
+/// Every 0-based char start index where `needle` occurs in `hay`, exactly or
+/// (`ci`) case-insensitively (ASCII fold). Overlapping matches advance by one (Excel's
 /// occurrence counting is left-to-right, non-skipping past a found start).
-fn find_all_ci(hay: &[char], needle: &[char]) -> Vec<usize> {
+fn find_all(hay: &[char], needle: &[char], ci: bool) -> Vec<usize> {
     let mut out = Vec::new();
     if needle.is_empty() || needle.len() > hay.len() {
         return out;
@@ -689,7 +712,13 @@ fn find_all_ci(hay: &[char], needle: &[char]) -> Vec<usize> {
     let last = hay.len() - needle.len();
     let mut i = 0;
     while i <= last {
-        if (0..needle.len()).all(|j| eq_ci(hay[i + j], needle[j])) {
+        if (0..needle.len()).all(|j| {
+            if ci {
+                eq_ci(hay[i + j], needle[j])
+            } else {
+                hay[i + j] == needle[j]
+            }
+        }) {
             out.push(i);
             // Advance past this occurrence so counting is non-overlapping
             // (Excel counts non-overlapping delimiter occurrences).
@@ -754,11 +783,11 @@ mod tests {
     fn find_all_ci_non_overlapping() {
         let hay: Vec<char> = "a-b-c".chars().collect();
         let needle: Vec<char> = "-".chars().collect();
-        assert_eq!(find_all_ci(&hay, &needle), vec![1, 3]);
+        assert_eq!(find_all(&hay, &needle, true), vec![1, 3]);
         // Case-insensitive, non-overlapping.
         let hay: Vec<char> = "aAaA".chars().collect();
         let needle: Vec<char> = "aa".chars().collect();
-        assert_eq!(find_all_ci(&hay, &needle), vec![0, 2]);
+        assert_eq!(find_all(&hay, &needle, true), vec![0, 2]);
     }
 
     #[test]

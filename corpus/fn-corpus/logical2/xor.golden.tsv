@@ -12,5 +12,5 @@ three-true-is-true	=XOR(TRUE;TRUE;TRUE)		TRUE
 number-coercion-odd	=XOR(1;0)		TRUE
 range-two-true-text-skipped	=XOR(A1:D1)	A1=TRUE;B1=1;C1=skip;D1=	FALSE
 range-error-propagates	=XOR(A1:B1)	A1=TRUE;B1=#N/A	#N/A
-scalar-text-is-value	=XOR(TRUE;"nope")		#VALUE!
+scalar-text-is-value	=XOR(TRUE;"nope")		TRUE
 range-no-logical-is-value	=XOR(A1:B1)	A1=x;B1=	#VALUE!

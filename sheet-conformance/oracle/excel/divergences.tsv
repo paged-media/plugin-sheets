@@ -4,53 +4,19 @@
 # engine/excel are typed tokens (n: s: b: e: blank). The lane fails on an unlisted
 # disagreement, on a row whose values moved, and on a row that now agrees.
 # file	id	kind	engine	excel	reason
-address.golden.tsv	row-lt1-ref	defect	e:#REF!	e:#VALUE!	ADDRESS with row < 1 is #VALUE! in Excel, not #REF!
-and.golden.tsv	scalar-non-bool-text	defect	e:#VALUE!	b:TRUE	AND/OR/XOR ignore a scalar text argument that is not TRUE/FALSE when other logicals exist; the engine returns #VALUE!
-ceiling.golden.tsv	ceiling-sign-mismatch	defect	e:#NUM!	n:0	CEILING(-2,3) is 0 in Excel 2010+ (negative number, positive significance rounds toward zero); the engine returns #NUM!
 date.golden.tsv	date.underflow-num	defect	e:#NUM!	n:32767	DATE with a huge negative day: Excel returns 32767 (its day argument is clamped to a 16-bit range), the engine #NUM!
-datedif.golden.tsv	datedif.yd	defect	n:64	n:65	DATEDIF 'YD' across a leap year: Excel counts 65 days, the engine 64
-daverage.golden.tsv	avg-all-yield	defect	n:10.2	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dcount.golden.tsv	count-all-records	defect	n:5	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dcounta.golden.tsv	counta-all-records	defect	n:5	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-decimal.golden.tsv	decimal-empty	defect	e:#NUM!	n:0	DECIMAL("",16) is 0 in Excel; the engine returns #NUM!
-dmax.golden.tsv	max-all-yield	defect	n:14	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dmin.golden.tsv	min-all-yield	defect	n:8	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dollar.golden.tsv	dollar-negative	defect	s:-$1,235	s:($1,235)	DOLLAR of a negative number uses the en-US currency negative pattern ($1,235) in Excel; the engine writes -$1,235
 drop.golden.tsv	all-value	diverges	e:#VALUE!	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
-dstdev.golden.tsv	stdev-all-yield	defect	n:2.2803508501982757	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dstdevp.golden.tsv	stdevp-all-yield	defect	n:2.0396078054371136	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dsum.golden.tsv	sum-all-records	defect	n:51	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dvar.golden.tsv	var-all-yield	defect	n:5.199999999999999	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
-dvarp.golden.tsv	varp-all-yield	defect	n:4.159999999999999	e:#VALUE!	a header-only criteria range (one row, no condition) is #VALUE! in Excel; the engine treats it as match-every-record
 filter.golden.tsv	filter-empty-na	diverges	e:#N/A	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
-gcd.golden.tsv	gcd-range-skip-text	defect	n:6	e:#VALUE!	GCD over a range containing text is #VALUE! in Excel; the engine skips the text
-hyperlink.golden.tsv	blank-friendly	defect	s:https://paged.media	s:	HYPERLINK with an empty friendly_name shows the empty text in Excel; the engine falls back to the link
-hyperlink.golden.tsv	numeric-friendly	defect	s:42	n:42	HYPERLINK keeps a numeric friendly_name a NUMBER in Excel; the engine returns text
-iferror.golden.tsv	blank-primary-passes-through	defect	blank	n:0	IFERROR(blank cell, x) returns 0 in Excel (the reference is dereferenced to a number); the engine returns an empty value
-index.golden.tsv	col-zero-value	defect	e:#VALUE!	n:1	INDEX(range,n,0) returns the whole row (spilled) in Excel; the engine returns #VALUE!
-index.golden.tsv	row-zero-value	defect	e:#VALUE!	n:1	INDEX(range,0,n) returns the whole column (spilled) in Excel; the engine returns #VALUE!
 irr.golden.tsv	irr-doc-pos	diverges	n:0.08663094803625213	n:8.663094803652216E-2	iterative solver: the engine converges to a tighter root than Excel's own stopping tolerance; both are roots within Excel's precision of the method
-isodd.golden.tsv	true-coerces-to-one-odd	defect	b:TRUE	e:#VALUE!	ISODD(TRUE) is #VALUE! in Excel (a logical is not coerced here); the engine returns TRUE
 lambda.golden.tsv	as-value-calc	diverges	e:#VALUE!	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
-large.golden.tsv	k-truncates	defect	n:4	n:3	LARGE/SMALL round a fractional k UP in Excel (k=2.9 -> 3rd largest); the engine truncates
-nper.golden.tsv	nper-zero-pmt-zero-rate	defect	e:#NUM!	e:#DIV/0!	NPER with rate 0 and pmt 0 is #DIV/0! in Excel (division by pmt), not #NUM!
-or.golden.tsv	scalar-non-bool-text	defect	e:#VALUE!	b:FALSE	AND/OR/XOR ignore a scalar text argument that is not TRUE/FALSE when other logicals exist; the engine returns #VALUE!
 rate.golden.tsv	rate-loan	diverges	n:0.007701472488233239	n:7.7014724882013682E-3	iterative solver: the engine converges to a tighter root than Excel's own stopping tolerance; both are roots within Excel's precision of the method
 sequence.golden.tsv	seq-zero-shape	diverges	e:#VALUE!	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
 sheet.golden.tsv	multi-cell-range-origin-sheet	diverges	n:1	n:39	harness artifact: the oracle workbook holds one sheet per case, so Excel's SHEET()/SHEETS() see a many-sheet workbook while the engine case has one sheet
 sheet.golden.tsv	no-arg-is-current-sheet	diverges	n:1	n:37	harness artifact: the oracle workbook holds one sheet per case, so Excel's SHEET()/SHEETS() see a many-sheet workbook while the engine case has one sheet
 sheet.golden.tsv	scalar-text-name-arg-falls-back	diverges	n:1	e:#N/A	harness artifact: the oracle workbook has no sheet named Sheet1 (sheets are c1..cN), so Excel's #N/A is about the harness
-sheet.golden.tsv	scalar-value-arg-falls-back	defect	n:1	e:#N/A	SHEET(non-reference, non-name) is #N/A in Excel; the engine falls back to the current sheet
 sheet.golden.tsv	single-cell-range-origin-sheet	diverges	n:1	n:38	harness artifact: the oracle workbook holds one sheet per case, so Excel's SHEET()/SHEETS() see a many-sheet workbook while the engine case has one sheet
 sheets.golden.tsv	no-arg-is-one	diverges	n:1	n:52	harness artifact: the oracle workbook holds one sheet per case, so Excel's SHEET()/SHEETS() see a many-sheet workbook while the engine case has one sheet
-sheets.golden.tsv	scalar-arg-is-one	defect	n:1	e:#N/A	SHEETS(non-reference) is #N/A in Excel; the engine returns 1
 take.golden.tsv	zero-value	diverges	e:#VALUE!	e:#CALC!	ruling: the engine has no #CALC! (CellError lacks it); an empty/zero-shape array result is grounded to an older error. Excel 365 returns #CALC!
-textafter.golden.tsv	textafter-instance-zero	defect	e:#N/A	e:#VALUE!	TEXTAFTER/TEXTBEFORE instance_num 0 is #VALUE! in Excel; the engine returns #N/A
-textbefore.golden.tsv	textbefore-case-insensitive	defect	s:a	e:#N/A	TEXTBEFORE's default match_mode 0 is CASE-SENSITIVE in Excel ('x' is not found in 'aXbXc' -> #N/A); the engine matches case-insensitively
-timevalue.golden.tsv	timevalue.out-of-range	defect	e:#VALUE!	n:4.1666666666666741E-2	TIMEVALUE('25:00') wraps to 1:00 (1/24) in Excel; the engine returns #VALUE!
-unichar.golden.tsv	unichar-surrogate-is-value	defect	e:#VALUE!	e:#N/A	UNICHAR of a surrogate code point is #N/A in Excel; the engine returns #VALUE!
 xirr.golden.tsv	xirr-guess	diverges	n:0.10000000000000006	n:9.9999994039535522E-2	iterative solver: the engine converges to a tighter root than Excel's own stopping tolerance; both are roots within Excel's precision of the method
 xirr.golden.tsv	xirr-one-year	diverges	n:0.1	n:9.9999994039535522E-2	iterative solver: the engine converges to a tighter root than Excel's own stopping tolerance; both are roots within Excel's precision of the method
 xirr.golden.tsv	xirr-two-year	diverges	n:0.1	n:9.9999994039535522E-2	iterative solver: the engine converges to a tighter root than Excel's own stopping tolerance; both are roots within Excel's precision of the method
-xnpv.golden.tsv	xnpv-zero-rate	defect	n:10	e:#NUM!	XNPV with rate 0 is #NUM! in Excel; the engine returns the plain sum
-xor.golden.tsv	scalar-text-is-value	defect	e:#VALUE!	b:TRUE	AND/OR/XOR ignore a scalar text argument that is not TRUE/FALSE when other logicals exist; the engine returns #VALUE!

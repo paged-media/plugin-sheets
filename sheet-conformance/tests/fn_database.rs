@@ -167,8 +167,10 @@ fn crit_tree_apple() -> Vec<CellValue> {
 }
 
 /// A header-only criteria table (one column, no condition rows) → matches all.
+/// "Every record": a header plus one BLANK condition row. (A header alone is
+/// #VALUE! in Excel 16 — see `sheet_fn_database_criteria_header_only_is_value`.)
 fn crit_all() -> Vec<CellValue> {
-    vec![txt("Tree")]
+    vec![txt("Tree"), CellValue::Empty]
 }
 
 // ---- DSUM -------------------------------------------------------------------
@@ -557,7 +559,7 @@ fn sheet_fn_database_dvar_sample() {
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(txt("Yield")),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_close(out, 5.2);
@@ -572,7 +574,7 @@ fn sheet_fn_database_dvarp_population() {
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(txt("Yield")),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_close(out, 4.16);
@@ -587,7 +589,7 @@ fn sheet_fn_database_dstdev_sample() {
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(txt("Yield")),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_close(out, 5.2_f64.sqrt());
@@ -602,7 +604,7 @@ fn sheet_fn_database_dstdevp_population() {
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(txt("Yield")),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_close(out, 4.16_f64.sqrt());
@@ -710,17 +712,27 @@ fn sheet_fn_database_criteria_comparison_operator() {
 }
 
 #[test]
-fn sheet_fn_database_criteria_header_only_matches_all() {
-    // A header-only criteria table matches every record:
-    // DSUM Yield over all = 14+10+9+10+8 = 51.
+fn sheet_fn_database_criteria_header_only_is_value() {
+    // A header-only criteria table (no condition row) is #VALUE! in Excel 16
+    // (recorded for every D-function); a header + blank row matches all.
     let db = orchard();
+    let header = vec![txt("Tree")];
+    let out = call(
+        "DSUM",
+        &[
+            Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
+            Arg::Scalar(txt("Yield")),
+            Arg::Range(view(1, 1, &header)),
+        ],
+    );
+    assert_eq!(out, CellValue::Error(CellError::Value));
     let crit = crit_all();
     let out = call(
         "DSUM",
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(txt("Yield")),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_eq!(out, num(51.0));
@@ -737,7 +749,7 @@ fn sheet_fn_database_field_out_of_range_is_value() {
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(num(99.0)),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_eq!(out, err(CellError::Value));
@@ -752,7 +764,7 @@ fn sheet_fn_database_field_unknown_header_is_value() {
         &[
             Arg::Range(view(ORCHARD_ROWS, ORCHARD_COLS, &db)),
             Arg::Scalar(txt("Nope")),
-            Arg::Range(view(1, 1, &crit)),
+            Arg::Range(view(2, 1, &crit)),
         ],
     );
     assert_eq!(out, err(CellError::Value));
