@@ -397,3 +397,34 @@ fn structural_edit_refuses_preserved_addresses__feat__sheet_calc_rewrite_structu
     assert_eq!(before, after);
     assert!(!s.metadata().dirty);
 }
+
+// ── 8. CSV / TSV import ──────────────────────────────────────────────────
+
+/// A German semicolon CSV: sniffed delimiter, decimal comma, a dd.mm.yyyy
+/// date rendered in the locale's pattern, a percent, quoted text; it saves
+/// as a real workbook and reloads to the same values.
+#[test]
+fn csv_import_types_by_locale_and_saves__feat__sheet_import_csv() {
+    let text = "Region;Umsatz;Datum;Anteil\r\nNord;1.234,50;04.10.2026;12,5%\r\n\"S\u{fc}d; West\";99;2026-01-31;7%\r\n";
+    let mut s = SheetSession::load_csv(text, None, "de-DE", "Umsatz", 0.0).unwrap();
+    assert_eq!(s.list_sheets()[0].name, "Umsatz");
+    assert_eq!(s.get_cell_input(0, 1, 1), "1234.5");
+    assert_eq!(s.get_cell_input(0, 1, 2), "46299");
+    assert_eq!(s.get_cell_display(0, 1, 2), "04.10.2026");
+    assert_eq!(s.get_cell_input(0, 1, 3), "0.125");
+    assert_eq!(s.get_cell_display(0, 2, 0), "S\u{fc}d; West");
+    assert!(s.metadata().dirty, "an import is unsaved content");
+    let s2 = SheetSession::load_xlsx(&s.save_xlsx().unwrap()).unwrap();
+    assert_eq!(s2.get_cell_display(0, 1, 2), "04.10.2026");
+    assert_eq!(s2.get_cell_input(0, 2, 2), "46053");
+
+    let tsv =
+        SheetSession::load_csv("a\tb\n1.5\t=SUM(A1)\n", Some('\t'), "en-US", "", 0.0).unwrap();
+    assert_eq!(tsv.list_sheets()[0].name, "Sheet1");
+    assert_eq!(tsv.get_cell_input(0, 1, 0), "1.5");
+    assert_eq!(
+        tsv.get_cell_display(0, 1, 1),
+        "=SUM(A1)",
+        "a CSV formula stays text"
+    );
+}

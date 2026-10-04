@@ -94,6 +94,24 @@ mod wasm {
             Ok(())
         }
 
+        /// Import delimited text (CSV/TSV) as a fresh one-sheet workbook
+        /// (replaces the current one). `delimiter` empty = sniff; the
+        /// `locale_tag` (host language, `"de-DE"`) reads numbers and dates;
+        /// `sheet_name` names the sheet. Typing is Rust's (`core::csv`).
+        pub fn load_csv(
+            &mut self,
+            text: &str,
+            delimiter: &str,
+            locale_tag: &str,
+            sheet_name: &str,
+        ) -> Result<(), JsValue> {
+            let now = self.session.now_serial();
+            let delim = delimiter.chars().next();
+            self.session = SheetSession::load_csv(text, delim, locale_tag, sheet_name, now)
+                .map_err(map_err)?;
+            Ok(())
+        }
+
         /// Re-emit the workbook as XLSX bytes (lazy-verbatim preservation).
         pub fn save_xlsx(&mut self) -> Result<Vec<u8>, JsValue> {
             self.session.save_xlsx().map_err(map_err)
