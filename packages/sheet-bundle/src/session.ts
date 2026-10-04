@@ -36,6 +36,7 @@ import {
   gridSceneToSceneLayer,
   hitCell,
   hitFillHandle,
+  contentHash,
   parseBinding,
   workbookPalette,
   type ChartGeometry,
@@ -70,6 +71,7 @@ import {
   pageContent,
   placementForContent,
   refreshLoweredTable,
+  replaceLoweredTable,
   selectionAnchor,
   storyOfFrame,
   subscribeChainReflow,
@@ -81,6 +83,7 @@ import {
   lowerChartToFrame,
   type PlacedChart,
 } from "./lower-chart";
+import { doors66 } from "./protocol66";
 import { readWorkbookPart, writeWorkbookPart } from "./workbook-part";
 import {
   advance,
@@ -1806,7 +1809,24 @@ export function createWorkbookSession(
       const version = revision;
       for (const [frameId, info] of [...loweredTables]) {
         const name = sheetNameOf(info.sheet);
-        if (name === null || !info.content) continue;
+        if (name === null) continue;
+        if (!info.content) {
+          // A rediscovered table whose page content is unknown (Wave 9):
+          // replaced whole with the current lowering.
+          let next: LoweredContent;
+          try {
+            next = pageContent(engine, info.sheet, info.range);
+          } catch (err) {
+            host.log.warn(`refresh: could not lower ${info.range}`, err);
+            continue;
+          }
+          const replaced = await replaceLoweredTable(host, engine, info, next, version, name);
+          loweredTables.delete(frameId);
+          if (replaced) loweredTables.set(replaced.frameId, replaced);
+          if (lastLoweredTable?.frameId === frameId) lastLoweredTable = replaced;
+          if (lastFrameId === frameId) lastFrameId = replaced?.frameId ?? null;
+          continue;
+        }
         let next: LoweredContent;
         try {
           next = pageContent(engine, info.sheet, info.range);
@@ -1863,6 +1883,87 @@ export function createWorkbookSession(
       host.log.warn("refresh of placed content failed", err);
     });
     return refreshChain;
+  }
+
+  /** Wave 9 — find the tables an EARLIER session placed, so they refresh
+   *  like this session's own. Walks the scene tree for text frames carrying
+   *  this plugin's binding with a table record (bindings written before the
+   *  record existed are not found — there is no door that lists a story's
+   *  tables). Where the host's geometry read names a frame's story (66), a
+   *  record whose story disagrees (a duplicated frame) is skipped. A table
+   *  whose recorded hash matches the workbook's lowering now gets that
+   *  lowering as its baseline; one that does not has an unknown baseline and
+   *  is replaced on the next refresh, which this schedules. The session's
+   *  content version continues from the highest one found, so the document-
+   *  undo follower never reads an older stamp as newer. Returns the count. */
+  async function rediscoverPlacements(): Promise<number> {
+    const engine = state.engine;
+    if (!engine || !host.document?.getMetadata || typeof host.document.tree !== "function") {
+      return 0;
+    }
+    let roots: Awaited<ReturnType<BundleHost["document"]["tree"]>>;
+    try {
+      roots = await host.document.tree();
+    } catch (err) {
+      host.log.debug("rediscover: scene tree read failed", err);
+      return 0;
+    }
+    const frames: string[] = [];
+    const walk = (nodes: typeof roots) => {
+      for (const n of nodes) {
+        if (n.id?.kind === "textFrame" && typeof n.id.id === "string") frames.push(n.id.id);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(roots);
+    const sheets = engine.listSheets();
+    let found = 0;
+    let stale = false;
+    for (const frameId of frames) {
+      if (loweredTables.has(frameId)) continue;
+      let binding: ReturnType<typeof parseBinding>;
+      try {
+        binding = parseBinding(
+          await host.document.getMetadata({ kind: "textFrame", id: frameId } as ElementId),
+        );
+      } catch {
+        continue;
+      }
+      const rec = binding?.data.table;
+      if (!binding || !rec) continue;
+      const sheet = sheets.find((x) => x.name === binding.data.sheet);
+      if (!sheet) continue;
+      if (doors66(host).geometryStoryId !== false) {
+        const story = await storyOfFrame(host, frameId);
+        if (story !== null && story !== rec.storyId) continue;
+      }
+      let now: LoweredContent;
+      try {
+        now = pageContent(engine, sheet.id, binding.data.range);
+      } catch {
+        continue;
+      }
+      const current = contentHash(now) === rec.hash;
+      if (!current) stale = true;
+      loweredTables.set(frameId, {
+        frameId,
+        storyId: rec.storyId,
+        tableId: rec.tableId,
+        sheet: sheet.id,
+        range: binding.data.range,
+        content: current ? now : undefined,
+        columnWidths: rec.widths,
+        contentVersion: binding.data.contentVersion,
+      });
+      revision = Math.max(revision, binding.data.contentVersion);
+      lastFrameId ??= frameId;
+      found += 1;
+    }
+    if (stale) {
+      revision += 1;
+      scheduleRefresh();
+    }
+    return found;
   }
 
   /** The placements belong to the workbook they were lowered from: a new
@@ -2000,7 +2101,11 @@ export function createWorkbookSession(
       } catch (err) {
         host.log.warn("workbook container-part restore failed", err);
       }
-      if (fromPart) return loadWorkbook(fromPart.bytes, fromPart.name, false);
+      if (fromPart) {
+        const ok = await loadWorkbook(fromPart.bytes, fromPart.name, false);
+        if (ok) await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
+        return ok;
+      }
 
       // Fall back to the per-browser blob (S-08 — pre-migration documents, or
       // a host with no container writer).
@@ -2015,6 +2120,7 @@ export function createWorkbookSession(
       if (!bytes) return false; // nothing persisted — no engine boot
       const name = host.storage.get<string>(BLOB_NAME_KEY) ?? "workbook.xlsx";
       const ok = await loadWorkbook(bytes, name, false);
+      if (ok) await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
       // One-time migration: lift the per-browser blob into the container so the
       // workbook now travels with the document on the next save.
       if (ok) {

@@ -26,6 +26,7 @@ import { describe, expect, it } from "vitest";
 import {
   BINDING_KEY,
   BINDING_VERSION,
+  contentHash,
   makeBinding,
   parseBinding,
 } from "../src";
@@ -89,5 +90,23 @@ describe("sheet_plugin_binding_metadata: rejects garbage", () => {
       v: 1,
       data: { sheet: "S", range: "A1:B2", contentVersion: 3 },
     });
+  });
+
+  it("carries a table record (Wave 9) and drops a malformed one, never the binding [sheet.plugin.persistence]", () => {
+    const table = { storyId: "Story/u9", tableId: "t3", hash: "0badf00d", widths: [40, 52.5] };
+    const b = makeBinding("S", "A1:B2", 4, table);
+    expect(parseBinding(JSON.parse(JSON.stringify(b)))).toEqual(b);
+    const bad = { v: 1, data: { sheet: "S", range: "A1:B2", contentVersion: 4, table: { storyId: 1 } } };
+    expect(parseBinding(bad)).toEqual({
+      v: 1,
+      data: { sheet: "S", range: "A1:B2", contentVersion: 4 },
+    });
+  });
+
+  it("contentHash is stable and content-sensitive [sheet.plugin.persistence]", () => {
+    const a = { rows: [{ cells: [{ text: "1" }] }] };
+    expect(contentHash(a)).toBe(contentHash(JSON.parse(JSON.stringify(a))));
+    expect(contentHash(a)).toMatch(/^[0-9a-f]{8}$/);
+    expect(contentHash({ rows: [{ cells: [{ text: "2" }] }] })).not.toBe(contentHash(a));
   });
 });

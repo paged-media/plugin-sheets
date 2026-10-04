@@ -42,10 +42,12 @@ export {
 export {
   BINDING_KEY,
   BINDING_VERSION,
+  contentHash,
   makeBinding,
   parseBinding,
   type Binding,
   type BindingData,
+  type TableRecord,
 } from "./binding";
 
 export {

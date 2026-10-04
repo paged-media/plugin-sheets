@@ -226,3 +226,69 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placed charts and frame stories", () 
     expect(t64.work.count("document.collection")).toBe(2);
   });
 });
+
+describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", () => {
+  vi.setConfig({ testTimeout: 60_000 });
+  let h: HeadlessHost;
+  let host: BundleHost;
+  const sessions: WorkbookSession[] = [];
+
+  beforeEach(async () => {
+    h = await openHost();
+    await h.load(blankPageIdml());
+    host = withSceneChannel(sheetHost(h)).host;
+  });
+  afterEach(() => {
+    for (const x of sessions.splice(0)) x.dispose();
+    h?.dispose();
+  });
+
+  async function firstSession(): Promise<WorkbookSession> {
+    const a = createWorkbookSession(host);
+    sessions.push(a);
+    await a.import(await authorWorkbook(3, 2, (r, c) => `${r}${c}`), "p.xlsx");
+    a.setRange("A1:B3");
+    expect(await a.lowerSelection()).not.toBeNull();
+    await settle();
+    return a;
+  }
+
+  it("a later session finds the table and refreshes it in place [sheet.plugin.persistence]", async () => {
+    const a = await firstSession();
+    a.editCell(0, 0, 0, "first");
+    await a.refreshPlacements();
+    await a.flushPersist();
+    a.dispose();
+
+    const b = createWorkbookSession(host);
+    sessions.push(b);
+    expect(await b.restore()).toBe(true);
+    expect(b.cellInputAt(0, 0)).toBe("first");
+    b.editCell(0, 2, 1, "later");
+    await b.refreshPlacements();
+    await settle();
+    const tables = await exportedTableCells(h);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].get("0:0")).toBe("first");
+    expect(tables[0].get("2:1")).toBe("later");
+  });
+
+  it("a page that does not show the saved workbook is replaced on restore [sheet.plugin.persistence]", async () => {
+    const a = await firstSession();
+    // Edited and persisted, never refreshed onto the page.
+    a.editCell(0, 1, 0, "unseen");
+    await a.flushPersist();
+    a.dispose();
+    expect((await exportedTableCells(h))[0].get("1:0")).toBe("10");
+
+    const b = createWorkbookSession(host);
+    sessions.push(b);
+    expect(await b.restore()).toBe(true);
+    await b.refreshPlacements();
+    await settle();
+    const tables = await exportedTableCells(h);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].get("1:0")).toBe("unseen");
+    expect(tables[0].get("2:1")).toBe("21");
+  });
+});

@@ -44,6 +44,20 @@ export const BINDING_KEY = "x-paged:media.paged.sheet";
  *  (PluginMetadataEnvelope.v semantics, host.ts §PluginMetadataEnvelope). */
 export const BINDING_VERSION = 1;
 
+/** What a native placed table needs to be found and refreshed by a LATER
+ *  session (Wave 9): the story and table it lives in, a hash of the content
+ *  it shows (so a session can tell whether the page is current) and the
+ *  column widths it was sized with. Additive inside the v1 envelope: an
+ *  older binding simply has none. */
+export interface TableRecord {
+  storyId: string;
+  tableId: string;
+  /** {@link contentHash} of the LoweredContent the table shows. */
+  hash: string;
+  /** The column widths (pt) the table carries. */
+  widths: number[];
+}
+
 /** The binding payload: which sheet + range the frame projects, and the
  *  workbook content version it was lowered from (so a stale frame can be
  *  detected and re-lowered). Plain JSON — it is the `data` of the
@@ -56,6 +70,9 @@ export interface BindingData {
   range: string;
   /** The workbook content version this lowered output reflects. */
   contentVersion: number;
+  /** The native table this frame holds (Wave 9; absent on the tab-text
+   *  lane and on bindings written before it). */
+  table?: TableRecord;
 }
 
 /** The full envelope as it sits on the page item: a versioned wrapper
@@ -72,8 +89,38 @@ export function makeBinding(
   sheet: string,
   range: string,
   contentVersion: number,
+  table?: TableRecord,
 ): Binding {
-  return { v: BINDING_VERSION, data: { sheet, range, contentVersion } };
+  return {
+    v: BINDING_VERSION,
+    data: table ? { sheet, range, contentVersion, table } : { sheet, range, contentVersion },
+  };
+}
+
+/** A short, stable hash of a value's JSON (FNV-1a, 32-bit, hex) — what a
+ *  table record compares to tell whether the page shows the content the
+ *  workbook lowers to now. Not cryptographic: it guards a refresh, it does
+ *  not authenticate anything. */
+export function contentHash(value: unknown): string {
+  const text = JSON.stringify(value) ?? "";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/** Defensive parse of a {@link TableRecord}; null unless well-formed. */
+function parseTableRecord(input: unknown): TableRecord | null {
+  if (typeof input !== "object" || input === null) return null;
+  const t = input as Record<string, unknown>;
+  if (typeof t.storyId !== "string" || typeof t.tableId !== "string") return null;
+  if (typeof t.hash !== "string") return null;
+  if (!Array.isArray(t.widths) || !t.widths.every((w) => typeof w === "number" && Number.isFinite(w))) {
+    return null;
+  }
+  return { storyId: t.storyId, tableId: t.tableId, hash: t.hash, widths: [...t.widths] };
 }
 
 /** Defensive parse: accept only a well-formed binding envelope, else
@@ -89,17 +136,21 @@ export function parseBinding(input: unknown): Binding | null {
     sheet?: unknown;
     range?: unknown;
     contentVersion?: unknown;
+    table?: unknown;
   };
   if (typeof d.sheet !== "string") return null;
   if (typeof d.range !== "string") return null;
   if (typeof d.contentVersion !== "number" || !Number.isFinite(d.contentVersion))
     return null;
+  const table = d.table === undefined ? null : parseTableRecord(d.table);
   return {
     v: BINDING_VERSION,
     data: {
       sheet: d.sheet,
       range: d.range,
       contentVersion: d.contentVersion,
+      // A malformed record is dropped, never the binding.
+      ...(table ? { table } : {}),
     },
   };
 }

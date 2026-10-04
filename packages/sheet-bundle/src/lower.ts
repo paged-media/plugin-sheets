@@ -61,6 +61,7 @@ import type {
 import {
   BINDING_KEY,
   cellFillSwatchOps,
+  contentHash,
   defaultPlacement,
   joinText,
   lowerToMutations,
@@ -297,24 +298,57 @@ async function pourCellContent(
   content: LoweredContent,
   storyId: string,
   tableId: string,
+  tail: readonly Mutation[] = [],
 ): Promise<number> {
   const { ops, styleOps } = await tableContentOps(host, content, storyId, tableId);
-  const all = [...ops, ...styleOps];
+  const all = [...ops, ...styleOps, ...tail];
   if (all.length === 0) return 0;
   const r = await host.document.mutate({ op: "batch", args: { ops: all } });
   if (r.applied) return 1;
   host.log.warn("lower: table content batch rejected — retrying per lane", r);
-  if (styleOps.length === 0) return 1;
   let calls = 1;
-  if (ops.length > 0) {
+  for (const [lane, what] of [
+    [[...ops, ...tail], "cell text + decor"],
+    [styleOps, "cell text styles"],
+  ] as const) {
+    if (lane.length === 0) continue;
     calls += 1;
-    const t = await host.document.mutate({ op: "batch", args: { ops } });
-    if (!t.applied) host.log.warn("lower: cell text + decor rejected", t);
+    const t = await host.document.mutate({ op: "batch", args: { ops: [...lane] } });
+    if (!t.applied) host.log.warn(`lower: ${what} rejected`, t);
   }
-  calls += 1;
-  const s = await host.document.mutate({ op: "batch", args: { ops: styleOps } });
-  if (!s.applied) host.log.warn("cell text styles: rejected", s);
   return calls;
+}
+
+/** The binding a placed native table's frame carries (Wave 9): the sheet,
+ *  range and content version, plus the table record a LATER session finds
+ *  it by — its story and table ids, the hash of what it shows, its column
+ *  widths. One `setPluginMetadata`, meant to ride the batch that wrote the
+ *  content it describes. */
+export function tableBindingStamp(
+  frameId: string,
+  sheetName: string,
+  range: string,
+  contentVersion: number,
+  storyId: string,
+  tableId: string,
+  content: LoweredContent,
+  widths: readonly number[],
+): Mutation {
+  return {
+    op: "setPluginMetadata",
+    args: {
+      elementId: { kind: "textFrame", id: frameId },
+      key: BINDING_KEY,
+      value: JSON.stringify(
+        makeBinding(sheetName, range, contentVersion, {
+          storyId,
+          tableId,
+          hash: contentHash(content),
+          widths: [...widths],
+        }),
+      ),
+    },
+  };
 }
 
 /** The document's character-style ids, or null when the read failed. */
@@ -349,7 +383,9 @@ export interface LoweredTableInfo {
   /** The page the frame was placed on. */
   pageId?: PageId;
   /** What the table currently shows — the baseline a refresh diffs from
-   *  (Wave 4: placed tables refresh in place after edits). */
+   *  (Wave 4: placed tables refresh in place after edits). Undefined for a
+   *  table a later session rediscovered whose page content is not the
+   *  workbook's lowering (Wave 9): a refresh replaces it whole. */
   content?: LoweredContent;
   /** The column widths the table was sized with. */
   columnWidths?: number[];
@@ -377,6 +413,9 @@ export interface LowerLaneOptions {
    *  session lowers once to size the placement) — saves a second engine
    *  call. */
   content?: LoweredContent;
+  /** Select the placed frame (default true; a background re-placement
+   *  leaves the user's selection alone). */
+  select?: boolean;
 }
 
 /** The PAGE lowering of a range: real styles + conditional formatting
@@ -489,6 +528,7 @@ export async function lowerSelectionToFrame(
       sheet,
       range,
       contentVersion,
+      sheetName,
     });
   }
   if (placed.createdId?.kind !== "table") {
@@ -516,10 +556,19 @@ export async function lowerSelectionToFrame(
     }
   }
 
-  // The table's content — text, decor and text styles — as ONE more batch.
-  // (Core 0eff96b resolves a table handle in a `tableId` position, which
-  // folds this into the placement batch: one mutate, one undo step.)
-  await pourCellContent(host, content, storyId, tableId);
+  // The table's content — text, decor and text styles — as ONE more batch,
+  // with the binding re-stamped to carry the table record. (Core 0eff96b
+  // resolves a table handle in a `tableId` position, which folds this into
+  // the placement batch: one mutate, one undo step.)
+  await pourCellContent(
+    host,
+    content,
+    storyId,
+    tableId,
+    frameId
+      ? [tableBindingStamp(frameId, sheetName, range, contentVersion, storyId, tableId, content, columnWidths)]
+      : [],
+  );
 
   if (!frameId) {
     host.log.warn("lower: placed the table but could not read its frame back");
@@ -536,7 +585,7 @@ export async function lowerSelectionToFrame(
     columnWidths,
     contentVersion,
   });
-  await host.selection.set([{ kind: "textFrame", id: frameId }]);
+  if (opts?.select !== false) await host.selection.set([{ kind: "textFrame", id: frameId }]);
   return frameId;
 }
 
@@ -555,9 +604,14 @@ async function lowerPhased(
   placement: Placement,
   binding: ReturnType<typeof makeBinding>,
   columnWidths: number[],
-  opts: LowerLaneOptions & { sheet: number; range: string; contentVersion: number },
+  opts: LowerLaneOptions & {
+    sheet: number;
+    range: string;
+    contentVersion: number;
+    sheetName: string;
+  },
 ): Promise<string | null> {
-  const { sheet, range, contentVersion } = opts;
+  const { sheet, range, contentVersion, sheetName } = opts;
   // Snapshot story ids BEFORE phase 1 — the new frame's story is the
   // diff (see newStoryId).
   const storiesBefore = await storyIdsSnapshot(host);
@@ -649,8 +703,11 @@ async function lowerPhased(
     contentVersion,
   });
 
-  // Phase 3 — the content, one batch (see pourCellContent).
-  await pourCellContent(host, content, storyId, tableId);
+  // Phase 3 — the content, one batch (see pourCellContent), the binding
+  // re-stamped with the table record.
+  await pourCellContent(host, content, storyId, tableId, [
+    tableBindingStamp(frameId, sheetName, range, contentVersion, storyId, tableId, content, columnWidths),
+  ]);
 
   await host.selection.set([outcome.createdId]);
   return frameId;
@@ -915,14 +972,16 @@ export async function refreshLoweredTable(
   const prevWidths = info.columnWidths ?? [];
   const nextWidths = await measureColumnWidths(host, next);
   // The binding re-stamp rides the refresh batch: one undo step.
-  const stamp: Mutation = {
-    op: "setPluginMetadata",
-    args: {
-      elementId: { kind: "textFrame", id: info.frameId },
-      key: BINDING_KEY,
-      value: JSON.stringify(makeBinding(sheetName, info.range, contentVersion)),
-    },
-  };
+  const stamp = tableBindingStamp(
+    info.frameId,
+    sheetName,
+    info.range,
+    contentVersion,
+    info.storyId,
+    info.tableId,
+    next,
+    nextWidths,
+  );
   await applyTableRefresh(
     host,
     info.storyId,
@@ -934,6 +993,77 @@ export async function refreshLoweredTable(
     [stamp],
   );
   return { ...info, content: next, columnWidths: nextWidths, contentVersion };
+}
+
+/**
+ * Replace a placed table whose current content is UNKNOWN (Wave 9: one a
+ * later session rediscovered whose record says the page shows something
+ * other than the workbook's lowering now). There is no read door for a
+ * table's cells, so it cannot be diffed: with the 66 `deleteTable` door the
+ * table is deleted and a fresh one inserted in the same story (the frame
+ * stays); a pre-66 host gets the frame re-placed where it stands. Null when
+ * nothing could be placed.
+ */
+export async function replaceLoweredTable(
+  host: BundleHost,
+  engine: SheetEngine,
+  info: LoweredTableInfo,
+  next: LoweredContent,
+  contentVersion: number,
+  sheetName: string,
+): Promise<LoweredTableInfo | null> {
+  const widths = await measureColumnWidths(host, next);
+  const doors = doors66(host);
+  if (doors.deleteTable !== false) {
+    const r = await host.document.mutate({
+      op: "batch",
+      args: {
+        ops: [deleteTableOp(info.storyId, info.tableId), tableInsertOp(next, info.storyId, widths)],
+      },
+    });
+    if (r.applied && r.createdId?.kind === "table") {
+      doors.deleteTable = true;
+      const tableId = tableIdOf(r.createdId);
+      await pourCellContent(host, next, info.storyId, tableId, [
+        tableBindingStamp(info.frameId, sheetName, info.range, contentVersion, info.storyId, tableId, next, widths),
+      ]);
+      return { ...info, tableId, content: next, columnWidths: widths, contentVersion };
+    }
+    if (isUnknownVariant(r, "deleteTable")) doors.deleteTable = false;
+    else host.log.warn("replace: deleteTable + insertTable rejected", r);
+  }
+  // Pre-66: re-place the frame where it stands (its page-space box).
+  let geom: Awaited<ReturnType<BundleHost["document"]["elementGeometry"]>>;
+  try {
+    geom = await host.document.elementGeometry([{ kind: "textFrame", id: info.frameId }]);
+  } catch (err) {
+    host.log.warn("replace: frame geometry read failed", err);
+    return null;
+  }
+  const g = geom[0];
+  if (!g?.pageId) return null;
+  const [top, left, bottom, right] = g.bounds;
+  const [a, b, c, d, tx, ty] = g.itemTransform ?? [1, 0, 0, 1, 0, 0];
+  const at = { left: a * left + c * top + tx, top: b * left + d * top + ty };
+  const del = await host.document.mutate({ op: "deleteFrame", args: { frameId: info.frameId } });
+  if (!del.applied) {
+    host.log.warn("replace: removing the stale frame was rejected", del);
+    return null;
+  }
+  let placed: LoweredTableInfo | null = null;
+  await lowerSelectionToFrame(host, engine, info.sheet, info.range, {
+    content: next,
+    contentVersion,
+    placement: {
+      pageId: g.pageId,
+      bounds: [at.top, at.left, at.top + (bottom - top), at.left + (right - left)],
+    },
+    select: false,
+    onLowered: (p) => {
+      placed = p;
+    },
+  });
+  return placed;
 }
 
 /** One table a chain placement owns: the table id and what it shows. A
