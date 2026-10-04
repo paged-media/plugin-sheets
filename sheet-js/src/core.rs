@@ -116,14 +116,19 @@ pub struct CellInput {
 
 /// The result of [`SheetSession::set_cells`] — deliberately slim: the count
 /// of cells whose stored value changed (written cells + recomputed
-/// formulas) and the circular set. No per-cell displays are formatted (the
-/// bundle reads displays per visible cell; formatting thousands of changed
-/// cells it never shows was the bulk of a big write's result).
+/// formulas), the circular set, and each input's PRIOR re-enterable input
+/// (`get_cell_input` semantics, parallel to the inputs — the undo journal's
+/// inverse, so the caller needs no per-cell read before writing; a cell
+/// written twice in one batch reports the first write's text as the second
+/// one's prior). No per-cell displays are formatted (the bundle reads
+/// displays per visible cell; formatting thousands of changed cells it never
+/// shows was the bulk of a big write's result).
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SetCellsResult {
     pub changed_count: u32,
     pub circular: Vec<CircularRef>,
+    pub prev_inputs: Vec<String>,
 }
 
 /// One cell rewritten by a bulk edit op (sort / replace), carrying BOTH
@@ -672,7 +677,8 @@ impl SheetSession {
     /// BEFORE anything is mutated: a bad sheet id or a parse error rejects
     /// the whole batch as a boundary error naming the offending cell, and
     /// the workbook is untouched. Inputs apply in order (a later input for
-    /// the same cell wins). Returns the slim [`SetCellsResult`].
+    /// the same cell wins). Returns the slim [`SetCellsResult`] with each
+    /// input's prior input for the caller's undo journal.
     pub fn set_cells(&mut self, inputs: &[CellInput]) -> Result<SetCellsResult, SessionError> {
         let engine = self.engine();
         let sheet_count = engine.model().sheets.len();
@@ -689,6 +695,22 @@ impl SheetSession {
             })?;
             parsed.push((c.sheet, c.row, c.col, input));
         }
+        // Prior inputs, in batch order: a cell written earlier in the batch
+        // reports that earlier input (the sequential inverse).
+        let mut pending: std::collections::HashMap<(u16, u32, u32), &str> =
+            std::collections::HashMap::new();
+        let prev_inputs: Vec<String> = inputs
+            .iter()
+            .map(|c| {
+                let at = (c.sheet, c.row, c.col);
+                let prev = match pending.get(&at) {
+                    Some(p) => (*p).to_string(),
+                    None => cell_input_text(engine.model(), c.sheet, c.row, c.col),
+                };
+                pending.insert(at, c.input.as_str());
+                prev
+            })
+            .collect();
         let written: BTreeSet<(u16, u32, u32)> =
             inputs.iter().map(|c| (c.sheet, c.row, c.col)).collect();
         let res = self.engine_mut().set_cells(parsed);
@@ -706,6 +728,7 @@ impl SheetSession {
                     col: c.col,
                 })
                 .collect(),
+            prev_inputs,
         })
     }
 

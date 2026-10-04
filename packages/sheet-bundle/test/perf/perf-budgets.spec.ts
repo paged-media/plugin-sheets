@@ -288,14 +288,15 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "engine.getGridScene": 1, // was 21: the whole window, per keystroke
       "sceneLayer.submit": 1, // was 21: coalesced per frame
       "supports": 3,
-      "engine.getCellInput": 1,
-      "engine.setCell": 1,
+      // The commit: one setCells whose reply carries the journal's prior
+      // input (was getCellInput + setCell).
+      "engine.setCells": 1,
       "engine.saveXlsx": 1, // the persist after the commit
       "blob.write": 1,
       "parts.write": 2,
       "storage.set": 1,
       "=mutations": 0,
-      "=engineCalls": 4,
+      "=engineCalls": 3,
       "=reads": 0,
       "=bytesWritten": 5293,
       "=sceneItems": 282, // was 5922 (21 × the full grid)
@@ -336,14 +337,13 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "engine.getGridScene": 1, // the commit's re-window; keystrokes reuse the memo
       "sceneLayer.submit": 21, // one per frame — the contract replaces the whole layer
       "supports": 23,
-      "engine.getCellInput": 1,
-      "engine.setCell": 1,
+      "engine.setCells": 1, // prior input in the reply (was getCellInput + setCell)
       "engine.saveXlsx": 1,
       "blob.write": 1,
       "parts.write": 2,
       "storage.set": 1,
       "=mutations": 0,
-      "=engineCalls": 4,
+      "=engineCalls": 3,
       "=reads": 0,
       "=bytesWritten": 5293,
       "=sceneItems": 5922,
@@ -384,9 +384,9 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     });
   });
 
-  // COVERS: session.pasteAtSelection — the tabular payload re-typed through
-  // editCell, one engine.setCell (one recalc, one result marshalled back)
-  // per pasted cell. Batched: one setCells call.
+  // COVERS: session.pasteAtSelection — the tabular payload written through
+  // ONE engine.setCells (one recalc; the reply carries each cell's prior
+  // input for the journal). Before 2026-10: 1000 getCellInput + 1000 setCell.
   it("paste 100×10 at the selection [sheet.edit.ops]", async () => {
     const s = await open(
       await authorWorkbook(1, 1, () => "seed", [[100, 0, "=SUM(A1:A100)"]]),
@@ -409,15 +409,16 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     expect(e.getCellDisplay(0, 100, 0)).toBe("49600");
     expectBudget("paste 100x10", work, {
       "clipboard.read": 1,
-      "engine.getCellInput": 1000, // the undo journal's prior input, per cell → 1 range read
-      "engine.setCell": 1000, // one recalc + one marshalled result per cell → 1 setCells
+      // ONE setCells: one recalc, and its reply carries every prior input
+      // for the undo journal (was 1000 getCellInput + 1000 setCell).
+      "engine.setCells": 1,
       "engine.saveXlsx": 1,
       "blob.write": 1,
       "parts.write": 2,
       "storage.set": 1,
       "supports": 2,
       "=mutations": 0,
-      "=engineCalls": 2001,
+      "=engineCalls": 2, // was 2001
       "=reads": 0,
       "=bytesWritten": 9817,
       "=sceneItems": 0,
@@ -558,10 +559,10 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       // The keystrokes: 0 (was 12 — one re-window per render). The commit's
       // re-render: 1.
       "engine.getGridScene": 1,
-      // The journal's prior input reuses the bar's memoised read (was 1);
-      // the commit's re-render prefills the bar with the new input: 1.
+      // The journal's prior input comes back in the setCells reply; the
+      // commit's re-render prefills the bar with the new input: 1.
       "engine.getCellInput": 1,
-      "engine.setCell": 1,
+      "engine.setCells": 1,
       "=mutations": 0,
       "=engineCalls": 3,
       "=reads": 0,

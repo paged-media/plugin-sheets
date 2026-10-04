@@ -727,13 +727,7 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     if (!engine) return false;
     let prev: string;
     try {
-      // The prior input, for the journal — the formula bar usually read it
-      // a moment ago (same memo key as `cellInputAt`), so a bar commit
-      // costs no second read.
-      prev = cachedRead(`input:${sheet}:${row}:${col}`, () =>
-        engine.getCellInput(sheet, row, col),
-      );
-      writeOneCell(engine, sheet, row, col, input);
+      prev = writeOneCell(engine, sheet, row, col, input);
     } catch (err) {
       host.log.error("setCell failed", err);
       return false;
@@ -745,27 +739,43 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
     return true;
   }
 
-  /** Write one cell. The session never reads `setCell`'s result (the
-   *  dirty cut is re-read by whoever renders), so the batch door's slim
-   *  `{changedCount, circular}` reply is preferred over marshalling every
-   *  changed cell's display back across the boundary; an engine without
-   *  the door — or one that refuses the input as a batch — takes `setCell`. */
+  /** Write one cell and return its PRIOR input (the journal's inverse).
+   *  The batch door is preferred: its slim `{changedCount, circular,
+   *  prevInputs}` reply carries the prior input, so the write costs one
+   *  engine call (no read first, no changed cell's display marshalled
+   *  back). An engine without the door — or one that refuses the input as a
+   *  batch, or whose reply predates `prevInputs` (then the prior is the
+   *  memoised read the formula bar usually made a moment ago) — reads the
+   *  prior and takes `setCell`. */
   function writeOneCell(
     engine: SheetEngine,
     sheet: number,
     row: number,
     col: number,
     input: string,
-  ): void {
+  ): string {
+    const readPrev = () =>
+      cachedRead(`input:${sheet}:${row}:${col}`, () => engine.getCellInput(sheet, row, col));
     if (engine.setCells) {
+      let res: ReturnType<NonNullable<SheetEngine["setCells"]>> | undefined;
+      // An engine whose reply has no `prevInputs` must be read BEFORE the
+      // write; we only learn that from a reply, so a memoised read (free
+      // when the bar just showed the cell) is the safe fallback for it.
       try {
-        engine.setCells([{ sheet, row, col, input }]);
-        return;
+        res = engine.setCells([{ sheet, row, col, input }]);
       } catch {
         // fall through: setCell is the authority on a single input
       }
+      if (res) {
+        const prev = res.prevInputs?.[0];
+        if (prev !== undefined) return prev;
+        host.log.warn("setCells reply has no prevInputs — the journal reads the new input");
+        return readPrev();
+      }
     }
+    const prev = readPrev();
     engine.setCell(sheet, row, col, input);
+    return prev;
   }
 
   /** Journal a BULK op's per-cell rewrites (the engine's `edits` lane —
@@ -1699,51 +1709,57 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
       const engine = state.engine;
       const edits: CellEditRecord[] = [];
       let written = 0;
-      // The journal's prior inputs, read before anything is written.
-      const targets: CellEditRecord[] = [];
+      const cells: { row: number; col: number; next: string }[] = [];
       for (let r = 0; r < grid.length; r++) {
         const row = grid[r];
         for (let c = 0; c < row.length; c++) {
-          const targetRow = sel.anchorRow + r;
-          const targetCol = sel.anchorCol + c;
-          let prev: string;
-          try {
-            prev = engine.getCellInput(sheet, targetRow, targetCol);
-          } catch (err) {
-            host.log.warn(`pasteAtSelection: read (${sheet},${targetRow},${targetCol}) failed`, err);
-            continue;
-          }
-          targets.push({ sheet, row: targetRow, col: targetCol, prevInput: prev, nextInput: row[c] });
+          cells.push({ row: sel.anchorRow + r, col: sel.anchorCol + c, next: row[c] });
         }
       }
       // ONE write + ONE recalc through the batch door when the engine has
-      // it (it refuses the whole batch on any bad input — then the cells
-      // go one by one, so a single bad cell is skipped, not the paste).
+      // it; its reply carries every cell's prior input (the journal's
+      // inverse), so nothing is read first. It refuses the whole batch on
+      // any bad input — then the cells go one by one (prior read per cell),
+      // so a single bad cell is skipped, not the paste.
       let batched = false;
-      if (engine.setCells && targets.length > 0) {
+      if (engine.setCells && cells.length > 0) {
         try {
-          engine.setCells(
-            targets.map((t) => ({ sheet: t.sheet, row: t.row, col: t.col, input: t.nextInput })),
+          const res = engine.setCells(
+            cells.map((t) => ({ sheet, row: t.row, col: t.col, input: t.next })),
           );
           batched = true;
-          edits.push(...targets);
-          written = targets.length;
+          written = cells.length;
+          const prev = res.prevInputs;
+          if (prev && prev.length === cells.length) {
+            cells.forEach((t, i) =>
+              edits.push({ sheet, row: t.row, col: t.col, prevInput: prev[i], nextInput: t.next }),
+            );
+          } else {
+            // An engine whose reply predates `prevInputs`: the cells are
+            // written but their priors are gone — journal nothing rather
+            // than an undo that would restore the wrong text.
+            host.log.warn("pasteAtSelection: setCells reply has no prevInputs — paste not journaled");
+          }
         } catch (err) {
           host.log.debug("pasteAtSelection: batch write refused — per cell", err);
         }
       }
       if (!batched) {
-        for (const t of targets) {
+        for (const t of cells) {
+          let prev: string;
           try {
-            engine.setCell(t.sheet, t.row, t.col, t.nextInput);
+            prev = engine.getCellInput(sheet, t.row, t.col);
           } catch (err) {
-            host.log.warn(
-              `pasteAtSelection: setCell(${t.sheet},${t.row},${t.col}) failed`,
-              err,
-            );
+            host.log.warn(`pasteAtSelection: read (${sheet},${t.row},${t.col}) failed`, err);
             continue;
           }
-          edits.push(t);
+          try {
+            engine.setCell(sheet, t.row, t.col, t.next);
+          } catch (err) {
+            host.log.warn(`pasteAtSelection: setCell(${sheet},${t.row},${t.col}) failed`, err);
+            continue;
+          }
+          edits.push({ sheet, row: t.row, col: t.col, prevInput: prev, nextInput: t.next });
           written += 1;
         }
       }
@@ -1751,7 +1767,11 @@ export function createWorkbookSession(host: BundleHost): WorkbookSession {
         return { ok: false as const, message: "the paste wrote no cells" };
       }
       journalBatch(edits); // one grouped Cmd-Z undoes the whole paste
-      emitter.emit({ kind: "cells", regions: regionsOf(edits) });
+      const touched: CellEditRecord[] =
+        edits.length > 0
+          ? edits
+          : cells.map((t) => ({ sheet, row: t.row, col: t.col, prevInput: "", nextInput: t.next }));
+      emitter.emit({ kind: "cells", regions: regionsOf(touched) });
       void submitInFrameGrid();
       return {
         ok: true as const,

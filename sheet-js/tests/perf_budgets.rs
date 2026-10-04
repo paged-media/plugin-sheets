@@ -216,9 +216,15 @@ fn set_cells_rejects_whole_batch_on_bad_input__feat__sheet_edit_ops() {
     };
     assert!(s.set_cells(&[cell(0, "5"), bad_sheet]).is_err());
     assert_eq!(s.get_cell_display(0, 0, 0), "1");
-    // A later input for the same cell wins.
-    s.set_cells(&[cell(0, "5"), cell(0, "6")]).unwrap();
+    // A later input for the same cell wins; each input reports its prior
+    // input (the second write's prior is the first write).
+    let res = s
+        .set_cells(&[cell(0, "5"), cell(0, "6"), cell(1, "=A1*2")])
+        .unwrap();
     assert_eq!(s.get_cell_display(0, 0, 0), "6");
+    assert_eq!(res.prev_inputs, vec!["1", "5", ""]);
+    let res = s.set_cells(&[cell(1, "7")]).unwrap();
+    assert_eq!(res.prev_inputs, vec!["=A1*2"]);
 }
 
 // COVERS: replace_all over a column of values feeding a SUM (core.rs replace

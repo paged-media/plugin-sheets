@@ -224,9 +224,11 @@ describe("sheet_grid_clipboard_paste_range: the setCells batch door [sheet.edit.
     const batches: { sheet: number; row: number; col: number; input: string }[][] = [];
     engine.setCells = (inputs) => {
       batches.push([...inputs]);
+      // The reply carries each cell's prior input (the journal's inverse).
+      const prevInputs = inputs.map((i) => engine.getCellInput(i.sheet, i.row, i.col));
       for (const i of inputs) engine.setCell(i.sheet, i.row, i.col, i.input);
       setCellCalls.length = 0; // the batch is ONE engine call
-      return { changedCount: inputs.length, circular: [] };
+      return { changedCount: inputs.length, circular: [], prevInputs };
     };
     const { host, setClipboard } = fakeHost();
     const session = bootedSession(host, engine);

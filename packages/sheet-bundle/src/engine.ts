@@ -144,10 +144,14 @@ export interface CellInputArg {
 }
 
 /** `setCells`' deliberately slim result: how many stored values changed
- *  (written + recomputed) and the circular cells, if any. */
+ *  (written + recomputed), the circular cells, if any, and each input's
+ *  PRIOR re-enterable input (parallel to the inputs — the undo journal's
+ *  inverse, so a batch write needs no per-cell `getCellInput` first).
+ *  `prevInputs` is absent on an engine that predates it. */
 export interface SetCellsResult {
   changedCount: number;
   circular: { sheet: number; row: number; col: number }[];
+  prevInputs?: string[];
 }
 
 export interface CellEditRecord {
