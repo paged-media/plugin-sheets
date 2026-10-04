@@ -592,3 +592,290 @@ impl SheetSession {
         Ok(())
     }
 }
+
+// ── defined names ────────────────────────────────────────────────────────
+
+/// One defined name, for a name manager.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NameInfo {
+    pub name: String,
+    /// `None` = workbook scope; `Some(sheet)` = visible on that sheet only.
+    pub scope: Option<u16>,
+    /// The target as the workbook writes it (`Sheet1!$A$1:$B$3`, or the
+    /// raw formula text of a non-range name).
+    pub refers_to: String,
+}
+
+/// The scope a deleted (or orphaned) name is parked in: no sheet has this
+/// id, so it never resolves, while formulas holding its `NameId` keep it.
+const PARKED: sheet_core::SheetId = sheet_core::SheetId::MAX;
+
+/// Excel's defined-name rules: starts with a letter, `_` or `\`; then
+/// letters, digits, `_`, `.`, `\`; at most 255 characters; not `TRUE` /
+/// `FALSE`, not something that reads as a cell reference (`A1`, `XFD9`,
+/// `R1C1`, `R`, `C`).
+fn validate_name(name: &str) -> Result<(), SessionError> {
+    let bad = |why: &str| Err(SessionError(format!("invalid name {name:?}: {why}")));
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return bad("empty");
+    };
+    if name.chars().count() > 255 {
+        return bad("longer than 255 characters");
+    }
+    if !(first.is_alphabetic() || first == '_' || first == '\\') {
+        return bad("must start with a letter, '_' or '\\'");
+    }
+    if !chars.all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '\\')) {
+        return bad("letters, digits, '_', '.' and '\\' only");
+    }
+    let up = name.to_ascii_uppercase();
+    if matches!(up.as_str(), "TRUE" | "FALSE" | "R" | "C") {
+        return bad("reserved");
+    }
+    if sheet_core::parse_a1(name).is_some() {
+        return bad("reads as a cell reference");
+    }
+    // R1C1-style (`R1C1`, `R2`, `C3`).
+    let rc = |s: &str| {
+        let s = s.strip_prefix('R').unwrap_or(s);
+        let (r, rest) = s.split_at(s.find('C').unwrap_or(s.len()));
+        r.chars().all(|c| c.is_ascii_digit())
+            && rest
+                .strip_prefix('C')
+                .unwrap_or(rest)
+                .chars()
+                .all(|c| c.is_ascii_digit())
+    };
+    if (up.starts_with('R') || up.starts_with('C')) && rc(&up) {
+        return bad("reads as an R1C1 reference");
+    }
+    Ok(())
+}
+
+/// Turn every workbook name whose raw target text is a plain reference
+/// (`Sheet1!$A$1:$A$3`, `$B$5`) into a RANGE target, so formulas using it
+/// evaluate and the dependency graph registers its box. Names whose target
+/// is a formula or a constant (`0.5`) keep their text. Called on load,
+/// before the engine is built.
+pub(crate) fn resolve_name_targets(model: &mut sheet_core::SheetModel) {
+    use sheet_core::ast::Expr;
+    use sheet_core::NameTarget;
+    let mut resolved = Vec::new();
+    for (id, def) in model.names.iter() {
+        let NameTarget::Formula(text) = &def.target else {
+            continue;
+        };
+        let current = match def.scope {
+            sheet_core::NameScope::Sheet(s) => s,
+            sheet_core::NameScope::Workbook => 0,
+        };
+        let ctx = super::ModelParseCtx { model, current };
+        let range = match sheet_parser::parse(text, &ctx).map(|f| f.root) {
+            Ok(Expr::Range(r)) => r,
+            Ok(Expr::Ref(c)) => sheet_core::RangeRef { start: c, end: c },
+            _ => continue,
+        };
+        resolved.push((id, range));
+    }
+    if resolved.is_empty() {
+        return;
+    }
+    let mut out = sheet_core::NameTable::default();
+    for (id, def) in model.names.iter() {
+        let target = match resolved.iter().find(|(i, _)| *i == id) {
+            Some((_, r)) => NameTarget::Range(*r),
+            None => def.target.clone(),
+        };
+        out.define(sheet_core::NameDef {
+            name: def.name.clone(),
+            scope: def.scope,
+            target,
+        });
+    }
+    model.names = out;
+}
+
+/// The workbook text of a range target (`Sheet1!$A$1:$B$3`, `Sheet1!$B$5`).
+fn range_text(model: &sheet_core::SheetModel, r: &sheet_core::RangeRef) -> String {
+    let n = r.normalized();
+    let sheet = model
+        .sheet(n.start.sheet)
+        .map(|w| sheet_xlsx::structure::quote_sheet(&w.name))
+        .unwrap_or_else(|| "#REF".into());
+    let abs = |row: u32, col: u32| format!("${}${}", sheet_core::col_to_a1(col), row + 1);
+    if n.start.row == n.end.row && n.start.col == n.end.col {
+        format!("{sheet}!{}", abs(n.start.row, n.start.col))
+    } else {
+        format!(
+            "{sheet}!{}:{}",
+            abs(n.start.row, n.start.col),
+            abs(n.end.row, n.end.col)
+        )
+    }
+}
+
+impl SheetSession {
+    /// Define (or redefine) the name `name` → the range `refers_to` (an A1
+    /// range on `sheet`, a `Sheet!A1:B2` range, or another name / table),
+    /// workbook-scoped or — with `scope` — visible on that sheet only. A
+    /// redefinition keeps the name's slot, so formulas already using it
+    /// follow the new target; a previously deleted name is revived in place.
+    /// Persisted to `<definedNames>`; every formula recalculates.
+    pub fn define_name(
+        &mut self,
+        sheet: u16,
+        name: &str,
+        refers_to: &str,
+        scope: Option<u16>,
+    ) -> Result<(), SessionError> {
+        let name = name.trim();
+        validate_name(name)?;
+        if let Some(s) = scope {
+            self.validate_sheet(s)?;
+        }
+        let (target_sheet, cr) = self.resolve_range(sheet, refers_to)?;
+        let (top, left, bottom, right) = bounds(&cr);
+        let cell = |row, col| sheet_core::CellRef {
+            sheet: target_sheet,
+            row,
+            col,
+            row_abs: true,
+            col_abs: true,
+        };
+        let range = sheet_core::RangeRef {
+            start: cell(top, left),
+            end: cell(bottom, right),
+        };
+        let text = range_text(self.engine().model(), &range);
+        let new_scope = match scope {
+            Some(s) => sheet_core::NameScope::Sheet(s),
+            None => sheet_core::NameScope::Workbook,
+        };
+        // Which slot: the live name in this scope, else a parked one of the
+        // same spelling, else a new slot.
+        let names = &self.engine().model().names;
+        let live = names
+            .iter()
+            .find(|(_, d)| d.name.eq_ignore_ascii_case(name) && d.scope == new_scope)
+            .map(|(id, _)| id);
+        let parked = names
+            .iter()
+            .find(|(_, d)| {
+                d.name.eq_ignore_ascii_case(name) && d.scope == sheet_core::NameScope::Sheet(PARKED)
+            })
+            .map(|(id, _)| id);
+        let slot = live.or(parked);
+        self.doc
+            .set_defined_name(name, scope.map(u32::from), &text)
+            .map_err(|e| SessionError(e.to_string()))?;
+        let def = sheet_core::NameDef {
+            name: name.into(),
+            scope: new_scope,
+            target: sheet_core::NameTarget::Range(range),
+        };
+        self.with_names(|old| {
+            let mut out = sheet_core::NameTable::default();
+            for (id, d) in old.iter() {
+                out.define(if Some(id) == slot {
+                    def.clone()
+                } else {
+                    d.clone()
+                });
+            }
+            if slot.is_none() {
+                out.define(def.clone());
+            }
+            out
+        });
+        Ok(())
+    }
+
+    /// Delete the name `name` in `scope` (`None` = workbook). Formulas using
+    /// it read `#NAME?` (Excel's rule); its slot is parked so their
+    /// `NameId`s stay valid. Removed from `<definedNames>`.
+    pub fn delete_name(
+        &mut self,
+        _sheet: u16,
+        name: &str,
+        scope: Option<u16>,
+    ) -> Result<(), SessionError> {
+        let want = match scope {
+            Some(s) => sheet_core::NameScope::Sheet(s),
+            None => sheet_core::NameScope::Workbook,
+        };
+        let slot = self
+            .engine()
+            .model()
+            .names
+            .iter()
+            .find(|(_, d)| d.name.eq_ignore_ascii_case(name.trim()) && d.scope == want)
+            .map(|(id, _)| id)
+            .ok_or_else(|| SessionError(format!("no defined name {name:?} in that scope")))?;
+        let spelled = self
+            .engine()
+            .model()
+            .names
+            .get(slot)
+            .map(|d| d.name.to_string())
+            .unwrap_or_default();
+        self.doc
+            .remove_defined_name(&spelled, scope.map(u32::from))
+            .map_err(|e| SessionError(e.to_string()))?;
+        self.with_names(|old| {
+            let mut out = sheet_core::NameTable::default();
+            for (id, d) in old.iter() {
+                if id == slot {
+                    out.define(sheet_core::NameDef {
+                        name: d.name.clone(),
+                        scope: sheet_core::NameScope::Sheet(PARKED),
+                        target: sheet_core::NameTarget::Formula("#NAME?".into()),
+                    });
+                } else {
+                    out.define(d.clone());
+                }
+            }
+            out
+        });
+        Ok(())
+    }
+
+    /// Every live defined name (built-in `_xlnm.` names and parked slots
+    /// left out), in definition order.
+    pub fn list_names(&self) -> Vec<NameInfo> {
+        let model = self.engine().model();
+        model
+            .names
+            .iter()
+            .filter(|(_, d)| !d.name.starts_with("_xlnm."))
+            .filter_map(|(_, d)| {
+                let scope = match d.scope {
+                    sheet_core::NameScope::Workbook => None,
+                    sheet_core::NameScope::Sheet(s) if (s as usize) < model.sheets.len() => Some(s),
+                    sheet_core::NameScope::Sheet(_) => return None,
+                };
+                let refers_to = match &d.target {
+                    sheet_core::NameTarget::Range(r) => range_text(model, r),
+                    sheet_core::NameTarget::Formula(t) => t.to_string(),
+                };
+                Some(NameInfo {
+                    name: d.name.to_string(),
+                    scope,
+                    refers_to,
+                })
+            })
+            .collect()
+    }
+
+    /// Replace the name table (positions kept by the caller), rebuild the
+    /// dependency graph and recalculate every formula.
+    fn with_names(&mut self, f: impl FnOnce(&sheet_core::NameTable) -> sheet_core::NameTable) {
+        let engine = self.engine.take().expect("engine present outside save");
+        let mut model = engine.into_model();
+        model.names = f(&model.names);
+        let mut engine = sheet_calc::Engine::new(model, self.config);
+        engine.recalc_all();
+        self.engine = Some(engine);
+    }
+}

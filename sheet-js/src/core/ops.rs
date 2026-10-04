@@ -51,8 +51,8 @@ use sheet_parser::{print, Edit};
 use sheet_xlsx::structure::{quote_sheet, rewrite_sheet_refs};
 
 use super::{
-    cell_display, parse_range, CellChange, CircularRef, LowerOptions, ModelSheetNames,
-    SessionError, SetCellResult, SheetSession, T0_LOWER_CELL_CAP,
+    cell_display, CellChange, CircularRef, LowerOptions, ModelSheetNames, SessionError,
+    SetCellResult, SheetSession, T0_LOWER_CELL_CAP,
 };
 
 /// Days from the 1900-system epoch to 1970-01-01 (Excel serial of the Unix
@@ -211,8 +211,7 @@ impl SheetSession {
         range: &str,
         opts: LowerOptions,
     ) -> Result<sheet_lower::LoweredContent, SessionError> {
-        let cell_range = parse_range(range)?;
-        self.validate_sheet(sheet)?;
+        let (sheet, cell_range) = self.resolve_range(sheet, range)?;
         let (top, left, bottom, right) = (
             cell_range.r0.min(cell_range.r1) as u64,
             cell_range.c0.min(cell_range.c1) as u64,

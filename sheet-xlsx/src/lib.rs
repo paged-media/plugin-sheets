@@ -58,6 +58,7 @@
 //! `(sheet, row, col)`. The consumer parses these into model
 //! `FormulaId`s on load and writes printed text back before save.
 
+pub mod defined_names;
 pub mod error;
 pub mod opc;
 pub mod parts;

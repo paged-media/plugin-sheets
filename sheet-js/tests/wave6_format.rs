@@ -579,3 +579,115 @@ fn paginate_repeats_styled_header_rows__feat__sheet_lower_paginate() {
         assert_eq!(c.rows[2].cells[0].style_key, 0);
     }
 }
+
+// ── 6. defined names ─────────────────────────────────────────────────────
+
+fn fixture(name: &str) -> Vec<u8> {
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("corpus")
+        .join("xlsx-corpus")
+        .join(name);
+    std::fs::read(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+}
+
+/// A workbook's own `<definedName>` that targets a range evaluates (it
+/// loaded as raw text and every formula using it read `#NAME?`) and a
+/// lowering door takes the name in place of an A1 range.
+#[test]
+fn workbook_range_names_resolve_on_load__feat__sheet_names_define() {
+    let names = r#"<definedNames><definedName name="Amounts">Sheet1!$A$1:$A$3</definedName><definedName name="Rate">0.5</definedName></definedNames>"#;
+    let body = r#"<sheetData><row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>SUM(Amounts)</f><v>6</v></c></row><row r="2"><c r="A2"><v>2</v></c></row><row r="3"><c r="A3"><v>3</v></c></row></sheetData>"#;
+    let mut s = SheetSession::load_xlsx(&package(names, body, None)).unwrap();
+    assert_eq!(s.get_cell_display(0, 0, 1), "6");
+    s.set_cell(0, 2, 0, "10").unwrap();
+    assert_eq!(
+        s.get_cell_display(0, 0, 1),
+        "13",
+        "a write inside the name dirties its dependents"
+    );
+    let page = s
+        .get_range_page(0, "Amounts", LowerOptions::default())
+        .unwrap();
+    assert_eq!(page.rows.len(), 3);
+    assert_eq!(page.rows[2].cells[0].text, "10");
+    let listed = s.list_names();
+    assert!(listed
+        .iter()
+        .any(|n| n.name == "Amounts" && n.refers_to == "Sheet1!$A$1:$A$3"));
+    assert!(listed
+        .iter()
+        .any(|n| n.name == "Rate" && n.refers_to == "0.5"));
+}
+
+/// Define, redefine (formulas follow the new target) and delete a name
+/// (formulas read `#NAME?`), each persisted in `<definedNames>`.
+#[test]
+fn define_redefine_delete_name_round_trip__feat__sheet_names_define() {
+    let mut s = SheetSession::new();
+    s.set_cell(0, 4, 1, "0.2").unwrap(); // B5
+    s.set_cell(0, 5, 1, "0.5").unwrap(); // B6
+    s.define_name(0, "Rate", "B5", None).unwrap();
+    s.set_cell(0, 0, 2, "=Rate*10").unwrap(); // C1
+    assert_eq!(s.get_cell_display(0, 0, 2), "2");
+    s.define_name(0, "Scoped", "Sheet1!A1:B2", Some(0)).unwrap();
+    for bad in ["A1", "1abc", "has space", "TRUE", "R1C1", ""] {
+        assert!(
+            s.define_name(0, bad, "B5", None).is_err(),
+            "{bad:?} refused"
+        );
+    }
+    assert!(s.define_name(0, "Nowhere", "NotASheet!A1", None).is_err());
+
+    let out = s.save_xlsx().unwrap();
+    let wb = part_text(&out, "xl/workbook.xml");
+    assert!(
+        wb.contains(r#"<definedName name="Rate">Sheet1!$B$5</definedName>"#),
+        "{wb}"
+    );
+    assert!(
+        wb.contains(
+            r#"<definedName name="Scoped" localSheetId="0">Sheet1!$A$1:$B$2</definedName>"#
+        ),
+        "{wb}"
+    );
+    assert!(pos_of(&wb, "sheets") < pos_of(&wb, "definedNames"));
+
+    let mut s2 = SheetSession::load_xlsx(&out).unwrap();
+    assert_eq!(s2.get_cell_display(0, 0, 2), "2");
+    s2.define_name(0, "rate", "B6", None).unwrap(); // same name, any case
+    assert_eq!(
+        s2.get_cell_display(0, 0, 2),
+        "5",
+        "the formula follows the new target"
+    );
+    assert_eq!(
+        s2.list_names()
+            .iter()
+            .filter(|n| n.name.eq_ignore_ascii_case("rate"))
+            .count(),
+        1
+    );
+    s2.delete_name(0, "Rate", None).unwrap();
+    assert_eq!(s2.get_cell_display(0, 0, 2), "#NAME?");
+    assert!(s2.delete_name(0, "Rate", None).is_err(), "already gone");
+    s2.delete_name(0, "Scoped", Some(0)).unwrap();
+    let out2 = s2.save_xlsx().unwrap();
+    let wb2 = part_text(&out2, "xl/workbook.xml");
+    assert!(!wb2.contains("definedName"), "{wb2}");
+}
+
+/// A table name places like a range (its full extent, header included).
+#[test]
+fn table_name_resolves_to_its_range__feat__sheet_names_define() {
+    let s = SheetSession::load_xlsx(&fixture("07-tables.xlsx")).unwrap();
+    let r = s.resolve_range_a1(0, "Sales").unwrap();
+    assert_eq!((r.sheet, r.range.as_str()), (0, "A1:C4"));
+    let page = s
+        .get_range_page(0, "Sales", LowerOptions::default())
+        .unwrap();
+    assert_eq!(page.rows.len(), 4);
+    assert_eq!(page.rows[0].cells[0].text, "Region");
+    assert!(s.resolve_range_a1(0, "NoSuchThing").is_err());
+}

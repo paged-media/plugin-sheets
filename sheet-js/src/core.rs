@@ -70,7 +70,7 @@ pub mod csv;
 mod format;
 mod ops;
 pub use format::{
-    EdgeArg, MergeResult, ResolvedRange, SetStyleResult, SheetLayoutInfo, StylePatchArg,
+    EdgeArg, MergeResult, NameInfo, ResolvedRange, SetStyleResult, SheetLayoutInfo, StylePatchArg,
 };
 pub use ops::{CalcSettingsInfo, StructuralEdit};
 
@@ -537,6 +537,11 @@ impl SheetSession {
             }
         }
 
+        // Workbook names whose target is a plain reference become RANGE
+        // names (Wave 6) — they loaded as raw text and every formula using
+        // one read `#NAME?`.
+        format::resolve_name_targets(&mut model);
+
         let mut engine = Engine::new(model, config);
         engine.recalc_all();
 
@@ -797,8 +802,7 @@ impl SheetSession {
         ascending: bool,
         has_header: bool,
     ) -> Result<SortResult, SessionError> {
-        let cell_range = parse_range(range)?;
-        self.validate_sheet(sheet)?;
+        let (sheet, cell_range) = self.resolve_range(sheet, range)?;
 
         let (top, bottom) = (
             cell_range.r0.min(cell_range.r1),
@@ -1474,7 +1478,7 @@ impl SheetSession {
         range: &str,
         opts: LowerOptions,
     ) -> Result<sheet_lower::LoweredContent, SessionError> {
-        let cell_range = parse_range(range)?;
+        let (sheet, cell_range) = self.resolve_range(sheet, range)?;
 
         // Validate the sheet id (FREEZE AMENDMENT, audit finding 2). Lowering
         // an unknown sheet is itself harmless (it yields an empty-but-shaped
@@ -1543,8 +1547,7 @@ impl SheetSession {
         range: &str,
         opts: LowerOptions,
     ) -> Result<sheet_lower::LoweredContent, SessionError> {
-        let cell_range = parse_range(range)?;
-        self.validate_sheet(sheet)?;
+        let (sheet, cell_range) = self.resolve_range(sheet, range)?;
 
         // The SAME materialization cap as `get_range_lowered`: this path
         // allocates one LoweredCell per cell in the rectangle too.
@@ -1598,8 +1601,7 @@ impl SheetSession {
         sheet: u16,
         range: &str,
     ) -> Result<Vec<Vec<String>>, SessionError> {
-        let cell_range = parse_range(range)?;
-        self.validate_sheet(sheet)?;
+        let (sheet, cell_range) = self.resolve_range(sheet, range)?;
 
         // Normalize the endpoints (a reversed range reads the same window).
         let (top, left, bottom, right) = (
@@ -1652,7 +1654,7 @@ impl SheetSession {
         frames: Vec<FrameBoxArg>,
         opts: PaginateOptionsArg,
     ) -> Result<Vec<Page>, SessionError> {
-        let cell_range = parse_range(range)?;
+        let (sheet, cell_range) = self.resolve_range(sheet, range)?;
 
         // Validate the sheet id (FREEZE AMENDMENT, audit finding 2 — matches
         // `set_cell`/`get_range_lowered`).

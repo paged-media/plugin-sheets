@@ -670,6 +670,38 @@ mod wasm {
             to_js(&r)
         }
 
+        /// Define (or redefine) a name → a range (`refers_to` as seen from
+        /// `sheet`); `scope` = a sheet id for a sheet-local name, `undefined`
+        /// for workbook scope.
+        pub fn define_name(
+            &mut self,
+            sheet: u16,
+            name: &str,
+            refers_to: &str,
+            scope: Option<u16>,
+        ) -> Result<(), JsValue> {
+            self.session
+                .define_name(sheet, name, refers_to, scope)
+                .map_err(map_err)
+        }
+
+        /// Delete a defined name (formulas using it read `#NAME?`).
+        pub fn delete_name(
+            &mut self,
+            sheet: u16,
+            name: &str,
+            scope: Option<u16>,
+        ) -> Result<(), JsValue> {
+            self.session
+                .delete_name(sheet, name, scope)
+                .map_err(map_err)
+        }
+
+        /// `[{name, scope?, refersTo}]` — the workbook's defined names.
+        pub fn list_names(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.list_names())
+        }
+
         /// Resolve a range argument (A1, `Sheet!A1:B2`, a defined name or a
         /// table name) as seen from `sheet`: `{sheet, range}` (range in A1).
         pub fn resolve_range(&self, sheet: u16, text: &str) -> Result<JsValue, JsValue> {
