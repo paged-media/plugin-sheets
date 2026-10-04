@@ -2,7 +2,7 @@
 # see math.yaml, PLUS `returns_array: true` — these kernels return a 2-D
 # block through dispatch_rich (the scalar dispatch door returns #VALUE!).
 # Rust kernels under sheet-fn/src/families/array.rs (the M1 array track).
-# All rows status: planned. Provenance: public Microsoft dynamic-array
+# All rows status: implemented. Provenance: public Microsoft dynamic-array
 # function docs.
 
 - id: sheet.fn.array.sequence
