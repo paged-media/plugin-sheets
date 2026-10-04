@@ -62,10 +62,7 @@ pub fn compile_names(model: &mut SheetModel) {
             NameScope::Sheet(s) => s,
             NameScope::Workbook => 0,
         };
-        let ctx = crate::ModelParseCtx {
-            model,
-            current,
-        };
+        let ctx = crate::ModelParseCtx { model, current };
         let text = text.trim_start_matches('=');
         out.push((id, parse(&strip_storage_prefixes(text), &ctx).ok()));
     }
@@ -100,8 +97,16 @@ fn has_relative(e: &Expr) -> bool {
 fn rebase_cell(c: CellRef, at: CellRef) -> CellRef {
     let wrap = |v: u32, d: u32, max: u32| ((v as u64 + d as u64) % (max as u64 + 1)) as u32;
     CellRef {
-        row: if c.row_abs { c.row } else { wrap(c.row, at.row, MAX_ROW) },
-        col: if c.col_abs { c.col } else { wrap(c.col, at.col, MAX_COL) },
+        row: if c.row_abs {
+            c.row
+        } else {
+            wrap(c.row, at.row, MAX_ROW)
+        },
+        col: if c.col_abs {
+            c.col
+        } else {
+            wrap(c.col, at.col, MAX_COL)
+        },
         ..c
     }
 }

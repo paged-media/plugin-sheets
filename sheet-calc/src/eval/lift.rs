@@ -52,8 +52,8 @@ use sheet_fn::{Arg, EvalCtx, FnResult};
 
 use super::{
     binary_values, build_args, deref_name, eval, eval_array_literal, eval_func_rich,
-    name_range_target, plan_args, ArgPlan,
-    resolve_structured_ref, spill_ref_range, spill_rect_to_range, unary_value, with_name_depth,
+    name_range_target, plan_args, resolve_structured_ref, spill_rect_to_range, spill_ref_range,
+    unary_value, with_name_depth, ArgPlan,
 };
 use crate::argview;
 use crate::spill::SpillState;
@@ -103,8 +103,10 @@ fn array_operand(model: &SheetModel, e: &Expr, depth: u32) -> bool {
             Some(r) => r.rows() > 1 || r.cols() > 1,
             None => {
                 depth < crate::names::MAX_NAME_DEPTH
-                    && crate::names::name_expr(model, *nid)
-                        .is_some_and(|inner| array_operand(model, inner, depth + 1) || contains_array(model, inner, depth + 1))
+                    && crate::names::name_expr(model, *nid).is_some_and(|inner| {
+                        array_operand(model, inner, depth + 1)
+                            || contains_array(model, inner, depth + 1)
+                    })
             }
         },
         _ => false,
@@ -162,12 +164,7 @@ fn range_block(model: &SheetModel, r: RangeRef) -> FnResult {
 
 /// Evaluate `e` in ARRAY context (operators and scalar functions over a
 /// range or array yield a block).
-pub fn eval_array(
-    model: &SheetModel,
-    e: &Expr,
-    ctx: &EvalCtx,
-    spills: &SpillState,
-) -> FnResult {
+pub fn eval_array(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillState) -> FnResult {
     match e {
         Expr::Range(r) => range_block(model, *r),
         Expr::StructuredRef(s) => match resolve_structured_ref(model, s, ctx) {
@@ -195,14 +192,18 @@ pub fn eval_array(
         Expr::Binary(op, a, b) if value_op(*op) => {
             let l = eval_array(model, a, ctx, spills);
             let r = eval_array(model, b, ctx, spills);
-            map_n(&[l, r], |vals| binary_values(*op, vals[0].clone(), vals[1].clone()))
+            map_n(&[l, r], |vals| {
+                binary_values(*op, vals[0].clone(), vals[1].clone())
+            })
         }
         Expr::Func(fid, args) if sheet_core::funcs::meta(*fid).returns_array => {
             eval_func_rich(model, *fid, args, ctx, spills)
         }
-        Expr::Func(fid, args) if liftable(*fid) && args.iter().any(|a| {
-            array_operand(model, a, 0) || contains_array(model, a, 0)
-        }) =>
+        Expr::Func(fid, args)
+            if liftable(*fid)
+                && args
+                    .iter()
+                    .any(|a| array_operand(model, a, 0) || contains_array(model, a, 0)) =>
         {
             let vals: Vec<FnResult> = args
                 .iter()
@@ -215,7 +216,8 @@ pub fn eval_array(
         }
         Expr::Func(fid, args)
             if scalar_params(*fid).iter().any(|&i| {
-                args.get(i).is_some_and(|a| array_operand(model, a, 0) || contains_array(model, a, 0))
+                args.get(i)
+                    .is_some_and(|a| array_operand(model, a, 0) || contains_array(model, a, 0))
             }) =>
         {
             // Lift over the scalar parameters only; the range parameters are
@@ -227,7 +229,9 @@ pub fn eval_array(
                 .collect();
             let mut plain: Vec<Expr> = args.to_vec();
             for &i in &lifted {
-                plain[i] = Expr::Lit(sheet_core::ast::LitValue::Number(sheet_core::ast::OrderedF64::new(0.0)));
+                plain[i] = Expr::Lit(sheet_core::ast::LitValue::Number(
+                    sheet_core::ast::OrderedF64::new(0.0),
+                ));
             }
             let (bufs, mut plans) = plan_args(model, *fid, &plain, ctx, spills);
             let vals: Vec<FnResult> = lifted

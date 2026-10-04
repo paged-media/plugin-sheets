@@ -269,7 +269,11 @@ fn decimal_digits(v: f64, decimals: usize) -> (String, String) {
     let sci = format!("{v:.14e}");
     let (mant, exp) = sci.split_once('e').expect("{:e} has an exponent");
     let exp: i64 = exp.parse().expect("integer exponent");
-    let d: Vec<u8> = mant.bytes().filter(u8::is_ascii_digit).map(|b| b - b'0').collect();
+    let d: Vec<u8> = mant
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .map(|b| b - b'0')
+        .collect();
     // v = 0.d1d2…d15 × 10^(exp+1); N = round(v × 10^decimals) has the
     // first `k` digits of d.
     let k = exp + 1 + decimals as i64;

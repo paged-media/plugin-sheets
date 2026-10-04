@@ -130,8 +130,7 @@ impl Printer<'_> {
         // (`(1/0,-100,-1000)` printed as `1/0,(-100,(-1000))` and did not
         // re-parse).
         let bare_union = matches!(e, Expr::Binary(BinOp::Union, _, _)) && parent != Prec::UNION;
-        let needs =
-            bare_union || prec < parent || (prec == parent && needs_assoc_paren(e, side));
+        let needs = bare_union || prec < parent || (prec == parent && needs_assoc_paren(e, side));
         if needs {
             out.push('(');
         }

@@ -65,9 +65,9 @@
 
 use sheet_core::ast::{BinOp, Expr, FuncId, StructuredRef, UnOp};
 use sheet_core::names::NameTarget;
-use std::borrow::Cow;
 use sheet_core::{CellError, CellRef, CellValue, RangeRef, SheetId, SheetModel, Table};
 use sheet_fn::{coerce, Arg, EvalCtx, FnResult};
+use std::borrow::Cow;
 
 use crate::argview::{self, RangeBuf};
 use crate::spill::SpillState;

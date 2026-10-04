@@ -98,7 +98,8 @@ fn walk(e: &Expr, set: &mut RefSet) {
             // ROW/ROWS/COLUMN/COLUMNS/AREAS read a reference's GEOMETRY, not
             // its values: a direct reference argument is no dependency (so
             // `=ROWS($B$1:B3)` in B3 is not a cycle — Excel agrees).
-            let geometry_only = matches!(meta.name, "ROW" | "ROWS" | "COLUMN" | "COLUMNS" | "AREAS");
+            let geometry_only =
+                matches!(meta.name, "ROW" | "ROWS" | "COLUMN" | "COLUMNS" | "AREAS");
             for a in args {
                 if geometry_only && matches!(a, Expr::Ref(_) | Expr::Range(_)) {
                     continue;

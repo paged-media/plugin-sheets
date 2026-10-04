@@ -94,7 +94,8 @@ fn pkg(
             zip.start_file(name, opts).unwrap();
             zip.write_all(body.as_bytes()).unwrap();
         };
-        const WS: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+        const WS: &str =
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
         let mut ct = String::from(
             r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>"#,
         );
@@ -117,8 +118,16 @@ fn pkg(
             r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
         );
         for (i, (name, _, _)) in sheets.iter().enumerate() {
-            wb += &format!(r#"<sheet name="{name}" sheetId="{}" r:id="rId{}"/>"#, i + 1, i + 1);
-            rels += &format!(r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{}.xml"/>"#, i + 1, i + 1);
+            wb += &format!(
+                r#"<sheet name="{name}" sheetId="{}" r:id="rId{}"/>"#,
+                i + 1,
+                i + 1
+            );
+            rels += &format!(
+                r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{}.xml"/>"#,
+                i + 1,
+                i + 1
+            );
         }
         wb += "</sheets>";
         if !defined.is_empty() {
@@ -134,7 +143,9 @@ fn pkg(
             for (j, (path, _, _, owner)) in parts.iter().enumerate() {
                 if *owner == i {
                     let target = path.trim_start_matches("xl/");
-                    srels += &format!(r#"<Relationship Id="rT{j}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../{target}"/>"#);
+                    srels += &format!(
+                        r#"<Relationship Id="rT{j}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../{target}"/>"#
+                    );
                     tparts += &format!(r#"<tablePart r:id="rT{j}"/>"#);
                 }
             }
@@ -145,12 +156,16 @@ fn pkg(
             };
             add(
                 &format!("xl/worksheets/sheet{}.xml", i + 1),
-                format!(r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>{data}</sheetData>{extra}{tp}</worksheet>"#),
+                format!(
+                    r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>{data}</sheetData>{extra}{tp}</worksheet>"#
+                ),
             );
             if !srels.is_empty() {
                 add(
                     &format!("xl/worksheets/_rels/sheet{}.xml.rels", i + 1),
-                    format!(r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{srels}</Relationships>"#),
+                    format!(
+                        r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{srels}</Relationships>"#
+                    ),
                 );
             }
         }
@@ -177,9 +192,21 @@ fn fml(r: u32, c: &str, f: &str) -> String {
 #[test]
 fn defined_names_with_formula_and_constant_targets_evaluate__feat__sheet_names_define() {
     let data = [
-        format!("<row r=\"1\">{}{}</row>", num(1, "A", 1.0), fml(1, "B", "Rate*2")),
-        format!("<row r=\"2\">{}{}</row>", num(2, "A", 2.0), fml(2, "B", "Total")),
-        format!("<row r=\"3\">{}{}</row>", num(3, "A", 3.0), fml(3, "B", "SUM(Dyn)")),
+        format!(
+            "<row r=\"1\">{}{}</row>",
+            num(1, "A", 1.0),
+            fml(1, "B", "Rate*2")
+        ),
+        format!(
+            "<row r=\"2\">{}{}</row>",
+            num(2, "A", 2.0),
+            fml(2, "B", "Total")
+        ),
+        format!(
+            "<row r=\"3\">{}{}</row>",
+            num(3, "A", 3.0),
+            fml(3, "B", "SUM(Dyn)")
+        ),
         format!("<row r=\"4\">{}</row>", fml(4, "B", "SUM(Arr)")),
         format!("<row r=\"5\">{}</row>", fml(5, "B", "Total+Rate+Local")),
         format!("<row r=\"6\">{}</row>", fml(6, "B", "Chain")),
@@ -194,7 +221,11 @@ fn defined_names_with_formula_and_constant_targets_evaluate__feat__sheet_names_d
     // and the name-of-a-name Chain.
     s.set_cell(0, 0, 0, "10").unwrap();
     let col_b: Vec<String> = (0..6).map(|r| s.get_cell_display(0, r, 1)).collect();
-    assert_eq!(col_b, ["1", "15", "15", "6", "22.5", "7.5"], "names after an edit");
+    assert_eq!(
+        col_b,
+        ["1", "15", "15", "6", "22.5", "7.5"],
+        "names after an edit"
+    );
 }
 
 /// A name defined in terms of itself must not overflow the stack.
@@ -213,8 +244,16 @@ fn self_referencing_defined_name_terminates__feat__sheet_names_define() {
 fn relative_defined_name_rebases_on_the_referring_cell__feat__sheet_names_define() {
     let data = [
         format!("<row r=\"1\">{}</row>", num(1, "A", 5.0)),
-        format!("<row r=\"2\">{}{}</row>", num(2, "A", 7.0), fml(2, "B", "Above*10")),
-        format!("<row r=\"3\">{}{}</row>", num(3, "A", 9.0), fml(3, "B", "Above+Same")),
+        format!(
+            "<row r=\"2\">{}{}</row>",
+            num(2, "A", 7.0),
+            fml(2, "B", "Above*10")
+        ),
+        format!(
+            "<row r=\"3\">{}{}</row>",
+            num(3, "A", 9.0),
+            fml(3, "B", "Above+Same")
+        ),
     ]
     .concat();
     let names = r#"<definedName name="Above">Sheet1!$A1048576</definedName><definedName name="Same">IF(TRUE,Sheet1!$A1)</definedName>"#;
@@ -235,7 +274,8 @@ fn relative_defined_name_rebases_on_the_referring_cell__feat__sheet_names_define
 fn geometry_functions_over_their_own_cell_are_not_cycles__feat__sheet_calc_engine() {
     let mut s = SheetSession::new();
     s.set_cell(0, 2, 1, "=ROWS($B$1:B3)").unwrap();
-    s.set_cell(0, 2, 2, "=COLUMNS(A3:C3)+ROW(C3)+COLUMN(C1:C9)").unwrap();
+    s.set_cell(0, 2, 2, "=COLUMNS(A3:C3)+ROW(C3)+COLUMN(C1:C9)")
+        .unwrap();
     assert_eq!(s.get_cell_display(0, 2, 1), "3");
     assert_eq!(s.get_cell_display(0, 2, 2), "9");
 }
@@ -246,18 +286,50 @@ const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadshee
 /// header row 1, body rows 2-4, totals row 5. Columns `Item`, `Unit Price`,
 /// `Qty`.
 fn items_workbook(formulas: &[(&str, &str)]) -> Vec<u8> {
-    let s = |r: u32, c: &str, t: &str| format!(r#"<c r="{c}{r}" t="inlineStr"><is><t>{t}</t></is></c>"#);
+    let s = |r: u32, c: &str, t: &str| {
+        format!(r#"<c r="{c}{r}" t="inlineStr"><is><t>{t}</t></is></c>"#)
+    };
     let mut rows = vec![
-        format!("<row r=\"1\">{}{}{}</row>", s(1, "A", "Item"), s(1, "B", "Unit Price"), s(1, "C", "Qty")),
-        format!("<row r=\"2\">{}{}{}</row>", s(2, "A", "pen"), num(2, "B", 2.0), num(2, "C", 3.0)),
-        format!("<row r=\"3\">{}{}{}</row>", s(3, "A", "ink"), num(3, "B", 5.0), num(3, "C", 1.0)),
-        format!("<row r=\"4\">{}{}{}</row>", s(4, "A", "pad"), num(4, "B", 4.0), num(4, "C", 2.0)),
-        format!("<row r=\"5\">{}{}</row>", s(5, "A", "Total"), num(5, "C", 6.0)),
+        format!(
+            "<row r=\"1\">{}{}{}</row>",
+            s(1, "A", "Item"),
+            s(1, "B", "Unit Price"),
+            s(1, "C", "Qty")
+        ),
+        format!(
+            "<row r=\"2\">{}{}{}</row>",
+            s(2, "A", "pen"),
+            num(2, "B", 2.0),
+            num(2, "C", 3.0)
+        ),
+        format!(
+            "<row r=\"3\">{}{}{}</row>",
+            s(3, "A", "ink"),
+            num(3, "B", 5.0),
+            num(3, "C", 1.0)
+        ),
+        format!(
+            "<row r=\"4\">{}{}{}</row>",
+            s(4, "A", "pad"),
+            num(4, "B", 4.0),
+            num(4, "C", 2.0)
+        ),
+        format!(
+            "<row r=\"5\">{}{}</row>",
+            s(5, "A", "Total"),
+            num(5, "C", 6.0)
+        ),
     ];
     // Formulas go in column E, one row each from row 1.
     for (i, (_, f)) in formulas.iter().enumerate() {
         let r = i as u32 + 1;
-        let cell = fml(r, "E", &f.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"));
+        let cell = fml(
+            r,
+            "E",
+            &f.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;"),
+        );
         if r <= 5 {
             rows[i] = rows[i].replace("</row>", &format!("{cell}</row>"));
         } else {
@@ -292,7 +364,9 @@ fn structured_references_resolve_like_excel__feat__sheet_table_structured() {
     // frozen TableArea has no combined area; none occur in the corpus.
     let want = ["6", "11", "11", "Qty", "6", "17", "5", "3", "3", "3"];
     let s = SheetSession::load_xlsx(&items_workbook(cases)).unwrap();
-    let got: Vec<String> = (0..cases.len() as u32).map(|r| s.get_cell_display(0, r, 4)).collect();
+    let got: Vec<String> = (0..cases.len() as u32)
+        .map(|r| s.get_cell_display(0, r, 4))
+        .collect();
     let wrong: Vec<String> = cases
         .iter()
         .zip(&got)
@@ -307,7 +381,9 @@ fn structured_references_resolve_like_excel__feat__sheet_table_structured() {
 /// column) intersect with the formula's own row.
 #[test]
 fn this_row_references_intersect_the_formula_row__feat__sheet_table_structured() {
-    let s = |r: u32, c: &str, t: &str| format!(r#"<c r="{c}{r}" t="inlineStr"><is><t>{t}</t></is></c>"#);
+    let s = |r: u32, c: &str, t: &str| {
+        format!(r#"<c r="{c}{r}" t="inlineStr"><is><t>{t}</t></is></c>"#)
+    };
     let mut rows = vec![format!(
         "<row r=\"1\">{}{}{}</row>",
         s(1, "A", "Unit Price"),
@@ -320,10 +396,19 @@ fn this_row_references_intersect_the_formula_row__feat__sheet_table_structured()
         } else {
             "[@[Unit Price]]*[@Qty]"
         };
-        rows.push(format!("<row r=\"{r}\">{}{}{}</row>", num(r, "A", p), num(r, "B", q), fml(r, "C", f)));
+        rows.push(format!(
+            "<row r=\"{r}\">{}{}{}</row>",
+            num(r, "A", p),
+            num(r, "B", q),
+            fml(r, "C", f)
+        ));
     }
     let table = r#"<?xml version="1.0"?><table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" displayName="Items" ref="A1:C3"><tableColumns count="3"><tableColumn id="1" name="Unit Price"/><tableColumn id="2" name="Qty"/><tableColumn id="3" name="Line"/></tableColumns></table>"#;
-    let bytes = pkg("", &[("Sheet1", &rows.concat(), "")], &[("xl/tables/table1.xml", table, TABLE_CT, 0)]);
+    let bytes = pkg(
+        "",
+        &[("Sheet1", &rows.concat(), "")],
+        &[("xl/tables/table1.xml", table, TABLE_CT, 0)],
+    );
     let s = SheetSession::load_xlsx(&bytes).unwrap();
     assert_eq!(s.get_cell_display(0, 1, 2), "6");
     assert_eq!(s.get_cell_display(0, 2, 2), "5");
@@ -377,8 +462,19 @@ fn legacy_array_formulas_fill_their_area__feat__sheet_calc_spill() {
             arr(1, "D", "D1:D4", "A1:A3*10", 0.0),
             arr(1, "E", "E1:E2", "SUM(A1:A3)", 0.0)
         ),
-        format!("<row r=\"2\">{}{}{}{}</row>", num(2, "A", 5.0), num(2, "B", 1.0), num(2, "D", 99.0), num(2, "E", 99.0)),
-        format!("<row r=\"3\">{}{}{}</row>", num(3, "A", 3.0), num(3, "B", 4.0), num(3, "D", 99.0)),
+        format!(
+            "<row r=\"2\">{}{}{}{}</row>",
+            num(2, "A", 5.0),
+            num(2, "B", 1.0),
+            num(2, "D", 99.0),
+            num(2, "E", 99.0)
+        ),
+        format!(
+            "<row r=\"3\">{}{}{}</row>",
+            num(3, "A", 3.0),
+            num(3, "B", 4.0),
+            num(3, "D", 99.0)
+        ),
         format!("<row r=\"4\">{}</row>", num(4, "D", 99.0)),
     ]
     .concat();
@@ -392,16 +488,27 @@ fn legacy_array_formulas_fill_their_area__feat__sheet_calc_spill() {
     let want = ["19", "10", "50", "30", "#N/A", "9", "9"];
     assert_eq!(look(&s), want, "after load");
     s.set_cell(0, 0, 0, "2").unwrap();
-    assert_eq!(look(&s), ["21", "20", "50", "30", "#N/A", "10", "10"], "after an edit");
+    assert_eq!(
+        look(&s),
+        ["21", "20", "50", "30", "#N/A", "10", "10"],
+        "after an edit"
+    );
     let bytes = s.save_xlsx().unwrap();
     let xml = {
         use std::io::Read;
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
         let mut x = String::new();
-        z.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut x).unwrap();
+        z.by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut x)
+            .unwrap();
         x
     };
     assert!(xml.contains(r#"<f t="array" ref="D1:D4">"#), "{xml}");
     let r = SheetSession::load_xlsx(&bytes).unwrap();
-    assert_eq!(look(&r), ["21", "20", "50", "30", "#N/A", "10", "10"], "after save + reload");
+    assert_eq!(
+        look(&r),
+        ["21", "20", "50", "30", "#N/A", "10", "10"],
+        "after save + reload"
+    );
 }

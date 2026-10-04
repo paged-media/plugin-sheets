@@ -336,7 +336,7 @@ impl DepGraph {
             for (&(row, col), cell) in ws.iter_cells() {
                 if let Some(fid) = cell.formula {
                     if let Some(f) = model.formula(fid) {
-                                                let cref = CellRef {
+                        let cref = CellRef {
                             sheet,
                             row,
                             col,

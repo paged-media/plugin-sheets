@@ -63,8 +63,16 @@ pub fn shift_formula_text(text: &str, drow: i64, dcol: i64) -> Option<String> {
         else {
             continue;
         };
-        let r = if row_abs { row as i64 } else { row as i64 + drow };
-        let c = if col_abs { col as i64 } else { col as i64 + dcol };
+        let r = if row_abs {
+            row as i64
+        } else {
+            row as i64 + drow
+        };
+        let c = if col_abs {
+            col as i64
+        } else {
+            col as i64 + dcol
+        };
         out.push_str(&text[last..t.span.start]);
         if (0..=MAX_ROW as i64).contains(&r) && (0..=MAX_COL as i64).contains(&c) {
             if col_abs {
@@ -93,12 +101,18 @@ mod tests {
         assert_eq!(s("B1*2", 1, 0).unwrap(), "B2*2");
         assert_eq!(s("$B1+B$1+$B$1", 2, 3).unwrap(), "$B3+E$1+$B$1");
         assert_eq!(s("SUM(A1:B2)", 0, 1).unwrap(), "SUM(B1:C2)");
-        assert_eq!(s("Sheet2!A1+'My Sheet'!C3", 1, 1).unwrap(), "Sheet2!B2+'My Sheet'!D4");
+        assert_eq!(
+            s("Sheet2!A1+'My Sheet'!C3", 1, 1).unwrap(),
+            "Sheet2!B2+'My Sheet'!D4"
+        );
     }
 
     #[test]
     fn strings_names_and_calls_are_kept() {
-        assert_eq!(s("IF(A1=\"B2\",LOG10(C3),Rate)", 1, 0).unwrap(), "IF(A2=\"B2\",LOG10(C4),Rate)");
+        assert_eq!(
+            s("IF(A1=\"B2\",LOG10(C3),Rate)", 1, 0).unwrap(),
+            "IF(A2=\"B2\",LOG10(C4),Rate)"
+        );
         assert_eq!(s("A1 + B1", 1, 0).unwrap(), "A2 + B2");
     }
 

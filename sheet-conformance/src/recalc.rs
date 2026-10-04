@@ -176,7 +176,9 @@ pub fn recalc_workbook(bytes: &[u8]) -> Result<Vec<CellOutcome>, String> {
     let cached: BTreeMap<(SheetId, u32, u32), CellValue> = texts
         .iter()
         .map(|(k, _)| {
-            let v = cell(&doc.model, *k).map(|c| c.value).unwrap_or(CellValue::Empty);
+            let v = cell(&doc.model, *k)
+                .map(|c| c.value)
+                .unwrap_or(CellValue::Empty);
             (*k, v)
         })
         .collect();
