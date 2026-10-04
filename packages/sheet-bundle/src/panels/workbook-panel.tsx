@@ -44,6 +44,7 @@ import type { FunctionEntry } from "../../../sheet-host-model/src";
 import type { FindMatch } from "../engine";
 import { DELIMITED_MIMES, importBytes, XLSX_MIME } from "../import-xlsx";
 import { columnLabel, type WorkbookSession } from "../session";
+import { FormatSection } from "./format-section";
 
 // ---------------------------------------------------------------- styles
 
@@ -156,10 +157,14 @@ export function makeWorkbookPanel(
     const [renameTo, setRenameTo] = useState("");
     const report = (r: { ok: true } | { ok: false; message: string }, done: string) =>
       setStructMsg(r.ok ? done : r.message);
+    // Wave 6 — header rows repeated at the top of every threaded frame.
+    const [headerRows, setHeaderRows] = useState(1);
     const onPaginate = useCallback(async () => {
-      const r = await session.paginateSelection();
+      const r = await session.paginateSelection({
+        repeatHeaderRows: Math.max(0, Math.floor(headerRows)),
+      });
       setStructMsg(r.ok ? "Paginated into the frame chain (live)." : r.message);
-    }, []);
+    }, [headerRows]);
 
     // Sort-range controls (thin glue — the engine owns the sort semantics;
     // sheet.plugin.sort.command). Key column is 1-based in the UI.
@@ -498,7 +503,26 @@ export function makeWorkbookPanel(
               >
                 Paginate into threaded frames
               </button>
+              <label
+                style={{ ...body, display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 6 }}
+                title="Rows repeated at the top of every frame of the chain"
+              >
+                Header rows
+                <input
+                  data-sheet-paginate-header-rows
+                  type="number"
+                  min={0}
+                  value={headerRows}
+                  onChange={(e) => setHeaderRows(Number(e.target.value))}
+                  style={{ ...input, width: 44 }}
+                />
+              </label>
             </div>
+
+            <FormatSection
+              session={session}
+              styles={{ kicker, body, input, button: secondaryButton, row }}
+            />
 
             {/* Sort range — thin controls over engine.sortRange (the
              *  values-only honest subset; a formula range refuses and the
