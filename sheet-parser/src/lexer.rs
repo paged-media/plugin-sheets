@@ -183,7 +183,10 @@ impl Lexer<'_> {
             // A leading `[` begins a no-table structured reference (`[@Col]`,
             // `[[#Headers],[Col]]`, `[Col]`) — anchored to the formula's own
             // table in eval (spec §6.4).
-            b'[' => self.lex_bare_structured(),
+            b'[' => match self.external_sheet_qual() {
+                Some(k) => Ok(k),
+                None => self.lex_bare_structured(),
+            },
             b',' => self.one(TokKind::Comma),
             b';' => self.one(TokKind::Semicolon),
             b':' => self.one(TokKind::Colon),
@@ -457,6 +460,32 @@ impl Lexer<'_> {
             ));
         }
         Ok(TokKind::Ident(tok.to_string()))
+    }
+
+    /// An external-workbook sheet qualifier `[n]Sheet!` (the unquoted form;
+    /// `'[n]Sheet name'!` arrives through the quoted path). The qualifier is
+    /// the sheet NAME `[n]Sheet`, resolved by the context like any sheet.
+    fn external_sheet_qual(&mut self) -> Option<TokKind> {
+        let b = self.bytes;
+        let mut j = self.pos + 1;
+        let digits = j;
+        while j < b.len() && b[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j == digits || b.get(j) != Some(&b']') {
+            return None;
+        }
+        j += 1;
+        let name = j;
+        while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'.') {
+            j += 1;
+        }
+        if j == name || b.get(j) != Some(&b'!') {
+            return None;
+        }
+        let q = self.src[self.pos..j].to_string();
+        self.pos = j + 1;
+        Some(TokKind::SheetQual(q))
     }
 
     /// A no-table structured reference whose body starts at the current `[`

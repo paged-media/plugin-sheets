@@ -58,7 +58,16 @@ pub struct SheetModel {
     pub strings: Interner<CompactString>,
     pub calc: CalcSettings,
     pub preserved: PreservedParts,
+    /// Read-only CACHED snapshots of referenced external workbooks' sheets
+    /// (`[1]Sheet1!A1`), named `[n]Sheet` and addressed by
+    /// [`EXTERNAL_SHEET_BASE`]` + index`. Never written, never listed, never
+    /// edited: they exist so a formula over another workbook evaluates from
+    /// the values Excel cached (the no-network ruling).
+    pub external_sheets: Vec<Worksheet>,
 }
+
+/// The first [`SheetId`] of [`SheetModel::external_sheets`].
+pub const EXTERNAL_SHEET_BASE: SheetId = 0xC000;
 
 // `StyleTable::default()` already seeds the defaults via `new()`, and
 // `CalcSettings` derives Excel defaults, so the derived `SheetModel` Default
@@ -76,6 +85,7 @@ impl SheetModel {
             strings: Interner::new(),
             calc: CalcSettings::default(),
             preserved: PreservedParts::default(),
+            external_sheets: Vec::new(),
         }
     }
 
@@ -90,6 +100,9 @@ impl SheetModel {
     }
 
     pub fn sheet(&self, id: SheetId) -> Option<&Worksheet> {
+        if id >= EXTERNAL_SHEET_BASE {
+            return self.external_sheets.get((id - EXTERNAL_SHEET_BASE) as usize);
+        }
         self.sheets.get(id as usize)
     }
 
@@ -100,6 +113,13 @@ impl SheetModel {
     /// Resolve a sheet name to its id. Case-insensitive (Excel sheet-name
     /// semantics); first match wins.
     pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
+        if name.starts_with('[') {
+            return self
+                .external_sheets
+                .iter()
+                .position(|s| s.name.eq_ignore_ascii_case(name))
+                .map(|i| EXTERNAL_SHEET_BASE + i as SheetId);
+        }
         self.sheets
             .iter()
             .position(|s| s.name.eq_ignore_ascii_case(name))

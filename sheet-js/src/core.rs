@@ -450,6 +450,36 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+/// The cached snapshots of referenced external workbooks as read-only
+/// shadow sheets named `[n]Sheet` (sheet_core::SheetModel::external_sheets):
+/// a formula over another workbook (`VLOOKUP(x,[1]Sheet1!$D$1:$I$9,2)`)
+/// parses and evaluates from Excel's cached values; nothing is ever fetched.
+fn external_sheets(links: &sheet_xlsx::ExternalLinks) -> Vec<sheet_core::Worksheet> {
+    let mut out = Vec::new();
+    for (i, book) in links.books.iter().enumerate() {
+        for (si, name) in book.sheet_names.iter().enumerate() {
+            let mut ws = sheet_core::Worksheet {
+                name: format!("[{}]{}", i + 1, name).into(),
+                ..Default::default()
+            };
+            for ((s, r, c), v) in &book.cells {
+                if *s == si as u32 {
+                    ws.cells.insert(
+                        (*r, *c),
+                        sheet_core::Cell {
+                            value: v.clone(),
+                            formula: None,
+                            style: sheet_core::StyleId(0),
+                        },
+                    );
+                }
+            }
+            out.push(ws);
+        }
+    }
+    out
+}
+
 impl SheetSession {
     /// The engine. Always present after construction (nothing takes it), so
     /// this `expect` states an invariant, not a hope.
@@ -518,6 +548,7 @@ impl SheetSession {
         };
         let mut doc = XlsxDocument::open(bytes).map_err(|e| SessionError(e.to_string()))?;
         let mut model = std::mem::take(&mut doc.model);
+        model.external_sheets = external_sheets(&doc.external_links);
 
         // Parse each captured formula text into an interned FormulaId on the
         // cell. xlsx formula text has NO leading '=' — parse it directly.
