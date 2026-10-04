@@ -58,7 +58,8 @@
 //!   Everything else — formulas, booleans, mixed lanes, `series = false` —
 //!   REPEATS the source cyclically, each formula re-addressed by the
 //!   distance from its source cell.
-//! - **Fill copies the source cells' formats** (Excel's default fill) — so a
+//! - **Fill writes in ONE `set_cells` batch** (one recalc) **and copies the
+//!   source cells' formats** (Excel's default fill) — so a
 //!   date series reads as dates. Undo restores the INPUTS (the journal's
 //!   grain); a format a fill brought along stays.
 

@@ -432,6 +432,77 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     });
   });
 
+  // COVERS: the fill handle (session.fillSelectionTo → engine.fillRange,
+  // Wave 5): the series is planned and written in Rust through one
+  // set_cells batch — one engine call, one recalc (sheet-js perf_budgets
+  // pins the inside), one undo group, then the filled range is selected.
+  it("fill a series down 998 rows under a SUM [sheet.edit.fill]", async () => {
+    const s = await open(
+      await authorWorkbook(2, 1, (r) => String(r + 1), [[1000, 0, "=SUM(A1:A1000)"]]),
+      "A1:A1001",
+    );
+    s.setGridSelection(0, 0, 2, 1);
+    resetWork();
+    const r = s.fillSelectionTo({ anchorRow: 0, anchorCol: 0, rows: 1000, cols: 1 });
+    expect(r).toEqual({ ok: true });
+    await s.flushPersist();
+    await settle();
+    const work = take("fill 998 rows");
+    const e = engineOf(s);
+    expect(e.getCellDisplay(0, 999, 0)).toBe("1000");
+    expect(e.getCellDisplay(0, 1000, 0)).toBe("500500");
+    expectBudget("fill 998 rows", work, {
+      "engine.fillRange": 1,
+      "engine.setGridSelection": 1,
+      "engine.saveXlsx": 1,
+      "blob.write": 1,
+      "parts.write": 2,
+      "storage.set": 1,
+      "supports": 2,
+      "=mutations": 0,
+      "=engineCalls": 3, // fillRange + the selection + the persist save
+      "=reads": 0,
+      "=bytesWritten": 18749,
+      "=sceneItems": 0,
+      "=rejected": 0,
+    });
+  });
+
+  // COVERS: Delete over a selection (session.clearSelection, Wave 5): every
+  // cell written "" in ONE setCells — its reply's priors say which cells
+  // held something, and only those journal (one undo group).
+  it("clear a 100×10 selection [sheet.edit.ops]", async () => {
+    const s = await open(
+      await authorWorkbook(100, 10, (r, c) => String(r * 10 + c), [[100, 0, "=SUM(A1:A100)"]]),
+      "A1:J101",
+    );
+    s.setGridSelection(0, 0, 100, 10);
+    resetWork();
+    expect(s.clearSelection()).toEqual({ ok: true });
+    await s.flushPersist();
+    await settle();
+    const work = take("clear 100x10");
+    const e = engineOf(s);
+    expect(e.getCellDisplay(0, 50, 5)).toBe("");
+    expect(e.getCellDisplay(0, 100, 0)).toBe("0");
+    expect(s.undoCellEdit()).toBe(true);
+    expect(e.getCellDisplay(0, 50, 5)).toBe("505");
+    expectBudget("clear 100x10", work, {
+      "engine.setCells": 1,
+      "engine.saveXlsx": 1,
+      "blob.write": 1,
+      "parts.write": 2,
+      "storage.set": 1,
+      "supports": 2,
+      "=mutations": 0,
+      "=engineCalls": 2, // one setCells + the persist save
+      "=reads": 0,
+      "=bytesWritten": 7355,
+      "=sceneItems": 0,
+      "=rejected": 0,
+    });
+  });
+
   // COVERS: live re-pagination (lower.ts subscribeChainReflow →
   // paginatePass). Wave 4: a burst of content-box reflows (a resize drag)
   // settles into ONE re-pagination, and that pass REFRESHES the chain's own
