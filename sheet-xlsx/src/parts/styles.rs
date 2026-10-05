@@ -56,18 +56,24 @@
 //! ## Colour resolution (spec §8.3, documented rulings)
 //!
 //! - `rgb="AARRGGBB"` — the leading alpha byte is dropped → `#RRGGBB`.
-//! - `indexed="N"` — the legacy 56-entry palette (ECMA-376 §18.8.27,
-//!   "Color (Indexed Colors)"); we ship the standard table
-//!   [`indexed_color`]. Indices 64/65 (system foreground/background) have no
+//! - `indexed="N"` — the workbook's own palette (`<colors><indexedColors>`)
+//!   when it has one, else the legacy 56-entry table (ECMA-376 §18.8.27,
+//!   [`indexed_color`]). Indices 64/65 (system foreground/background) have no
 //!   fixed RGB → resolved to `None` (fall through to the document default).
-//! - `theme="N"` — the document theme palette is in `theme1.xml`, which T0
-//!   does not parse; we map the SIX common slots Excel writes by convention
-//!   ([`theme_color`], documented as a best-effort default) and leave the
-//!   rest `None`. A real theme parse is later-tier (flagged in the registry).
+//! - `theme="N"` — the workbook's theme part (`/theme` relationship, parsed
+//!   by [`crate::parts::theme::ThemePalette`]) when the loader passes one
+//!   ([`parse_with_colors`]); without a theme part, the SIX common slots of
+//!   the Office default ([`theme_color`], best effort) and `None` beyond.
+//! - `tint` — applied to whatever the reference resolved to
+//!   ([`crate::parts::theme::apply_tint`]).
 //! - `auto="1"` / nothing → `None` (the document default colour wins).
+//!
+//! The same [`ColorContext`] resolves `get_style`'s report, so the page
+//! lowering and the format panel agree on every colour (round 2).
 
 use crate::error::XlsxError;
 use crate::opc::attr;
+use crate::parts::theme::{apply_tint, ThemePalette};
 use sheet_core::style::{CellStyle, StyleTable};
 use sheet_core::StyleId;
 use std::collections::BTreeMap;
@@ -131,12 +137,11 @@ pub fn indexed_color(idx: u32) -> Option<&'static str> {
     PALETTE.get(idx as usize).copied()
 }
 
-/// Best-effort theme-colour resolution (spec §8.3 documented fallback). The
-/// real palette lives in `xl/theme/theme1.xml`, which T0 does not parse; we
-/// map the six slots Excel writes by convention (the Office default theme).
-/// Slots beyond these (accent colours etc.) resolve to `None` so the
-/// document default colour wins rather than guessing. A theme1.xml parse is
-/// later-tier (registry: `sheet.style.xlsx-visual-parse` note).
+/// Best-effort theme-colour fallback for a package WITHOUT a readable theme
+/// part (the real palette is read by [`ColorContext`] from the workbook's
+/// `/theme` relationship). Maps the six slots of the Office default theme;
+/// slots beyond these resolve to `None` so the document default colour wins
+/// rather than guessing.
 pub fn theme_color(idx: u32) -> Option<&'static str> {
     Some(match idx {
         0 => "#FFFFFF", // dk1 / lt1 ordering varies; 0/1 are the text/bg pair
@@ -288,7 +293,18 @@ pub struct ParsedStyles {
 /// building the [`VisualStyles`] side table from the font/fill/border
 /// sub-tables.
 pub fn parse(xml: &[u8], styles: &mut StyleTable) -> Result<ParsedStyles, XlsxError> {
-    let parsed = parse_raw(xml)?;
+    parse_with_colors(xml, styles, &ColorContext::new(xml, None))
+}
+
+/// [`parse`] with the workbook's colour context (its theme part's scheme and
+/// the styles' `<indexedColors>`): what the loader and a style edit use, so
+/// the visual side table carries the document's real colours.
+pub fn parse_with_colors(
+    xml: &[u8],
+    styles: &mut StyleTable,
+    colors: &ColorContext,
+) -> Result<ParsedStyles, XlsxError> {
+    let parsed = parse_raw(xml, colors)?;
 
     // Derive the workbook display locale from the FIRST custom numFmt code that
     // carries a `[$…-LCID]` token resolving to a non-en locale (ruling
@@ -532,25 +548,110 @@ struct XfRow {
     wrap: bool,
 }
 
-/// Resolve a colour element's attributes (`rgb`/`indexed`/`theme`/`auto`) to
-/// `#RRGGBB`, or `None` (the document default). See the module docs for the
-/// per-attribute rulings.
-fn resolve_color(e: &quick_xml::events::BytesStart<'_>) -> Result<Option<String>, XlsxError> {
-    if let Some(rgb) = attr(e, b"rgb")? {
-        return Ok(normalize_rgb(&rgb));
-    }
-    if let Some(indexed) = attr(e, b"indexed")? {
-        if let Ok(i) = indexed.parse::<u32>() {
-            return Ok(indexed_color(i).map(str::to_owned));
+/// What a colour reference resolves against: the workbook theme's scheme
+/// and the workbook's own indexed palette (`<colors><indexedColors>`, which
+/// overrides the legacy default table when present). One context serves the
+/// page lowering ([`parse_with_colors`]) and the style report
+/// (`XlsxDocument::describe_style`).
+#[derive(Clone, Debug, Default)]
+pub struct ColorContext {
+    theme: Option<ThemePalette>,
+    /// The workbook's palette, in index order (`None` = an unreadable entry).
+    indexed: Vec<Option<String>>,
+}
+
+/// The attributes of one `<color>`-shaped element.
+#[derive(Default)]
+pub(crate) struct ColorAttrs {
+    pub auto: Option<String>,
+    pub rgb: Option<String>,
+    pub indexed: Option<String>,
+    pub theme: Option<String>,
+    pub tint: Option<String>,
+}
+
+impl ColorContext {
+    /// The context of a styles part (`styles_xml`'s `<indexedColors>`) under
+    /// a theme (`None` = the package has no readable theme part).
+    pub fn new(styles_xml: &[u8], theme: Option<ThemePalette>) -> ColorContext {
+        ColorContext {
+            theme,
+            indexed: scan_indexed_colors(styles_xml),
         }
     }
-    if let Some(theme) = attr(e, b"theme")? {
-        if let Ok(t) = theme.parse::<u32>() {
-            return Ok(theme_color(t).map(str::to_owned));
+
+    /// Resolve a colour reference to `#RRGGBB`: `rgb` (alpha dropped), else
+    /// `indexed`, else `theme`, then its `tint`. `auto` / nothing / an
+    /// unknown slot → `None` (the document default).
+    pub(crate) fn resolve(&self, a: &ColorAttrs) -> Option<String> {
+        if a.auto.as_deref().is_some_and(|v| v == "1" || v == "true") {
+            return None;
+        }
+        let base = if let Some(rgb) = &a.rgb {
+            normalize_rgb(rgb)?
+        } else if let Some(i) = a.indexed.as_deref().and_then(|v| v.parse::<usize>().ok()) {
+            match self.indexed.get(i) {
+                Some(c) => c.clone()?,
+                None => indexed_color(i as u32)?.to_string(),
+            }
+        } else if let Some(t) = a.theme.as_deref().and_then(|v| v.parse::<u32>().ok()) {
+            match self.theme.as_ref().and_then(|p| p.color(t)) {
+                Some(c) => c.to_string(),
+                None => theme_color(t)?.to_string(),
+            }
+        } else {
+            return None;
+        };
+        match a.tint.as_deref().and_then(|v| v.parse::<f64>().ok()) {
+            Some(tint) => Some(apply_tint(&base, tint)),
+            None => Some(base),
         }
     }
-    // `auto="1"` or an empty <color/> → no explicit colour.
-    Ok(None)
+}
+
+/// The `<colors><indexedColors><rgbColor rgb/>` palette of a styles part
+/// (empty when it has none, or the part is unreadable).
+fn scan_indexed_colors(xml: &[u8]) -> Vec<Option<String>> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut buf = Vec::new();
+    let mut out = Vec::new();
+    let mut inside = false;
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) if e.local_name().as_ref() == b"indexedColors" => inside = true,
+            Ok(Event::End(e)) if e.local_name().as_ref() == b"indexedColors" => break,
+            Ok(Event::Start(e) | Event::Empty(e))
+                if inside && e.local_name().as_ref() == b"rgbColor" =>
+            {
+                out.push(
+                    attr(&e, b"rgb")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| normalize_rgb(&v)),
+                );
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
+/// Resolve a colour element (`rgb`/`indexed`/`theme`/`tint`/`auto`) against
+/// the workbook's [`ColorContext`]. See the module docs for the rulings.
+fn resolve_color(
+    e: &quick_xml::events::BytesStart<'_>,
+    ctx: &ColorContext,
+) -> Result<Option<String>, XlsxError> {
+    Ok(ctx.resolve(&ColorAttrs {
+        auto: attr(e, b"auto")?,
+        rgb: attr(e, b"rgb")?,
+        indexed: attr(e, b"indexed")?,
+        theme: attr(e, b"theme")?,
+        tint: attr(e, b"tint")?,
+    }))
 }
 
 /// Normalize an xlsx `rgb` attribute (`AARRGGBB` or `RRGGBB`) to `#RRGGBB`.
@@ -572,7 +673,7 @@ fn normalize_rgb(rgb: &str) -> Option<String> {
 /// The pure XML walk: bytes -> [`RawStyles`]. Streamed with quick-xml so a
 /// nested `<patternFill><fgColor/></patternFill>` and the empty-tag
 /// `<b/>`/`<i/>` forms are both handled.
-fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
+fn parse_raw(xml: &[u8], colors: &ColorContext) -> Result<RawStyles, XlsxError> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -641,7 +742,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     // `<color>` with children is rare but legal; treat as empty.
                     b"color" if cur_font.is_some() => {
                         if let Some(f) = cur_font.as_mut() {
-                            f.color = resolve_color(&e)?;
+                            f.color = resolve_color(&e, colors)?;
                         }
                     }
                     b"xf" if in_cell_xfs => xfs.push(read_xf(&e)?),
@@ -653,7 +754,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                         cur_edge = Some(edge);
                     }
                     b"color" if cur_edge.is_some() => {
-                        set_edge_color(&mut cur_border, cur_edge, &e)?
+                        set_edge_color(&mut cur_border, cur_edge, &e, colors)?
                     }
                     b"alignment" if in_cell_xfs => read_alignment(&e, xfs.last_mut())?,
                     b"u" if cur_font.is_some() => set_underline(&mut cur_font, &e)?,
@@ -679,7 +780,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     }
                     b"color" if cur_font.is_some() => {
                         if let Some(f) = cur_font.as_mut() {
-                            f.color = resolve_color(&e)?;
+                            f.color = resolve_color(&e, colors)?;
                         }
                     }
                     // Fill: an empty solid patternFill has no fgColor child.
@@ -689,7 +790,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     }
                     b"fgColor" if cur_fill.is_some() && fill_is_solid => {
                         if let Some(fill) = cur_fill.as_mut() {
-                            fill.fg_rgb = resolve_color(&e)?;
+                            fill.fg_rgb = resolve_color(&e, colors)?;
                         }
                     }
                     // A dxf solid fill carries its colour in <bgColor> (the
@@ -698,7 +799,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     b"bgColor" if cur_fill.is_some() && cur_dxf.is_some() => {
                         if let Some(fill) = cur_fill.as_mut() {
                             if fill.fg_rgb.is_none() {
-                                fill.fg_rgb = resolve_color(&e)?;
+                                fill.fg_rgb = resolve_color(&e, colors)?;
                             }
                         }
                     }
@@ -718,7 +819,7 @@ fn parse_raw(xml: &[u8]) -> Result<RawStyles, XlsxError> {
                     }
                     b"xf" if in_cell_xfs => xfs.push(read_xf(&e)?),
                     b"color" if cur_edge.is_some() => {
-                        set_edge_color(&mut cur_border, cur_edge, &e)?
+                        set_edge_color(&mut cur_border, cur_edge, &e, colors)?
                     }
                     b"alignment" if in_cell_xfs => read_alignment(&e, xfs.last_mut())?,
                     b"u" if cur_font.is_some() => set_underline(&mut cur_font, &e)?,
@@ -816,8 +917,9 @@ fn set_edge_color(
     cur: &mut Option<BorderRec>,
     edge: Option<Edge>,
     e: &quick_xml::events::BytesStart<'_>,
+    colors: &ColorContext,
 ) -> Result<(), XlsxError> {
-    let rgb = resolve_color(e)?;
+    let rgb = resolve_color(e, colors)?;
     if let (Some(b), Some(edge)) = (cur.as_mut(), edge) {
         if let Some(line) = edge_line(b, edge).as_mut() {
             line.rgb = rgb;
