@@ -63,6 +63,9 @@ interface Doors66 {
   /** Whether a one-batch placement with table handles applied (true) or
    *  was refused (false) on this host. */
   tableHandles?: boolean;
+  /** Whether the host answered `supports("document.onWillSave@1")` — asked
+   *  once, when a session registers its will-save listener. */
+  willSave?: boolean;
 }
 const known = new WeakMap<object, Doors66>();
 
@@ -109,7 +112,9 @@ export function onWillSave(
   host: BundleHost,
   listener: (e: WillSaveEvent) => void | Promise<void>,
 ): Disposable | null {
-  if (typeof host.supports !== "function" || !host.supports("document.onWillSave@1")) return null;
+  const supported = typeof host.supports === "function" && host.supports("document.onWillSave@1");
+  doors66(host).willSave = supported;
+  if (!supported) return null;
   const door = (host.document as unknown as {
     onWillSave?: (l: (e: WillSaveEvent) => void | Promise<void>) => Disposable;
   }).onWillSave;
@@ -123,18 +128,15 @@ export function onWillSave(
  *  refused attempt is not free on a 0.64 engine (rolling back the batch's
  *  `insertTextFrame` leaves its story behind in the model), so it is sent
  *  only on POSITIVE evidence of a 66 host — a 66 door it answered (the will-
- *  save door, `minted` on an outcome, `storyId` on a frame's geometry) —
+ *  save door a session probed, `minted` on an outcome, `storyId` on a
+ *  frame's geometry; all remembered, so deciding costs no call) —
  *  and never again on a host that refused one. The placement reads its
  *  ids from `minted`, so a host known not to send it is excluded too. */
 export function tableHandlesLikely(host: BundleHost): boolean {
   const d = doors66(host);
   if (d.tableHandles !== undefined) return d.tableHandles;
   if (d.minted === false) return false;
-  return (
-    d.minted === true ||
-    d.geometryStoryId === true ||
-    (typeof host.supports === "function" && host.supports("document.onWillSave@1"))
-  );
+  return d.minted === true || d.geometryStoryId === true || d.willSave === true;
 }
 
 /** The story of a text-frame geometry item (66), or undefined. */

@@ -74,6 +74,7 @@ import {
   replaceLoweredTable,
   selectionAnchor,
   storyOfFrame,
+  tableUnderFrame,
   subscribeChainReflow,
   type ChainSubscription,
   type LoweredTableInfo,
@@ -2112,9 +2113,19 @@ export function createWorkbookSession(
       if (!binding || !rec) continue;
       const sheet = sheets.find((x) => x.name === binding.data.sheet);
       if (!sheet) continue;
-      if (doors66(host).geometryStoryId !== false) {
-        const story = await storyOfFrame(host, frameId);
-        if (story !== null && story !== rec.storyId) continue;
+      let ids: { storyId: string; tableId: string } | null;
+      if (rec.storyId !== undefined && rec.tableId !== undefined) {
+        ids = { storyId: rec.storyId, tableId: rec.tableId };
+        if (doors66(host).geometryStoryId !== false) {
+          const story = await storyOfFrame(host, frameId);
+          if (story !== null && story !== ids.storyId) continue;
+        }
+      } else {
+        // Placed in one batch (66): the binding could not name the ids —
+        // read them off the page (the frame's own table, so a duplicated
+        // frame finds its copy).
+        ids = await tableUnderFrame(host, frameId, rec.widths);
+        if (!ids) continue;
       }
       let now: LoweredContent;
       try {
@@ -2126,8 +2137,8 @@ export function createWorkbookSession(
       if (!current) stale = true;
       loweredTables.set(frameId, {
         frameId,
-        storyId: rec.storyId,
-        tableId: rec.tableId,
+        storyId: ids.storyId,
+        tableId: ids.tableId,
         sheet: sheet.id,
         range: binding.data.range,
         content: current ? now : undefined,

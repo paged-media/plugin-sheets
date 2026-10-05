@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
 
 import { createHeadlessHost, type HeadlessHost } from "@paged-media/plugin-sdk";
-import type { BundleHost, ClipboardPayload } from "@paged-media/plugin-api";
+import type { BundleHost, ClipboardPayload, ElementId } from "@paged-media/plugin-api";
 
 import { sheetBundle } from "../../src";
 
@@ -300,6 +300,84 @@ export function withDoors66(
   return new Proxy(host, {
     get(o, p, r) {
       if (p === "document") return document;
+      return Reflect.get(o, p, r);
+    },
+  });
+}
+
+/** A protocol-66 host over the real 0.64 core, for the ONE-CALL placement
+ *  (core 0eff96b resolves `$h:t`, bound to an `insertTable`, in a
+ *  `tableId` / `table_id` position to the table; 0.64 does not, and the
+ *  pins stay at 0.2.37 until 66 is published).
+ *
+ *  It answers `supports("document.onWillSave@1")` (the 66 signal the bundle
+ *  keys the one-call placement on) and sends `minted`. A batch that binds a
+ *  table handle is applied in two engine batches: the head up to the
+ *  `insertTable`, then the rest with `$h:t` rewritten the way 66 core does
+ *  (`storyId` / `story_id` → the table's story, `tableId` / `table_id` →
+ *  the table). The CALLER still makes one `mutate` — what the budget counts.
+ *  Not emulated: atomicity across the split and the single undo step. */
+export function withTableHandles66(h: HeadlessHost, host: BundleHost): BundleHost {
+  const client = (h.host as unknown as {
+    editor: { client: { mutate(m: unknown): Promise<{ kind: string; payload: Record<string, unknown> }> } };
+  }).editor.client;
+  type Op = { op: string; args: Record<string, unknown> };
+  const outcome = (reply: { kind: string; payload: Record<string, unknown> }) =>
+    reply.kind === "mutationApplied"
+      ? {
+          applied: true as const,
+          createdId: (reply.payload.createdId ?? null) as ElementId | null,
+          pageIds: reply.payload.pageIds,
+          minted: (reply.payload.minted ?? []) as { handle: string | null; element: ElementId; storyId: string | null }[],
+        }
+      : { applied: false as const, error: reply.payload ?? reply };
+  const rewrite = (v: unknown, key: string | null, story: string, table: string): unknown => {
+    if (typeof v === "string" && v === "$h:t") {
+      if (key === "storyId" || key === "story_id") return story;
+      if (key === "tableId" || key === "table_id") return table;
+      return v;
+    }
+    if (Array.isArray(v)) return v.map((x) => rewrite(x, null, story, table));
+    if (v && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v).map(([k, x]) => [k, rewrite(x, k, story, table)]),
+      );
+    }
+    return v;
+  };
+  const mutate = async (m: { op: string; args: { ops?: Op[] } }) => {
+    const ops = m.op === "batch" ? (m.args.ops ?? []) : [];
+    const at = ops.findIndex((o) => o.op === "bindCreated" && o.args.handle === "t");
+    if (at < 1 || ops[at - 1].op !== "insertTable") return outcome(await client.mutate(m));
+    const head = outcome(await client.mutate({ op: "batch", args: { ops: ops.slice(0, at) } }));
+    if (!head.applied) return head;
+    const t = head.createdId;
+    if (t?.kind !== "table") return { applied: false as const, error: "no table minted" };
+    const { story_id: story, table_id: table } = t.id;
+    const minted = [
+      ...head.minted.filter((x) => x.element.kind !== "table"),
+      { handle: "t", element: t, storyId: story },
+    ];
+    const rest = ops.slice(at + 1).map((o) => rewrite(o, null, story, table));
+    if (rest.length > 0) {
+      const tail = outcome(await client.mutate({ op: "batch", args: { ops: rest } }));
+      if (!tail.applied) return tail;
+      minted.push(...tail.minted);
+    }
+    return { applied: true as const, createdId: minted[minted.length - 1].element, pageIds: [], minted };
+  };
+  const document = new Proxy(host.document, {
+    get(o, p, r) {
+      if (p === "mutate") return mutate;
+      return Reflect.get(o, p, r);
+    },
+  });
+  return new Proxy(host, {
+    get(o, p, r) {
+      if (p === "document") return document;
+      if (p === "supports") {
+        return (f: string) => f === "document.onWillSave@1" || host.supports(f);
+      }
       return Reflect.get(o, p, r);
     },
   });

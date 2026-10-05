@@ -36,6 +36,8 @@
 //       scoped setElementProperty) and the cell text styles.
 //     A host that refuses the first batch gets the PHASED placement (frame
 //     batch, insertTable, content batch).
+//     On a protocol-66 host (core resolves a table handle in a `tableId`
+//     position) both batches are ONE: see `placeInOneCall`.
 //
 //   tab-text (EXPLICIT FALLBACK, spec §2.2 degradation) — the retained
 //     two-phase lane (lower-to-mutations.ts): frame + drawn rules +
@@ -96,6 +98,7 @@ import {
   isUnknownVariant,
   mintedElements,
   noteMinted,
+  tableHandlesLikely,
 } from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
 
@@ -566,6 +569,17 @@ export async function lowerSelectionToFrame(
   // so they are measured BEFORE anything is written.
   const columnWidths = await measureColumnWidths(host, content);
 
+  if (tableHandlesLikely(host)) {
+    const one = await placeInOneCall(host, content, pageId, placement, columnWidths, {
+      ...opts,
+      sheet,
+      range,
+      contentVersion,
+      sheetName,
+    });
+    if (one !== REFUSED) return one;
+  }
+
   // ONE batch: the frame, its binding and the native table (C-15 handles,
   // core v0.64: `$h:f` in the table's `storyId` position is the story the
   // frame insert minted). The batch reports the LAST id minted — the
@@ -665,6 +679,156 @@ export async function lowerSelectionToFrame(
 
 /** The within-batch handle the placement names its frame by. */
 const FRAME_HANDLE = "f";
+/** The within-batch handle the one-call placement names its table by. */
+const TABLE_HANDLE = "t";
+
+/** {@link placeInOneCall}'s "the host refused the batch" — nothing landed;
+ *  the caller places the two-batch way. */
+const REFUSED = Symbol("refused");
+
+/**
+ * The whole placement as ONE `mutate` (protocol 66): the frame, its binding,
+ * the native table, the cell pour, the decor, the data bars and the cell
+ * text styles. The content addresses the table by its handle — `$h:t` in a
+ * `storyId` position is the table's story, in a `tableId` / `table_id`
+ * position the table itself (core 0eff96b) — and the frame, table and bars
+ * the batch minted come back in the outcome's `minted` list. One build, one
+ * undo step, one round trip (it was two).
+ *
+ * The binding cannot name the table's ids: they do not exist when the batch
+ * is sent, and a handle inside a metadata VALUE is content, never an
+ * address. It carries the record without them ({@link TableRecord}); this
+ * session knows them from `minted`, a later one reads them off the page.
+ *
+ * A refusal rolls the batch back whole; it is remembered for the host (the
+ * next placement goes the two-batch way at once) and reported as
+ * {@link REFUSED}.
+ */
+async function placeInOneCall(
+  host: BundleHost,
+  content: LoweredContent,
+  pageId: PageId,
+  placement: Placement,
+  columnWidths: number[],
+  opts: LowerLaneOptions & {
+    sheet: number;
+    range: string;
+    contentVersion: number;
+    sheetName: string;
+  },
+): Promise<string | null | typeof REFUSED> {
+  const { sheet, range, contentVersion, sheetName } = opts;
+  const table = `$h:${TABLE_HANDLE}`;
+  const { ops, styleOps } = await tableContentOps(host, content, table, table);
+  const origin: [number, number] = [placement.bounds[0], placement.bounds[1]];
+  const drawn = await barOps(host, content, { pageId, origin, widths: columnWidths });
+  const binding = makeBinding(sheetName, range, contentVersion, {
+    hash: contentHash(content),
+    widths: [...columnWidths],
+  });
+  const r = await host.document.mutate({
+    op: "batch",
+    args: {
+      ops: [
+        { op: "insertTextFrame", args: { pageId, bounds: placement.bounds } },
+        { op: "bindCreated", args: { handle: FRAME_HANDLE } },
+        {
+          op: "setPluginMetadata",
+          args: {
+            elementId: { kind: "textFrame", id: `$h:${FRAME_HANDLE}` },
+            key: BINDING_KEY,
+            value: JSON.stringify(binding),
+          },
+        },
+        tableInsertOp(content, `$h:${FRAME_HANDLE}`, columnWidths),
+        { op: "bindCreated", args: { handle: TABLE_HANDLE } },
+        ...ops,
+        ...drawn,
+        ...styleOps,
+      ],
+    },
+  });
+  const doors = doors66(host);
+  if (!r.applied) {
+    doors.tableHandles = false;
+    host.log.debug("lower: one-call placement refused — two-batch placement", r);
+    return REFUSED;
+  }
+  doors.tableHandles = true;
+  // By handle, else by kind: the batch mints exactly one text frame and one
+  // table (a batch's `minted` may carry every handle null).
+  const minted = noteMinted(host, r) ?? [];
+  const frame = (
+    minted.find((m) => m.handle === FRAME_HANDLE) ??
+    minted.find((m) => m.element.kind === "textFrame")
+  )?.element;
+  const created = (
+    minted.find((m) => m.handle === TABLE_HANDLE) ??
+    minted.find((m) => m.element.kind === "table")
+  )?.element;
+  const frameId = frame ? frameIdOf(frame) : null;
+  if (!frameId || created?.kind !== "table") {
+    // Applied — the table stands — but the reply does not name it. Never
+    // place a second one over it.
+    host.log.warn("lower: one-call placement applied without naming its frame and table", r);
+    return frameId;
+  }
+  const storyId = created.id.story_id;
+  const tableId = created.id.table_id;
+  const barIds = drawn.length > 0 ? minted.map((m) => m.element).filter(isPolygon) : [];
+  opts.onLowered?.({
+    frameId,
+    storyId,
+    tableId,
+    sheet,
+    range,
+    pageId,
+    content,
+    columnWidths,
+    contentVersion,
+    barIds,
+  });
+  if (opts.select !== false) await host.selection.set([{ kind: "textFrame", id: frameId }]);
+  return frameId;
+}
+
+/** The story and table a placed frame shows, read off the PAGE: a hit test
+ *  down the frame's first column until it lands in a table cell (the table
+ *  starts below the frame's top inset and any line above it). For a table
+ *  whose binding carries no ids ({@link placeInOneCall}). Null when no probe
+ *  lands in a cell of this frame. Reads only. */
+export async function tableUnderFrame(
+  host: BundleHost,
+  frameId: string,
+  widths: readonly number[],
+): Promise<{ storyId: string; tableId: string } | null> {
+  let g: Awaited<ReturnType<BundleHost["document"]["elementGeometry"]>>[number] | undefined;
+  try {
+    [g] = await host.document.elementGeometry([{ kind: "textFrame", id: frameId }]);
+  } catch (err) {
+    host.log.debug("tableUnderFrame: geometry read failed", err);
+    return null;
+  }
+  if (!g?.pageId) return null;
+  const [top, left, bottom] = g.bounds;
+  const [a, b, c, d, tx, ty] = g.itemTransform ?? [1, 0, 0, 1, 0, 0];
+  const x = left + Math.min(3, (widths[0] ?? 6) / 2);
+  for (let y = top + 2, n = 0; y < bottom && n < TABLE_PROBES; y += 4, n += 1) {
+    let hit: Awaited<ReturnType<BundleHost["document"]["hitTest"]>>;
+    try {
+      hit = await host.document.hitTest(g.pageId, [a * x + c * y + tx, b * x + d * y + ty], "text");
+    } catch {
+      return null;
+    }
+    if (hit && hit.frameId === frameId && hit.storyId && hit.tableContext) {
+      return { storyId: hit.storyId, tableId: hit.tableContext.tableId };
+    }
+  }
+  return null;
+}
+
+/** How many points down a frame {@link tableUnderFrame} tries (4 pt apart). */
+const TABLE_PROBES = 24;
 
 /** The PHASED native placement — the shape before in-batch handles, kept
  *  for a host that refuses the one-batch placement: (1) the frame + its
