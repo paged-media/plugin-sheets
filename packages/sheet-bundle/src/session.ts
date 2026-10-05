@@ -83,7 +83,7 @@ import {
   lowerChartToFrame,
   type PlacedChart,
 } from "./lower-chart";
-import { doors66 } from "./protocol66";
+import { doors66, onWillSave } from "./protocol66";
 import { readWorkbookPart, writeWorkbookPart } from "./workbook-part";
 import {
   advance,
@@ -1947,6 +1947,14 @@ export function createWorkbookSession(
     }
     return enqueueWrite(bytes, state.fileName ?? "workbook.xlsx");
   }
+
+  // A .paged save takes the workbook part as it stands; an edit still in the
+  // debounce window would miss it. Where the host has the will-save door
+  // (protocol 66) the save waits for the pending write first. Without it,
+  // the debounce, the flush on frame exit and the flush on dispose remain.
+  const willSaveSub = onWillSave(host, () =>
+    flushPersist().catch((err) => host.log.warn("workbook persist before save failed", err)),
+  );
 
   /** Wave 4 — after a burst of edits, refresh what this session placed. */
   function scheduleRefresh(): void {
@@ -3877,6 +3885,7 @@ export function createWorkbookSession(
 
     dispose() {
       historySub?.dispose();
+      willSaveSub?.dispose();
       forgetPlacements();
       // Flush unsaved edits BEFORE the engine is freed: the bytes are
       // taken synchronously here; the write finishes in the background.
