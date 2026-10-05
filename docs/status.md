@@ -20,9 +20,11 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
   asks for it; `NOW` and `TODAY` follow the host clock. Number formats render in five display
   locales. Expected values are recorded from Excel and replayed in CI: 1,470 of 1,485 function
   cases and 148 of 164 number-format cases agree, every disagreement a recorded ruling.
-  Recalculating real workbooks reproduces Excel's saved value in 92% of comparable formula cells
-  (55,765 of 60,580 over 201 workbooks): shared formulas, defined names of every kind, structured
-  references, legacy array formulas and element-wise array arguments evaluate as Excel does.
+  Recalculating real workbooks reproduces Excel's saved value in 93.6% of comparable formula
+  cells (56,533 of 60,419 over 201 workbooks): shared formulas, defined names of every kind,
+  structured references (including `[#Headers],[#Data]` and `[#Data],[#Totals]`), whole-column
+  and whole-row references, omitted arguments, legacy array formulas and element-wise array
+  arguments evaluate as Excel does.
 - **Workbook panel.** Sheets (add, rename, delete), a range, placement on the page, sort (formula
   cells move with their row), find and replace, charts, cell styles, a Format & Layout section
   (number format, font, fill, borders, alignment, wrap, merge, column width, row height, freeze,
@@ -74,14 +76,15 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 - **Rediscovery** finds tables placed by this version; a table placed before the binding
   carried its table record is not found again. Charts and paginated chains are not
   rediscovered.
-- **Colours.** `getStyle` resolves theme and indexed colours through the theme part and the
-  workbook palette; the page lowering still resolves theme colours with a six-slot default.
+- **Colours.** `getStyle` and the page lowering resolve theme and indexed colours through the
+  theme part and the workbook palette; conditional-format colour-scale stops still use the
+  default Office theme.
 - **One workbook** is stored at a time; importing another replaces it.
 - **Filter views** hide rows from the page lowering; they are not written into the xlsx and no
   panel calls them yet.
 - **Formulas** are the Excel en-US dialect only. On load, a formula the parser does not read
-  keeps its cached value: an unregistered function, a whole-column or whole-row reference
-  (`A:A`), an omitted argument (`F(a,,b)`), an external defined name or DDE item (`[1]!Name`).
+  keeps its cached value: an unregistered function, an external defined name or DDE item
+  (`[1]!Name`).
   `TREND` fits one regressor only. A typed date is stored as text.
 - **Locale.** The display locale is taken from the workbook's number formats on load.
 - **Saving an edited sheet** drops unknown attributes on its rows and cells and unknown elements
