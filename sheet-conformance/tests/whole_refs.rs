@@ -101,12 +101,39 @@ fn whole_column_aggregates_and_lookups__feat__sheet_calc_engine() {
         ("=COUNTIF(A:A,\">2\")", n(3.0)),
         ("=SUMIF(B:B,\"c\",A:A)", n(3.0)),
         ("=COUNTBLANK(A:A)", n(1_048_571.0)),
+        // Blank-matching criteria count / select the rows below the data.
+        ("=COUNTIF(A:A,\"\")", n(1_048_571.0)),
+        ("=COUNTIF(A:A,\"<>\")", n(5.0)),
+        // Approximate lookups over a whole column floor within the data, not
+        // on the blank rows below it.
+        ("=VLOOKUP(3.5,A:B,2)", CellValue::from("c")),
+        ("=VLOOKUP(99,A:B,2,TRUE)", CellValue::from("e")),
+        ("=MATCH(3.5,A:A)", n(3.0)),
+        (
+            "=MATCH(\"zz\",B:B,0)",
+            CellValue::Error(sheet_core::CellError::Na),
+        ),
     ];
     for (i, (f, want)) in cases.iter().enumerate() {
         e.enter(0, 20 + i as u32, 5, f)
             .unwrap_or_else(|err| panic!("{f}: {err:?}"));
         assert_eq!(val(&e, 0, 20 + i as u32, 5), *want, "{f}");
     }
+}
+
+#[test]
+fn blank_criteria_reach_targets_below_the_criteria_data__feat__sheet_calc_engine() {
+    let mut e = seeded();
+    // H holds values in rows where A is blank (and one where it is not).
+    e.enter(0, 2, 7, "100").unwrap();
+    e.enter(0, 40, 7, "7").unwrap();
+    e.enter(0, 900, 7, "3").unwrap();
+    e.enter(0, 0, 5, "=SUMIF(A:A,\"\",H:H)").unwrap();
+    e.enter(0, 1, 5, "=AVERAGEIF(A:A,\"\",H:H)").unwrap();
+    e.enter(0, 2, 5, "=SUMIF(A:A,\">=3\",H:H)").unwrap();
+    assert_eq!(val(&e, 0, 0, 5), n(10.0));
+    assert_eq!(val(&e, 0, 1, 5), n(5.0));
+    assert_eq!(val(&e, 0, 2, 5), n(100.0));
 }
 
 #[test]

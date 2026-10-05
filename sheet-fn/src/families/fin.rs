@@ -159,7 +159,7 @@ fn collect_flows(args: &[Arg], out: &mut Vec<f64>) -> Result<(), CellError> {
         match arg {
             Arg::Scalar(v) => out.push(coerce::to_number(v)?),
             Arg::Range(r) => {
-                for cell in r.iter() {
+                for cell in r.iter_live() {
                     match &cell {
                         CellValue::Error(e) => return Err(*e),
                         CellValue::Number(n) => out.push(*n),

@@ -150,7 +150,7 @@ where
                 }
             }
             Arg::Range(r) => {
-                for cell in r.iter() {
+                for cell in r.iter_live() {
                     match &cell {
                         // Error cells in a range propagate (aggregation rule).
                         CellValue::Error(e) => return Err(*e),
@@ -200,7 +200,7 @@ pub fn product(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
                 Err(e) => return CellValue::Error(e),
             },
             Arg::Range(r) => {
-                for cell in r.iter() {
+                for cell in r.iter_live() {
                     match &cell {
                         CellValue::Error(e) => return CellValue::Error(*e),
                         CellValue::Number(n) => {

@@ -227,7 +227,7 @@ fn fold_range(
     op: fn(bool, bool) -> bool,
 ) -> Result<bool, CellError> {
     let mut found = false;
-    for cell in rv.iter() {
+    for cell in rv.iter_live() {
         match cell {
             // Errors inside a range propagate (Excel: an error cell poisons
             // the aggregation).

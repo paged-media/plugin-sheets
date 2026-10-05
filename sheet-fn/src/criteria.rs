@@ -78,7 +78,13 @@ enum Kind {
     TextCmp { op: Op, rhs: CompactString },
     /// Equality/inequality against a wildcard text matcher. `negate` is set
     /// for `<>pattern`.
-    TextMatch { matcher: Matcher, negate: bool },
+    TextMatch {
+        matcher: Matcher,
+        negate: bool,
+        /// The operand is empty (`"="` / `"<>"`): the criterion is about
+        /// BLANK cells — `"="` selects them, `"<>"` everything else.
+        blank: bool,
+    },
     /// Bare value with no operator: number↔text equality, and (for text)
     /// wildcard matching.
     BareEq {
@@ -141,6 +147,7 @@ pub fn parse_criteria(v: &CellValue) -> Criteria {
                 Criteria(Kind::TextMatch {
                     matcher: Matcher::compile(rest),
                     negate: op == Op::Ne,
+                    blank: rest.is_empty(),
                 })
             }
         }
@@ -174,7 +181,16 @@ pub fn matches(c: &Criteria, candidate: &CellValue) -> bool {
             let cand = coerce::to_text(candidate);
             apply_text_op(*op, cand.as_str(), rhs.as_str())
         }
-        Kind::TextMatch { matcher, negate } => {
+        Kind::TextMatch {
+            matcher,
+            negate,
+            blank,
+        } => {
+            // `"="` matches a blank cell and `"<>"` does not (Excel: COUNTIF
+            // with "<>" counts the non-blank cells).
+            if *blank && candidate.is_blank() {
+                return !*negate;
+            }
             // A wildcard/text PATTERN matches TEXT cells only — Excel's `*`/`?`
             // never match numbers, bools, or blanks (audit finding 3). A
             // non-text candidate fails the pattern; under `<>` the negation

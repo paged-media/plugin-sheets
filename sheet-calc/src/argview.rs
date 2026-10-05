@@ -76,13 +76,20 @@ pub struct RangeBuf<'m> {
     rows: u32,
     cols: u32,
     get: Getter<'m>,
+    /// Relative rows `[lo, hi)` that may hold a value (the populated rows
+    /// clipped to the window); `None` for an owned block.
+    live: Option<(u32, u32)>,
 }
 
 impl<'m> RangeBuf<'m> {
     /// Lend a [`sheet_fn::RangeView`] over this range. The view borrows the
     /// buffer for as long as the returned value lives.
     pub fn view(&self) -> sheet_fn::RangeView<'_> {
-        sheet_fn::RangeView::from_fn(self.origin, self.rows, self.cols, &*self.get)
+        let v = sheet_fn::RangeView::from_fn(self.origin, self.rows, self.cols, &*self.get);
+        match self.live {
+            Some((lo, hi)) => v.with_live_rows(lo, hi),
+            None => v,
+        }
     }
 
     /// Geometry accessors (used by `ROW`/`COLUMN` materialization in eval).
@@ -121,6 +128,7 @@ impl<'m> RangeBuf<'m> {
             rows,
             cols,
             get,
+            live: None,
         }
     }
 }
@@ -184,11 +192,20 @@ fn window<'m>(
         }
         cell.value.clone()
     });
+    // The window's live rows: the populated rows clipped to it, relative.
+    let rows = n.rows();
+    let live = match bounds {
+        Some((lo, hi)) if hi >= row0 && lo <= row0.saturating_add(rows - 1) => {
+            Some((lo.saturating_sub(row0), (hi - row0 + 1).min(rows)))
+        }
+        _ => Some((0, 0)),
+    };
     RangeBuf {
         origin: n.start,
-        rows: n.rows(),
+        rows,
         cols: n.cols(),
         get,
+        live,
     }
 }
 

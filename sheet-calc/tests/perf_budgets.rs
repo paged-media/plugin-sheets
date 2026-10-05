@@ -392,7 +392,7 @@ fn perf_whole_column_sum_edit__feat__sheet_calc_engine() {
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
             cells_read: 10_000,
-            cells_visited: 1_048_576, // every row of the column, blanks below the data included
+            cells_visited: 10_000, // the populated rows (was 1 048 576: the kernel scanned the whole column)
             evaluations: 1,
             recalcs: 1,
             recalc_passes: 1,

@@ -48,6 +48,13 @@
 //! either fully materialized ([`RangeView::from_slice`]) or as a lazy
 //! getter ([`RangeView::from_fn`]); kernels read it through the same
 //! [`RangeView::get`] / [`RangeView::iter`] regardless of backing.
+//!
+//! **Amendment (round 2, 2026-10-05) — live rows.** A view may carry the
+//! relative row span outside of which every cell is guaranteed blank
+//! ([`RangeView::with_live_rows`], set by `sheet-calc` from the sheet's
+//! populated rows). Kernels that skip blanks scan [`RangeView::iter_live`]
+//! instead of [`RangeView::iter`], so a whole-column `SUM(A:A)` costs the
+//! populated rows, not 1 048 576. Geometry (`rows`/`cols`) is unchanged.
 
 use sheet_core::{CellRef, CellValue};
 
@@ -80,6 +87,9 @@ pub struct RangeView<'a> {
     cols: u32,
     origin: CellRef,
     backing: Backing<'a>,
+    /// Relative rows `[lo, hi)` that may hold a value; every cell outside is
+    /// blank. `None` = unknown (all rows may).
+    live: Option<(u32, u32)>,
 }
 
 impl<'a> RangeView<'a> {
@@ -97,6 +107,7 @@ impl<'a> RangeView<'a> {
             cols,
             origin,
             backing: Backing::Slice(cells),
+            live: None,
         }
     }
 
@@ -115,7 +126,40 @@ impl<'a> RangeView<'a> {
             cols,
             origin,
             backing: Backing::Fn(get),
+            live: None,
         }
+    }
+
+    /// Declare that every cell outside relative rows `[lo, hi)` is blank
+    /// (clamped to the view; `lo >= hi` = no row holds a value). A promise
+    /// the caller must keep: kernels skip those rows unread.
+    pub fn with_live_rows(mut self, lo: u32, hi: u32) -> Self {
+        let hi = hi.min(self.rows);
+        self.live = Some((lo.min(hi), hi));
+        self
+    }
+
+    /// The relative rows that may hold a value (every row when unknown).
+    pub fn live_rows(&self) -> std::ops::Range<u32> {
+        match self.live {
+            Some((lo, hi)) => lo..hi,
+            None => 0..self.rows,
+        }
+    }
+
+    /// How many cells lie OUTSIDE [`RangeView::live_rows`] — all blank.
+    pub fn blank_cells_outside_live(&self) -> u64 {
+        let live = self.live_rows();
+        u64::from(self.rows - (live.end - live.start)) * u64::from(self.cols)
+    }
+
+    /// Row-major iterator over the cells of [`RangeView::live_rows`] only —
+    /// [`RangeView::iter`] minus cells known to be blank. For kernels that
+    /// skip blanks (SUM, COUNT, MAX, …), where the result is identical.
+    pub fn iter_live(&self) -> impl Iterator<Item = CellValue> + '_ {
+        let cols = self.cols;
+        self.live_rows()
+            .flat_map(move |r| (0..cols).map(move |c| self.get(r, c)))
     }
 
     /// Row count of the window.
@@ -219,6 +263,33 @@ mod tests {
                 CellValue::Text(CompactString::new("e")),
                 CellValue::Text(CompactString::new("f")),
             ]
+        );
+    }
+
+    #[test]
+    fn live_rows_bound_the_scan_not_the_geometry() {
+        let get = |r: u32, _c: u32| {
+            if (3..5).contains(&r) {
+                CellValue::Number(f64::from(r))
+            } else {
+                CellValue::Empty
+            }
+        };
+        let v = RangeView::from_fn(cr(0, 0), 1_000, 2, &get).with_live_rows(3, 5);
+        assert_eq!(v.rows(), 1_000);
+        assert_eq!(v.live_rows(), 3..5);
+        assert_eq!(v.iter_live().count(), 4);
+        assert_eq!(v.blank_cells_outside_live(), 1_996);
+        // Without the promise every row is live.
+        let w = RangeView::from_fn(cr(0, 0), 7, 2, &get);
+        assert_eq!(w.live_rows(), 0..7);
+        assert_eq!(w.blank_cells_outside_live(), 0);
+        // An empty span and a span past the end clamp.
+        assert_eq!(
+            RangeView::from_fn(cr(0, 0), 7, 1, &get)
+                .with_live_rows(9, 12)
+                .live_rows(),
+            7..7
         );
     }
 

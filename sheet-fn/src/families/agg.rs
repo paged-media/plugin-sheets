@@ -84,7 +84,7 @@ fn collect_numbers(args: &[Arg], acc: &mut Vec<f64>) -> Option<CellError> {
                 Err(e) => return Some(e),
             },
             Arg::Range(view) => {
-                for cell in view.iter() {
+                for cell in view.iter_live() {
                     match cell {
                         CellValue::Number(n) => acc.push(n),
                         CellValue::Error(e) => return Some(e),
@@ -169,7 +169,7 @@ pub fn count(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
             }
             // Range: numeric cells only (bool/text inside a range excluded).
             Arg::Range(view) => {
-                for cell in view.iter() {
+                for cell in view.iter_live() {
                     if matches!(cell, CellValue::Number(_)) {
                         n += 1;
                     }
@@ -194,7 +194,7 @@ pub fn counta(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
             // arrives as an Empty range cell, is skipped.)
             Arg::Scalar(_) => n += 1,
             Arg::Range(view) => {
-                for cell in view.iter() {
+                for cell in view.iter_live() {
                     if !cell.is_blank() {
                         n += 1;
                     }
@@ -212,7 +212,9 @@ pub fn counta(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
 pub fn countblank(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
     let mut n = 0u64;
     if let Some(Arg::Range(view)) = args.first() {
-        for cell in view.iter() {
+        // The rows outside the view's live span are blank by promise.
+        n += view.blank_cells_outside_live();
+        for cell in view.iter_live() {
             if cell.is_blank() {
                 n += 1;
             }
@@ -237,6 +239,13 @@ pub fn countif(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
         None => return CellValue::Error(CellError::Value),
     };
     let mut n = 0u64;
+    // Cells outside a range's live rows are blank: count them in one step
+    // when a blank satisfies the criterion (`COUNTIF(A:A, "")`).
+    if let Some(Arg::Range(view)) = args.first() {
+        if criteria::matches(&crit, &CellValue::Empty) {
+            n += view.blank_cells_outside_live();
+        }
+    }
     for_each_range_cell(args.first(), |cell| {
         if criteria::matches(&crit, &cell) {
             n += 1;
@@ -273,7 +282,7 @@ pub fn sumif(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
     let (rows, cols) = crit_view.as_ref().map_or((0, 0), |v| (v.rows(), v.cols()));
 
     let mut sum = F64::from_f64(0.0);
-    for r in 0..rows {
+    for r in criteria_scan_rows(&crit, crit_view, sum_view, rows) {
         for c in 0..cols {
             let cand = crit_view.as_ref().map_or(CellValue::Empty, |v| v.get(r, c));
             if !criteria::matches(&crit, &cand) {
@@ -322,7 +331,11 @@ pub fn averageif(args: &[Arg], _ctx: &crate::ctx::EvalCtx) -> CellValue {
     };
     let mut sum = F64::from_f64(0.0);
     let mut n = 0u64;
-    for r in 0..rows {
+    let scan = match crit_view {
+        Some(_) => criteria_scan_rows(&crit, crit_view, avg_view, rows),
+        None => 0..rows,
+    };
+    for r in scan {
         for c in 0..cols {
             let cand = at(crit_view, crit_arg, r, c);
             if !criteria::matches(&crit, &cand) {
@@ -362,12 +375,40 @@ fn as_view<'a, 'b>(arg: Option<&'a Arg<'b>>) -> Option<&'a RangeView<'b>> {
 /// the range/scalar cases without materializing.
 fn for_each_range_cell(arg: Option<&Arg>, mut f: impl FnMut(CellValue)) {
     match arg {
+        // Live rows only: the caller accounts for the blank rest itself.
         Some(Arg::Range(view)) => {
-            for cell in view.iter() {
+            for cell in view.iter_live() {
                 f(cell);
             }
         }
         Some(Arg::Scalar(v)) => f(v.clone()),
         None => {}
     }
+}
+
+/// The rows an offset-aligned criteria scan (`SUMIF`, `AVERAGEIF`) must
+/// visit: the criteria range's live rows — widened to the target range's
+/// live rows when a BLANK satisfies the criterion, since a blank criteria
+/// cell can then select a non-blank target. Outside the result every
+/// criteria cell is blank and either fails the criterion or selects a blank
+/// target, which contributes nothing.
+fn criteria_scan_rows(
+    crit: &criteria::Criteria,
+    crit_view: Option<&RangeView>,
+    target: Option<&RangeView>,
+    rows: u32,
+) -> std::ops::Range<u32> {
+    let live = |v: Option<&RangeView>| v.map_or(0..rows, |v| v.live_rows());
+    let c = live(crit_view);
+    if !criteria::matches(crit, &CellValue::Empty) {
+        return c;
+    }
+    let t = live(target);
+    let (lo, hi) = match (c.is_empty(), t.is_empty()) {
+        (true, true) => (0, 0),
+        (true, false) => (t.start, t.end),
+        (false, true) => (c.start, c.end),
+        (false, false) => (c.start.min(t.start), c.end.max(t.end)),
+    };
+    lo.min(rows)..hi.min(rows)
 }
