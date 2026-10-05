@@ -304,14 +304,28 @@ fn set_area(
     a: TableArea,
     span: &std::ops::Range<usize>,
 ) -> Result<(), ParseError> {
-    if slot.is_some() {
-        return Err(ParseError::new(
-            "structured reference has more than one #-area specifier",
-            span.clone(),
-        ));
-    }
-    *slot = Some(a);
+    *slot = Some(match *slot {
+        None => a,
+        Some(prev) => combine_areas(prev, a).ok_or_else(|| {
+            ParseError::new(
+                "structured reference has an unsupported #-area combination \
+                 (only [#Headers],[#Data] and [#Data],[#Totals])",
+                span.clone(),
+            )
+        })?,
+    });
     Ok(())
+}
+
+/// The two-area specifiers Excel accepts, in either order: `[#Headers],[#Data]`
+/// and `[#Data],[#Totals]`. Every other pair (including a repeat) is refused.
+fn combine_areas(a: TableArea, b: TableArea) -> Option<TableArea> {
+    use TableArea::*;
+    match (a, b) {
+        (Headers, Data) | (Data, Headers) => Some(HeadersData),
+        (Data, Totals) | (Totals, Data) => Some(DataTotals),
+        _ => None,
+    }
 }
 
 /// From the LEFT side of a span: an optional area keyword plus exactly one
@@ -320,31 +334,12 @@ fn take_area_and_one_col(
     items: Vec<Item>,
     span: &std::ops::Range<usize>,
 ) -> Result<(TableArea, CompactString), ParseError> {
-    let mut area = TableArea::Data;
-    let mut area_set = false;
+    let mut area: Option<TableArea> = None;
     let mut col: Option<CompactString> = None;
     for it in items {
         match it {
-            Item::Area(a) => {
-                if area_set {
-                    return Err(ParseError::new(
-                        "structured reference has more than one #-area specifier",
-                        span.clone(),
-                    ));
-                }
-                area = a;
-                area_set = true;
-            }
-            Item::ThisRow => {
-                if area_set {
-                    return Err(ParseError::new(
-                        "structured reference has more than one #-area specifier",
-                        span.clone(),
-                    ));
-                }
-                area = TableArea::ThisRow;
-                area_set = true;
-            }
+            Item::Area(a) => set_area(&mut area, a, span)?,
+            Item::ThisRow => set_area(&mut area, TableArea::ThisRow, span)?,
             Item::Column(c) => {
                 if col.is_some() {
                     return Err(ParseError::new(
@@ -357,7 +352,7 @@ fn take_area_and_one_col(
         }
     }
     match col {
-        Some(c) => Ok((area, c)),
+        Some(c) => Ok((area.unwrap_or(TableArea::Data), c)),
         None => Err(ParseError::new(
             "structured reference span is missing its first column",
             span.clone(),

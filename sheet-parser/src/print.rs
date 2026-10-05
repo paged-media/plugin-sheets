@@ -247,6 +247,9 @@ impl Printer<'_> {
             TableArea::Headers => Some("#Headers"),
             TableArea::Totals => Some("#Totals"),
             TableArea::ThisRow => Some("#This Row"),
+            // The two-area forms print both items: `[#Headers],[#Data]`.
+            TableArea::HeadersData => Some("#Headers],[#Data"),
+            TableArea::DataTotals => Some("#Data],[#Totals"),
         };
 
         match (area_tok, &s.col_start, &s.col_end) {

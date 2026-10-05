@@ -388,6 +388,36 @@ fn structured_ref_forms_parse_and_print() {
 }
 
 #[test]
+fn structured_ref_two_area_specifiers__feat__sheet_table_structured() {
+    use sheet_core::ast::TableArea;
+    // The two combinations Excel accepts are fixpoints in Excel's order.
+    for s in [
+        "Table1[[#Headers],[#Data]]",
+        "Table1[[#Data],[#Totals]]",
+        "Table1[[#Headers],[#Data],[Region]]",
+        "Table1[[#Data],[#Totals],[Region]:[Total]]",
+    ] {
+        assert_eq!(roundtrip(s), s, "two-area fixpoint for {s}");
+    }
+    // Either order is the same area.
+    let area = |s: &str| match p(s).root {
+        Expr::StructuredRef(r) => r.area,
+        e => panic!("not a structured ref: {e:?}"),
+    };
+    assert_eq!(area("T[[#Data],[#Headers],[A]]"), TableArea::HeadersData);
+    assert_eq!(area("T[[#Totals],[#Data]]"), TableArea::DataTotals);
+    // Every other pair is refused, as Excel refuses it.
+    for bad in [
+        "T[[#Headers],[#Totals]]",
+        "T[[#All],[#Data]]",
+        "T[[#Data],[#Data]]",
+        "T[[#This Row],[#Data]]",
+    ] {
+        assert!(parse(bad, &Ctx::new()).is_err(), "{bad} should not parse");
+    }
+}
+
+#[test]
 fn structured_ref_column_with_spaces_and_escapes() {
     use sheet_core::ast::{StructuredRef, TableArea};
     // A column name with spaces survives (it must be bracketed).

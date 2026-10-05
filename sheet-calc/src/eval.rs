@@ -281,6 +281,20 @@ pub(crate) fn resolve_structured_at(
             (full.end.row, full.end.row)
         }
         TableArea::Data => data_body_rows(&full, header_rows, totals_rows)?,
+        // The two-area forms extend the body by the edge row; a table without
+        // that edge is `#REF!`, as the single `[#Headers]`/`[#Totals]` is.
+        TableArea::HeadersData => {
+            if !table.header_row {
+                return Err(CellError::Ref);
+            }
+            (full.start.row, full.end.row - totals_rows)
+        }
+        TableArea::DataTotals => {
+            if !table.totals_row {
+                return Err(CellError::Ref);
+            }
+            (full.start.row + header_rows, full.end.row)
+        }
         TableArea::ThisRow => {
             let (d0, d1) = data_body_rows(&full, header_rows, totals_rows)?;
             let cur = current.row;
