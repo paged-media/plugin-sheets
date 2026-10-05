@@ -102,8 +102,9 @@ fn perf_sort_1k_rows_with_sum__feat__sheet_edit_ops() {
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
             cells_read: 1_000, // the column ONCE (was 1 000 000: once per moved cell)
-            evaluations: 1,    // the SUM once (was 1 000)
-            recalcs: 1,        // one batch (was 1 000: one per moved cell)
+            cells_visited: 1_000,
+            evaluations: 1, // the SUM once (was 1 000)
+            recalcs: 1,     // one batch (was 1 000: one per moved cell)
             recalc_passes: 1,
             cells_marked_dirty: 1,
         },
@@ -140,6 +141,7 @@ fn perf_paste_100x10_under_totals__feat__sheet_edit_ops() {
             precedent_candidates_scanned: 1_000,
             ranges_materialized: 1_000,
             cells_read: 100_000,
+            cells_visited: 100_000,
             evaluations: 1_000, // each total once per cell in its column — batched → 10
             recalcs: 1_000,     // one per pasted cell — batched → 1
             recalc_passes: 1_000,
@@ -184,8 +186,9 @@ fn perf_paste_100x10_batched__feat__sheet_edit_ops() {
             precedent_candidates_scanned: 10,
             ranges_materialized: 10,
             cells_read: 1_000, // each column once (per-cell lane: 100 000)
-            evaluations: 10,   // each total once (per-cell lane: 1 000)
-            recalcs: 1,        // per-cell lane: 1 000
+            cells_visited: 1_000,
+            evaluations: 10, // each total once (per-cell lane: 1 000)
+            recalcs: 1,      // per-cell lane: 1 000
             recalc_passes: 1,
             cells_marked_dirty: 10,
         },
@@ -260,8 +263,9 @@ fn perf_replace_500_under_sum__feat__sheet_edit_ops() {
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
             cells_read: 500, // the column once (was 250 000)
-            evaluations: 1,  // was 500
-            recalcs: 1,      // one batch (was 500: one per replaced cell)
+            cells_visited: 500,
+            evaluations: 1, // was 500
+            recalcs: 1,     // one batch (was 500: one per replaced cell)
             recalc_passes: 1,
             cells_marked_dirty: 1,
         },
@@ -294,6 +298,7 @@ fn perf_save_then_edit__feat__sheet_xlsx_roundtrip() {
             precedent_candidates_scanned: 0,
             ranges_materialized: 0,
             cells_read: 0,
+            cells_visited: 0,
             evaluations: 0, // was 500: the save rebuilt the engine all-dirty
             recalcs: 1,
             recalc_passes: 0,      // nothing dirty — the recalc drains an empty cut
@@ -336,6 +341,7 @@ fn perf_fill_series_1k_under_sum__feat__sheet_edit_ops() {
             precedent_candidates_scanned: 1,
             ranges_materialized: 1,
             cells_read: 1_000, // the total once (per-cell lane: one read of A1:A1000 per cell)
+            cells_visited: 1_000,
             evaluations: 1,
             recalcs: 1, // one batch (per-cell lane: 998)
             recalc_passes: 1,

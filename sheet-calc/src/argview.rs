@@ -158,8 +158,10 @@ fn window<'m>(
     let bounds = ws.and_then(populated_rows);
     let get: Getter<'m> = Box::new(move |r: u32, c: u32| -> CellValue {
         let (Some(ws), Some((lo, hi))) = (ws, bounds) else {
+            perf_count!(cells_visited, 1);
             return CellValue::Empty;
         };
+        perf_count!(cells_visited, 1);
         let (row, col) = (row0.saturating_add(r), col0.saturating_add(c));
         if row < lo || row > hi {
             return CellValue::Empty;

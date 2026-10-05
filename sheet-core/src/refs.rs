@@ -268,6 +268,29 @@ impl RangeRef {
         let n = self.normalized();
         n.end.col - n.start.col + 1
     }
+
+    /// True if the box covers every row (`0..=MAX_ROW`) — the geometry of a
+    /// whole-column reference `A:C`, however it was written.
+    pub fn spans_all_rows(&self) -> bool {
+        self.start.row.min(self.end.row) == 0 && self.start.row.max(self.end.row) == MAX_ROW
+    }
+
+    /// True if the box covers every column (`0..=MAX_COL`) — a whole-row `1:3`.
+    pub fn spans_all_cols(&self) -> bool {
+        self.start.col.min(self.end.col) == 0 && self.start.col.max(self.end.col) == MAX_COL
+    }
+
+    /// The whole-column FORM `A:C`: every row, both row flags absolute (how
+    /// the parser builds `A:C`; the printer prints exactly this shape as
+    /// `A:C`).
+    pub fn is_whole_cols(&self) -> bool {
+        self.spans_all_rows() && self.start.row_abs && self.end.row_abs
+    }
+
+    /// The whole-row FORM `1:3`: every column, both column flags absolute.
+    pub fn is_whole_rows(&self) -> bool {
+        self.spans_all_cols() && self.start.col_abs && self.end.col_abs
+    }
 }
 
 #[cfg(test)]

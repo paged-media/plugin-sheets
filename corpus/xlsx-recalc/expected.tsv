@@ -10,7 +10,7 @@ DGet.xls.xlsx	163	141	19	3	0	0
 DStar.xls.xlsx	16	16	0	0	0	0
 DateTimeToNumberTestCases.xls.xlsx	30	12	18	0	0	0
 FormatChoiceTests.xls.xlsx	51	41	10	0	0	0
-FormulaEvalTestData.xls.xlsx	1416	1088	185	133	10	0
+FormulaEvalTestData.xls.xlsx	1416	1090	184	132	10	0
 IfFunctionTestCaseData.xls.xlsx	32	30	0	2	0	0
 IndexFunctionTestCaseData.xls.xlsx	98	57	31	10	0	0
 IrrNpvTestCaseData.xls.xlsx	29	16	10	0	3	0
@@ -26,4 +26,4 @@ ex47747-sharedFormula.xls.xlsx	20	20	0	0	0	0
 overlapSharedFormula.xls.xlsx	56	56	0	0	0	0
 rank.xls.xlsx	42	42	0	0	0	0
 shared_formulas.xls.xlsx	40	40	0	0	0	0
-testRVA.xls.xlsx	68	45	18	3	2	0
+testRVA.xls.xlsx	68	45	18	2	3	0

@@ -54,38 +54,55 @@ pub fn shift_formula_text(text: &str, drow: i64, dcol: i64) -> Option<String> {
     let mut out = String::with_capacity(text.len() + 8);
     let mut last = 0usize;
     for t in &tokens {
-        let TokKind::Cell {
-            row,
-            col,
-            row_abs,
-            col_abs,
-        } = t.kind
-        else {
-            continue;
+        // One endpoint: `Some(text)` when it stays on the grid.
+        let endpoint = |v: u32, abs: bool, d: i64, max: u32| -> Option<i64> {
+            let n = if abs { v as i64 } else { v as i64 + d };
+            (0..=max as i64).contains(&n).then_some(n)
         };
-        let r = if row_abs {
-            row as i64
-        } else {
-            row as i64 + drow
-        };
-        let c = if col_abs {
-            col as i64
-        } else {
-            col as i64 + dcol
+        let piece: Option<String> = match t.kind {
+            TokKind::Cell {
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => endpoint(row, row_abs, drow, MAX_ROW)
+                .zip(endpoint(col, col_abs, dcol, MAX_COL))
+                .map(|(r, c)| {
+                    let mut s = String::new();
+                    if col_abs {
+                        s.push('$');
+                    }
+                    s.push_str(&col_to_a1(c as u32));
+                    if row_abs {
+                        s.push('$');
+                    }
+                    s.push_str(&(r + 1).to_string());
+                    s
+                }),
+            // A whole-column band moves only horizontally, a whole-row band
+            // only vertically (the other axis is the whole grid).
+            TokKind::Cols { c0, c1, abs0, abs1 } => endpoint(c0, abs0, dcol, MAX_COL)
+                .zip(endpoint(c1, abs1, dcol, MAX_COL))
+                .map(|(a, b)| {
+                    let d = |abs: bool| if abs { "$" } else { "" };
+                    format!(
+                        "{}{}:{}{}",
+                        d(abs0),
+                        col_to_a1(a as u32),
+                        d(abs1),
+                        col_to_a1(b as u32)
+                    )
+                }),
+            TokKind::Rows { r0, r1, abs0, abs1 } => endpoint(r0, abs0, drow, MAX_ROW)
+                .zip(endpoint(r1, abs1, drow, MAX_ROW))
+                .map(|(a, b)| {
+                    let d = |abs: bool| if abs { "$" } else { "" };
+                    format!("{}{}:{}{}", d(abs0), a + 1, d(abs1), b + 1)
+                }),
+            _ => continue,
         };
         out.push_str(&text[last..t.span.start]);
-        if (0..=MAX_ROW as i64).contains(&r) && (0..=MAX_COL as i64).contains(&c) {
-            if col_abs {
-                out.push('$');
-            }
-            out.push_str(&col_to_a1(c as u32));
-            if row_abs {
-                out.push('$');
-            }
-            out.push_str(&(r + 1).to_string());
-        } else {
-            out.push_str("#REF!");
-        }
+        out.push_str(piece.as_deref().unwrap_or("#REF!"));
         last = t.span.end;
     }
     out.push_str(&text[last..]);
@@ -115,6 +132,14 @@ mod tests {
             "IF(A2=\"B2\",LOG10(C4),Rate)"
         );
         assert_eq!(s("A1 + B1", 1, 0).unwrap(), "A2 + B2");
+    }
+
+    #[test]
+    fn whole_columns_and_rows_shift_on_their_own_axis__feat__sheet_xlsx_roundtrip() {
+        assert_eq!(s("SUM(A:B)", 5, 1).unwrap(), "SUM(B:C)");
+        assert_eq!(s("SUM($A:B)+Data!3:4", 2, 1).unwrap(), "SUM($A:C)+Data!5:6");
+        assert_eq!(s("SUM($2:$2)", 7, 0).unwrap(), "SUM($2:$2)");
+        assert_eq!(s("SUM(A:A)", 0, -1).unwrap(), "SUM(#REF!)");
     }
 
     #[test]

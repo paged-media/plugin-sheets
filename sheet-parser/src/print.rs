@@ -349,6 +349,29 @@ impl Printer<'_> {
     fn range(&self, r: &RangeRef, out: &mut String) {
         // The sheet prefix applies to the whole range (printed once).
         self.sheet_prefix(r.start.sheet, out);
+        // Whole columns `A:C` / whole rows `1:3` print in their own form.
+        if r.is_whole_cols() {
+            for (c, abs) in [(r.start.col, r.start.col_abs), (r.end.col, r.end.col_abs)] {
+                if abs {
+                    out.push('$');
+                }
+                out.push_str(&sheet_core::col_to_a1(c));
+                out.push(':');
+            }
+            out.pop();
+            return;
+        }
+        if r.is_whole_rows() {
+            for (row, abs) in [(r.start.row, r.start.row_abs), (r.end.row, r.end.row_abs)] {
+                if abs {
+                    out.push('$');
+                }
+                out.push_str(&(row + 1).to_string());
+                out.push(':');
+            }
+            out.pop();
+            return;
+        }
         out.push_str(&format_a1(
             r.start.row,
             r.start.col,

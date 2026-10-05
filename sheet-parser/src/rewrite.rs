@@ -270,6 +270,15 @@ fn shift_range(r: RangeRef, plan: &Plan) -> Option<RangeRef> {
     if r.start.sheet != plan.sheet {
         return Some(r);
     }
+    // A whole-column band (`A:C`) never moves on a row edit, nor a whole-row
+    // band (`1:3`) on a column edit: it still spans the whole grid (Excel).
+    let whole = match plan.axis {
+        Axis::Row => r.spans_all_rows(),
+        Axis::Col => r.spans_all_cols(),
+    };
+    if whole {
+        return Some(r);
+    }
     let n = r.normalized();
     let (s, max) = coord(&n.start, plan.axis);
     let (e, _) = coord(&n.end, plan.axis);
