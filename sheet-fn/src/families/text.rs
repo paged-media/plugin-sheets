@@ -327,6 +327,11 @@ pub fn text(args: &[Arg], ctx: &EvalCtx) -> CellValue {
         Ok(s) => s,
         Err(e) => return CellValue::Error(e),
     };
+    // An empty format code renders nothing (Excel: `TEXT(12.5,)` and
+    // `TEXT(12.5,"")` are both ""), not General.
+    if code.is_empty() {
+        return CellValue::Text(CompactString::new(""));
+    }
     let fmt = match sheet_format::compile(code.as_str()) {
         Ok(f) => f,
         Err(_) => return CellValue::Error(CellError::Value),

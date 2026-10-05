@@ -142,6 +142,8 @@ impl Printer<'_> {
 
     fn expr_inner(&self, e: &Expr, out: &mut String) {
         match e {
+            // An omitted argument prints as nothing (`IF(a,,b)`).
+            Expr::Missing => {}
             Expr::Lit(l) => self.lit(l, out),
             Expr::Ref(r) => self.cell(r, out),
             Expr::Range(r) => self.range(r, out),
@@ -245,6 +247,9 @@ impl Printer<'_> {
             TableArea::Headers => Some("#Headers"),
             TableArea::Totals => Some("#Totals"),
             TableArea::ThisRow => Some("#This Row"),
+            // The two-area forms print both items: `[#Headers],[#Data]`.
+            TableArea::HeadersData => Some("#Headers],[#Data"),
+            TableArea::DataTotals => Some("#Data],[#Totals"),
         };
 
         match (area_tok, &s.col_start, &s.col_end) {
@@ -349,6 +354,29 @@ impl Printer<'_> {
     fn range(&self, r: &RangeRef, out: &mut String) {
         // The sheet prefix applies to the whole range (printed once).
         self.sheet_prefix(r.start.sheet, out);
+        // Whole columns `A:C` / whole rows `1:3` print in their own form.
+        if r.is_whole_cols() {
+            for (c, abs) in [(r.start.col, r.start.col_abs), (r.end.col, r.end.col_abs)] {
+                if abs {
+                    out.push('$');
+                }
+                out.push_str(&sheet_core::col_to_a1(c));
+                out.push(':');
+            }
+            out.pop();
+            return;
+        }
+        if r.is_whole_rows() {
+            for (row, abs) in [(r.start.row, r.start.row_abs), (r.end.row, r.end.row_abs)] {
+                if abs {
+                    out.push('$');
+                }
+                out.push_str(&(row + 1).to_string());
+                out.push(':');
+            }
+            out.pop();
+            return;
+        }
         out.push_str(&format_a1(
             r.start.row,
             r.start.col,
@@ -494,7 +522,7 @@ fn expr_prec(e: &Expr) -> Prec {
         // Structured/spill refs are atoms (a `#` postfix on an atom is still
         // atomic for re-parse purposes).
         Expr::Array(_) | Expr::StructuredRef(_) | Expr::SpillRef(_) => Prec::ATOM,
-        Expr::Local(_) | Expr::Call(_, _) => Prec::ATOM,
+        Expr::Local(_) | Expr::Call(_, _) | Expr::Missing => Prec::ATOM,
         Expr::Unary(UnOp::Percent, _) => Prec::PERCENT,
         Expr::Unary(_, _) => Prec::UNARY,
         Expr::Binary(op, _, _) => binop_prec(*op),

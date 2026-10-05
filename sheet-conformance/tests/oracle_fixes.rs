@@ -359,10 +359,15 @@ fn structured_references_resolve_like_excel__feat__sheet_table_structured() {
         ("empty brackets = data", "ROWS(Items[])"),
         ("data rows count", "COUNTA(Items[Item])"),
         ("headers row", "COUNTA(Items[#Headers])"),
+        // Two-area specifiers (round 2): the header or totals row joins the
+        // body — one contiguous block.
+        ("headers + data", "COUNTA(Items[[#Headers],[#Data],[Qty]])"),
+        ("data + totals", "SUM(Items[[#Data],[#Totals],[Qty]])"),
+        ("headers + data rows", "ROWS(Items[[#Headers],[#Data]])"),
     ];
-    // Not modelled: two-area specifiers (`[[#Headers],[#Data],[Qty]]`) — the
-    // frozen TableArea has no combined area; none occur in the corpus.
-    let want = ["6", "11", "11", "Qty", "6", "17", "5", "3", "3", "3"];
+    let want = [
+        "6", "11", "11", "Qty", "6", "17", "5", "3", "3", "3", "4", "12", "4",
+    ];
     let s = SheetSession::load_xlsx(&items_workbook(cases)).unwrap();
     let got: Vec<String> = (0..cases.len() as u32)
         .map(|r| s.get_cell_display(0, r, 4))

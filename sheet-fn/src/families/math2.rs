@@ -300,7 +300,7 @@ fn collect_nonneg_ints(args: &[Arg]) -> Result<Vec<u64>, CellError> {
                 out.push(t as u64);
             }
             Arg::Range(r) => {
-                for cell in r.iter() {
+                for cell in r.iter_live() {
                     match &cell {
                         CellValue::Error(e) => return Err(*e),
                         CellValue::Number(n) => {
@@ -390,7 +390,7 @@ pub fn sumsq(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
                 Err(e) => return CellValue::Error(e),
             },
             Arg::Range(r) => {
-                for cell in r.iter() {
+                for cell in r.iter_live() {
                     match &cell {
                         CellValue::Error(e) => return CellValue::Error(*e),
                         CellValue::Number(n) => {

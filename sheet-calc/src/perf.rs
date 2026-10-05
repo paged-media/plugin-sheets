@@ -76,6 +76,12 @@ pub struct PerfCounters {
     /// the per-evaluation `ast_clones` counter were retired 2026-10 when the
     /// copy and the clone they counted were removed.)
     pub cells_read: u64,
+    /// Every cell a kernel asked a range view for (`argview.rs`), INCLUDING
+    /// the reads above/below the populated rows that answer blank without a
+    /// lookup. `cells_read` cannot see those; this can — a whole-column
+    /// `SUM(A:A)` scanning all 1 048 576 rows of a 10 000-row sheet shows up
+    /// here as 1 048 576, not 10 000.
+    pub cells_visited: u64,
     /// Formula evaluations, scalar and rich door (`lib.rs`).
     pub evaluations: u64,
     /// `Engine::recalc_dirty` invocations — one per committed edit today.
@@ -95,6 +101,7 @@ thread_local! {
             precedent_candidates_scanned: 0,
             ranges_materialized: 0,
             cells_read: 0,
+            cells_visited: 0,
             evaluations: 0,
             recalcs: 0,
             recalc_passes: 0,

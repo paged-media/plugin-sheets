@@ -242,6 +242,12 @@ impl Parser<'_> {
                 let sheet = self.ctx.current_sheet();
                 Ok(Expr::Ref(refs::cell(sheet, row, col, row_abs, col_abs)))
             }
+            TokKind::Cols { .. } | TokKind::Rows { .. } => {
+                let sheet = self.ctx.current_sheet();
+                Ok(Expr::Range(
+                    refs::band(sheet, &tok.kind).expect("band token"),
+                ))
+            }
             TokKind::SheetQual(name) => self.parse_qualified(&name, tok.span),
             TokKind::Ident(name) => self.parse_ident(&name, tok.span),
             // A structured (table) reference — the lexer already built it.
@@ -278,6 +284,11 @@ impl Parser<'_> {
                 self.eof_span(),
             ));
         };
+        // `Sheet1!A:C` / `Sheet1!1:3` — a whole-column / whole-row band.
+        if let Some(r) = refs::band(sheet, &tok.kind) {
+            self.bump();
+            return Ok(Expr::Range(r));
+        }
         let TokKind::Cell {
             row,
             col,
@@ -456,7 +467,16 @@ impl Parser<'_> {
             return Ok(args);
         }
         loop {
-            args.push(self.parse_bp(0)?);
+            // An empty slot — `IF(a,,b)`, `F(,x)`, or the trailing `F(a,)` —
+            // is an OMITTED argument, not a syntax error (Excel).
+            if matches!(
+                self.peek().map(|t| &t.kind),
+                Some(TokKind::Comma | TokKind::RParen)
+            ) {
+                args.push(Expr::Missing);
+            } else {
+                args.push(self.parse_bp(0)?);
+            }
             match self.peek().map(|t| &t.kind) {
                 Some(TokKind::Comma) => {
                     self.bump();
@@ -595,6 +615,8 @@ fn is_operand_start(kind: &TokKind) -> bool {
             | TokKind::Bool(_)
             | TokKind::Error(_)
             | TokKind::Cell { .. }
+            | TokKind::Cols { .. }
+            | TokKind::Rows { .. }
             | TokKind::SheetQual(_)
             | TokKind::Ident(_)
             | TokKind::Structured(_)

@@ -255,7 +255,7 @@ fn scalar_to_bool(arg: &Arg) -> Result<bool, CellError> {
 fn count_true_in_range(rv: &RangeView) -> Result<(u64, bool), CellError> {
     let mut trues: u64 = 0;
     let mut found = false;
-    for cell in rv.iter() {
+    for cell in rv.iter_live() {
         match cell {
             CellValue::Error(e) => return Err(e),
             CellValue::Text(_) | CellValue::Empty => {}

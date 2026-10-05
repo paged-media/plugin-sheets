@@ -249,3 +249,11 @@ fn sheet_calc_corpus_array() {
 fn sheet_calc_corpus_lambda() {
     run_family("lambda");
 }
+
+// ── Round 2 — whole-column / whole-row references and omitted arguments
+// (parser + evaluator behaviour, Excel-recorded in oracle/excel).
+
+#[test]
+fn sheet_calc_corpus_refs() {
+    run_family("refs");
+}

@@ -105,7 +105,7 @@ fn collect_numbers(args: &[Arg], acc: &mut Vec<f64>) -> Option<CellError> {
                 Err(e) => return Some(e),
             },
             Arg::Range(view) => {
-                for cell in view.iter() {
+                for cell in view.iter_live() {
                     match cell {
                         CellValue::Number(n) => acc.push(n),
                         CellValue::Error(e) => return Some(e),

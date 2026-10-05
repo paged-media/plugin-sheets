@@ -469,7 +469,7 @@ fn collect_holidays(arg: Option<&Arg>, sys: DateSystem) -> Result<Vec<i64>, Cell
             }
         }
         Arg::Range(r) => {
-            for cell in r.iter() {
+            for cell in r.iter_live() {
                 match cell {
                     CellValue::Error(e) => return Err(e),
                     CellValue::Number(n) => {

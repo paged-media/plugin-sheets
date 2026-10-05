@@ -153,6 +153,14 @@ fn table_lookup(args: &[Arg], axis: Axis) -> CellValue {
     if idx0 > index_max {
         return CellValue::Error(CellError::Ref);
     }
+    // A vertical search stops at the table's last live row: below it every
+    // key cell is blank, which neither equals a non-blank key nor (sorted
+    // data being assumed) belongs in an approximate floor — the whole-column
+    // `VLOOKUP(k, A:B, 2)` searches the data, not 1 048 576 rows.
+    let search_len = match axis {
+        Axis::Vertical if !key.is_blank() => search_len.min(table.live_rows().end),
+        _ => search_len,
+    };
 
     let cell_at = |pos: u32| -> CellValue {
         match axis {
@@ -346,6 +354,12 @@ pub fn match_fn(args: &[Arg], _ctx: &EvalCtx) -> CellValue {
     // 1×N or N×1 range both work; a rectangular range scans row-major (Excel
     // expects a vector, but we stay total).
     let len = rv.rows() * rv.cols();
+    // Row-major, so the live rows are a prefix of the scan (see VLOOKUP).
+    let len = if key.is_blank() {
+        len
+    } else {
+        len.min(rv.live_rows().end * rv.cols())
+    };
     let at = |i: u32| -> CellValue {
         let c = i % rv.cols();
         let r = i / rv.cols();
@@ -495,6 +509,11 @@ fn approximate_pos_asc(key: &CellValue, len: u32, at: &dyn Fn(u32) -> CellValue)
     let mut best: Option<u32> = None;
     for i in 0..len {
         let cand = at(i);
+        // A blank cell is no candidate for a non-blank key (Excel: the
+        // blanks under a whole-column table are not a floor/ceiling).
+        if cand.is_blank() && !key.is_blank() {
+            continue;
+        }
         match coerce::compare(&cand, key) {
             Equal => return Some(i), // exact hit wins immediately
             Less => best = Some(i),  // candidate <= key: a better floor
@@ -512,6 +531,11 @@ fn approximate_pos_desc(key: &CellValue, len: u32, at: &dyn Fn(u32) -> CellValue
     let mut best: Option<u32> = None;
     for i in 0..len {
         let cand = at(i);
+        // A blank cell is no candidate for a non-blank key (Excel: the
+        // blanks under a whole-column table are not a floor/ceiling).
+        if cand.is_blank() && !key.is_blank() {
+            continue;
+        }
         match coerce::compare(&cand, key) {
             Equal => return Some(i),   // exact hit wins immediately
             Greater => best = Some(i), // candidate >= key: a better ceiling

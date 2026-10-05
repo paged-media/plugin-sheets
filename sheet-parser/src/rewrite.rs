@@ -152,7 +152,9 @@ fn fill_cell(c: CellRef, drow: i64, dcol: i64) -> Option<CellRef> {
 fn fill_expr(e: &Expr, drow: i64, dcol: i64) -> Expr {
     let f = |x: &Expr| fill_expr(x, drow, dcol);
     match e {
-        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) => e.clone(),
+        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) | Expr::Missing => {
+            e.clone()
+        }
         Expr::Ref(r) => match fill_cell(*r, drow, dcol) {
             Some(c) => Expr::Ref(c),
             None => ref_error(),
@@ -172,7 +174,7 @@ fn fill_expr(e: &Expr, drow: i64, dcol: i64) -> Expr {
 
 fn rewrite_expr(e: &Expr, plan: &Plan) -> Expr {
     match e {
-        Expr::Lit(_) | Expr::Name(_) => e.clone(),
+        Expr::Lit(_) | Expr::Name(_) | Expr::Missing => e.clone(),
         Expr::Ref(r) => match shift_cell(*r, plan) {
             Some(c) => Expr::Ref(c),
             None => ref_error(),
@@ -268,6 +270,15 @@ fn shift_coord(c: u32, plan: &Plan, max: u32) -> Option<u32> {
 /// surviving sub-interval; an insert that pushes the end off-grid → `None`.
 fn shift_range(r: RangeRef, plan: &Plan) -> Option<RangeRef> {
     if r.start.sheet != plan.sheet {
+        return Some(r);
+    }
+    // A whole-column band (`A:C`) never moves on a row edit, nor a whole-row
+    // band (`1:3`) on a column edit: it still spans the whole grid (Excel).
+    let whole = match plan.axis {
+        Axis::Row => r.spans_all_rows(),
+        Axis::Col => r.spans_all_cols(),
+    };
+    if whole {
         return Some(r);
     }
     let n = r.normalized();

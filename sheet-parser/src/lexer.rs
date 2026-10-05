@@ -74,8 +74,23 @@ pub enum TokKind {
         col_abs: bool,
     },
     /// A sheet qualifier `Sheet1!` or `'Quoted''Name'!` (un-escaped name).
-    /// Always immediately followed (no whitespace) by a `Cell`.
+    /// Always immediately followed (no whitespace) by a `Cell`, `Cols` or `Rows`.
     SheetQual(String),
+    /// A whole-column range `A:C` / `$A:$A` (0-based columns + `$` flags of
+    /// each endpoint). Lexed as ONE token: `A` alone is not a reference.
+    Cols {
+        c0: u32,
+        c1: u32,
+        abs0: bool,
+        abs1: bool,
+    },
+    /// A whole-row range `1:3` / `$1:$1` (0-based rows + `$` flags).
+    Rows {
+        r0: u32,
+        r1: u32,
+        abs0: bool,
+        abs1: bool,
+    },
     /// An identifier: a defined-name or a function name. The parser decides
     /// which by peeking for a following `(`.
     Ident(String),
@@ -157,6 +172,11 @@ impl Lexer<'_> {
 
     fn next_token(&mut self) -> Result<TokKind, ParseError> {
         let b = self.bytes[self.pos];
+        if matches!(b, b'$' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z') {
+            if let Some(k) = self.whole_band() {
+                return Ok(k);
+            }
+        }
         match b {
             b'"' => self.lex_string(),
             // `#` begins an error literal (`#DIV/0!`, `#N/A`, …) — all of
@@ -460,6 +480,66 @@ impl Lexer<'_> {
             ));
         }
         Ok(TokKind::Ident(tok.to_string()))
+    }
+
+    /// A whole-column (`A:C`, `$A:$A`) or whole-row (`1:3`, `$1:$1`) range,
+    /// consumed as one token when the text at the cursor is exactly
+    /// `part ':' part` of the same kind followed by a reference boundary.
+    /// Anything else (`A1:B2`, a name, a number) answers `None` and lexes as
+    /// before.
+    fn whole_band(&mut self) -> Option<TokKind> {
+        let b = self.bytes;
+        // One endpoint: optional `$`, then a run of letters OR digits.
+        let part = |mut i: usize| -> Option<(bool, bool, usize, usize)> {
+            let abs = b.get(i) == Some(&b'$');
+            if abs {
+                i += 1;
+            }
+            let start = i;
+            let letters = b.get(i)?.is_ascii_alphabetic();
+            while i < b.len()
+                && (if letters {
+                    b[i].is_ascii_alphabetic()
+                } else {
+                    b[i].is_ascii_digit()
+                })
+            {
+                i += 1;
+            }
+            (i > start).then_some((abs, letters, start, i))
+        };
+        let (abs0, letters0, s0, e0) = part(self.pos)?;
+        if b.get(e0) != Some(&b':') {
+            return None;
+        }
+        let (abs1, letters1, s1, e1) = part(e0 + 1)?;
+        if letters0 != letters1 {
+            return None;
+        }
+        // The band must END here: `A:B2`, `A:Bx`, `1:2.5`, `A:B(` are not bands.
+        if b.get(e1).is_some_and(|&c| {
+            c.is_ascii_alphanumeric() || matches!(c, b'$' | b'_' | b'.' | b'(' | b'[' | b'!')
+        }) {
+            return None;
+        }
+        let kind = if letters0 {
+            let c0 = sheet_core::a1_to_col(&self.src[s0..e0])?;
+            let c1 = sheet_core::a1_to_col(&self.src[s1..e1])?;
+            TokKind::Cols { c0, c1, abs0, abs1 }
+        } else {
+            let row = |t: &str| -> Option<u32> {
+                let n: u32 = t.parse().ok()?;
+                (1..=sheet_core::MAX_ROW + 1).contains(&n).then(|| n - 1)
+            };
+            TokKind::Rows {
+                r0: row(&self.src[s0..e0])?,
+                r1: row(&self.src[s1..e1])?,
+                abs0,
+                abs1,
+            }
+        };
+        self.pos = e1;
+        Some(kind)
     }
 
     /// An external-workbook sheet qualifier `[n]Sheet!` (the unquoted form;

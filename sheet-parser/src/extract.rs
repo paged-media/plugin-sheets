@@ -81,7 +81,7 @@ pub fn extract_refs(f: &Formula) -> RefSet {
 
 fn walk(e: &Expr, set: &mut RefSet) {
     match e {
-        Expr::Lit(_) => {}
+        Expr::Lit(_) | Expr::Missing => {}
         Expr::Ref(r) => set.cells.push(*r),
         Expr::Range(r) => set.ranges.push(r.normalized()),
         Expr::Name(n) => set.names.push(*n),

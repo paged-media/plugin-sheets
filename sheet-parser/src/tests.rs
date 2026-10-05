@@ -34,6 +34,8 @@
 //! cross-crate conformance suite (`sheet-conformance/tests/parser_roundtrip`)
 //! re-checks the registry-linked golden set.
 
+#![allow(non_snake_case)]
+
 use super::*;
 use sheet_core::ast::{BinOp, Expr, LitValue, UnOp};
 use sheet_core::{CellError, CellValue};
@@ -386,6 +388,36 @@ fn structured_ref_forms_parse_and_print() {
 }
 
 #[test]
+fn structured_ref_two_area_specifiers__feat__sheet_table_structured() {
+    use sheet_core::ast::TableArea;
+    // The two combinations Excel accepts are fixpoints in Excel's order.
+    for s in [
+        "Table1[[#Headers],[#Data]]",
+        "Table1[[#Data],[#Totals]]",
+        "Table1[[#Headers],[#Data],[Region]]",
+        "Table1[[#Data],[#Totals],[Region]:[Total]]",
+    ] {
+        assert_eq!(roundtrip(s), s, "two-area fixpoint for {s}");
+    }
+    // Either order is the same area.
+    let area = |s: &str| match p(s).root {
+        Expr::StructuredRef(r) => r.area,
+        e => panic!("not a structured ref: {e:?}"),
+    };
+    assert_eq!(area("T[[#Data],[#Headers],[A]]"), TableArea::HeadersData);
+    assert_eq!(area("T[[#Totals],[#Data]]"), TableArea::DataTotals);
+    // Every other pair is refused, as Excel refuses it.
+    for bad in [
+        "T[[#Headers],[#Totals]]",
+        "T[[#All],[#Data]]",
+        "T[[#Data],[#Data]]",
+        "T[[#This Row],[#Data]]",
+    ] {
+        assert!(parse(bad, &Ctx::new()).is_err(), "{bad} should not parse");
+    }
+}
+
+#[test]
 fn structured_ref_column_with_spaces_and_escapes() {
     use sheet_core::ast::{StructuredRef, TableArea};
     // A column name with spaces survives (it must be bracketed).
@@ -698,6 +730,131 @@ fn rewrite_insert_off_grid_is_ref_error() {
         },
     );
     assert_eq!(g.root, Expr::Lit(LitValue::Error(CellError::Ref)));
+}
+
+// ---- Whole-column / whole-row references (round 2) ----
+
+#[test]
+fn whole_columns_and_rows_parse_and_print__feat__sheet_parser_dialect() {
+    for t in [
+        "SUM(A:A)",
+        "SUM($A:$A)",
+        "SUM($A:B)",
+        "SUM(B:D)",
+        "SUM(1:1)",
+        "SUM($2:$5)",
+        "SUM(3:$4)",
+        "Data!B:D",
+        "SUM(Data!1:3)",
+        "'Sheet 2'!A:XFD",
+        "VLOOKUP(1,A:C,2,FALSE)",
+        "SUM(H:H H8:I8)",
+    ] {
+        assert_eq!(roundtrip(t), t, "{t}");
+    }
+    let f = p("A:C");
+    let Expr::Range(r) = f.root else {
+        panic!("A:C is not a range: {:?}", f.root)
+    };
+    assert!(r.is_whole_cols() && !r.is_whole_rows());
+    assert_eq!((r.start.row, r.end.row), (0, sheet_core::MAX_ROW));
+    assert_eq!((r.start.col, r.end.col), (0, 2));
+    let Expr::Range(r) = p("2:4").root else {
+        panic!("2:4 is not a range")
+    };
+    assert!(r.is_whole_rows());
+    assert_eq!((r.start.row, r.end.row), (1, 3));
+    // Excel displays a full-height A1 range as the column form.
+    assert_eq!(roundtrip("SUM(A$1:A$1048576)"), "SUM(A:A)");
+    // Not bands: ordinary ranges, names, a column followed by a row.
+    assert_eq!(roundtrip("SUM(A1:B2)"), "SUM(A1:B2)");
+    assert_eq!(roundtrip("SUM(Tax)"), "SUM(_NAME0)");
+    assert!(parse("SUM(A:B2)", &Ctx::new()).is_err());
+    assert!(parse("SUM(1:A)", &Ctx::new()).is_err());
+    assert!(parse("SUM(A:XFE)", &Ctx::new()).is_err());
+    assert!(
+        !matches!(p("SUM(1:1048577)").root, Expr::Func(_, ref a) if matches!(a[0], Expr::Range(_)))
+    );
+}
+
+#[test]
+fn whole_bands_rewrite_on_structural_edits__feat__sheet_parser_dialect() {
+    let ins_rows = Edit::InsertRows {
+        sheet: 0,
+        at: 0,
+        n: 3,
+    };
+    let del_rows = Edit::DeleteRows {
+        sheet: 0,
+        at: 0,
+        n: 3,
+    };
+    let ins_cols = Edit::InsertCols {
+        sheet: 0,
+        at: 1,
+        n: 2,
+    };
+    let del_cols = Edit::DeleteCols {
+        sheet: 0,
+        at: 0,
+        n: 1,
+    };
+    let rw = |t: &str, e: &Edit| pr(&rewrite(&p(t), e));
+    // A column band ignores row edits and moves with column edits.
+    assert_eq!(rw("SUM(B:C)", &ins_rows), "SUM(B:C)");
+    assert_eq!(rw("SUM(B:C)", &del_rows), "SUM(B:C)");
+    assert_eq!(rw("SUM(B:C)", &ins_cols), "SUM(D:E)");
+    assert_eq!(rw("SUM(A:C)", &ins_cols), "SUM(A:E)");
+    assert_eq!(rw("SUM(A:A)", &del_cols), "SUM(#REF!)");
+    // A row band is the transpose.
+    assert_eq!(rw("SUM(2:3)", &ins_cols), "SUM(2:3)");
+    assert_eq!(rw("SUM(2:3)", &ins_rows), "SUM(5:6)");
+    assert_eq!(rw("SUM(1:1)", &del_rows), "SUM(#REF!)");
+}
+
+#[test]
+fn whole_bands_fill_honours_dollar_flags__feat__sheet_parser_dialect() {
+    let fill = |t: &str, dr: i64, dc: i64| pr(&rewrite_fill(&p(t), dr, dc));
+    assert_eq!(fill("SUM(A:A)", 10, 1), "SUM(B:B)");
+    assert_eq!(fill("SUM($A:B)", 10, 1), "SUM($A:C)");
+    assert_eq!(fill("SUM(1:2)", 3, 4), "SUM(4:5)");
+    assert_eq!(fill("SUM($1:2)", 3, 4), "SUM($1:5)");
+    assert_eq!(fill("SUM(A:A)", 0, -1), "SUM(#REF!)");
+}
+
+// ---- Omitted arguments (round 2) ----
+
+#[test]
+fn omitted_arguments_parse_and_print__feat__sheet_parser_dialect() {
+    for t in [
+        "IF(A1,,2)",
+        "IF(A1,1,)",
+        "VLOOKUP(1,A1:B9,2,)",
+        "AND(,TRUE)",
+        "INDEX(A1:C3,,2)",
+        "CONCATENATE(\"a\",,\"b\")",
+        "SUM(,)",
+        "OFFSET(A1,,1)",
+    ] {
+        assert_eq!(roundtrip(t), t, "{t}");
+    }
+    let Expr::Func(_, args) = p("IF(A1,,2)").root else {
+        panic!("not a call")
+    };
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[1], Expr::Missing);
+    let Expr::Func(_, args) = p("IF(A1,1,)").root else {
+        panic!("not a call")
+    };
+    assert_eq!((args.len(), &args[2]), (3, &Expr::Missing));
+    // `F()` is still zero arguments, not one omitted one.
+    let Expr::Func(_, args) = p("NOW()").root else {
+        panic!("not a call")
+    };
+    assert!(args.is_empty());
+    // An empty slot is only an argument: elsewhere it is still an error.
+    assert!(parse("1+", &Ctx::new()).is_err());
+    assert!(parse("(1,)", &Ctx::new()).is_err());
 }
 
 // A sanity check on CellValue so the import is exercised (it ties the
