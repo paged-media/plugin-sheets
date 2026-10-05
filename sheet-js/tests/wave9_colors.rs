@@ -123,3 +123,38 @@ fn without_a_theme_part_the_default_scheme_still_answers__feat__sheet_format_cel
     // accent1 is known to the default; its tint still applies.
     assert_eq!(a1.fill.as_deref(), Some("#DAE3F3"));
 }
+
+/// The PAGE lowering (the placed table) resolves colours the way `get_style`
+/// does: the theme part's scheme, the workbook's indexed palette, the tint.
+/// Until round 2 it used a six-slot Office default and no tint, so a placed
+/// table showed accent fills unpainted or in the wrong blue.
+#[test]
+fn page_lowering_resolves_theme_indexed_and_tint__feat__sheet_lower_page() {
+    use sheet_js::core::LowerOptions;
+    let s = SheetSession::load_xlsx(&package(true)).unwrap();
+    let page = s
+        .get_range_page(0, "A1:B1", LowerOptions::default())
+        .unwrap();
+    let style = |col: usize| &page.styles[page.rows[0].cells[col].style_key as usize];
+    let a1 = style(0);
+    assert_eq!(a1.text_rgb.as_deref(), Some("#9BBB59"), "theme 6 = accent3");
+    assert_eq!(a1.fill_rgb.as_deref(), Some("#DCE6F2"), "accent1, tint 0.8");
+    let line = |l: &Option<sheet_lower::BorderLine>| l.as_ref().and_then(|l| l.rgb.clone());
+    assert_eq!(line(&a1.border_lines.top).as_deref(), Some("#FF0000"));
+    assert_eq!(line(&a1.border_lines.bottom).as_deref(), Some("#808080"));
+    assert_eq!(
+        style(1).text_rgb.as_deref(),
+        Some("#123456"),
+        "the workbook's own palette"
+    );
+
+    // Without a theme part: the default scheme answers what it knows, the
+    // tint still applies, and an unknown slot is left to the document.
+    let s = SheetSession::load_xlsx(&package(false)).unwrap();
+    let page = s
+        .get_range_page(0, "A1:A1", LowerOptions::default())
+        .unwrap();
+    let a1 = &page.styles[page.rows[0].cells[0].style_key as usize];
+    assert_eq!(a1.text_rgb, None);
+    assert_eq!(a1.fill_rgb.as_deref(), Some("#DAE3F3"));
+}

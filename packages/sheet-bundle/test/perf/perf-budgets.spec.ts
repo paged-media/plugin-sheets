@@ -81,6 +81,7 @@ import {
   sheetHost,
   testClipboard,
   withSceneChannel,
+  withTableHandles66,
   type TestClipboard,
 } from "./workload";
 
@@ -175,9 +176,13 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
   /** A session over the COUNTED host (with the recording scene channel),
    *  holding `bytes`. Setup work is forgotten before it returns. */
   let channel: ReturnType<typeof withSceneChannel>;
-  async function open(bytes: Uint8Array, range: string): Promise<WorkbookSession> {
+  async function open(
+    bytes: Uint8Array,
+    range: string,
+    wrap: (host: BundleHost) => BundleHost = (x) => x,
+  ): Promise<WorkbookSession> {
     channel = withSceneChannel(raw);
-    const { host } = countingHost(channel.host, SHARED);
+    const { host } = countingHost(wrap(channel.host), SHARED);
     const s = createWorkbookSession(host);
     session = s;
     await s.import(bytes, "perf.xlsx");
@@ -225,8 +230,8 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "document.meta": 1,
       "document.frameChain": 1, // the frame, read back off the table's story
       "text.measureString": 20,
-      // → 1 once core resolves a table handle in a tableId position
-      // (core 0eff96b, unreleased): frame + table + content, one batch.
+      // 1 on a protocol-66 host (core 0eff96b): see the next scenario. A
+      // 0.64 host never gets the one-call batch (no 66 door answered).
       "document.mutate": 2,
       "selection.set": 1,
       // Wave 4: the PAGE door (styles + conditional formatting) replaces the
@@ -251,6 +256,49 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     expect([...emptied[0].values()].every((t) => t === "")).toBe(true);
     await raw.document.undo();
     expect(await exportedTableCells(h)).toHaveLength(0);
+  });
+
+  // COVERS: lower.ts placeInOneCall — on a protocol-66 host (core resolves
+  // `$h:t` in a tableId position, 0eff96b) the frame, binding, table, pour,
+  // decor and text styles are ONE batch, the frame and table named by the
+  // outcome's `minted`. The host: `withTableHandles66` over the real core
+  // (the engine applies it in two batches; the bundle makes one call).
+  it("place a 50×20 range on a protocol-66 host [sheet.lower.page]", async () => {
+    const s = await open(
+      await authorWorkbook(50, 20, (r, c) => `r${r}c${c}`),
+      "A1:T50",
+      (x) => withTableHandles66(h, x),
+    );
+    const frame = await s.lowerSelection();
+    await settle();
+    const work = take("place 50x20 (66)");
+    expect(frame).not.toBeNull();
+    const childOps = (op: string) =>
+      work.mutations.reduce((n, m) => n + (m.kinds[op] ?? 0), 0);
+    expect(childOps("insertText")).toBe(1000);
+    expect(childOps("insertTable")).toBe(1);
+    const tables = await exportedTableCells(h);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].size).toBe(1000);
+    for (const [r, c] of [[0, 0], [0, 19], [49, 0], [49, 19], [17, 7]]) {
+      expect(tables[0].get(`${r}:${c}`)).toBe(`r${r}c${c}`);
+    }
+    expectBudget("place 50x20 (66)", work, {
+      "document.meta": 1,
+      "text.measureString": 20,
+      "document.mutate": 1, // was 2 (0.64): frame + table, then the content
+      "selection.set": 1,
+      "engine.getRangePage": 1,
+      "selection.get": 1,
+      "engine.listSheets": 1,
+      "document.collection": 1, // the swatch read before the fill mints
+      "=mutations": 1,
+      "=engineCalls": 2,
+      "=reads": 2, // no frame-chain read: `minted` names the frame
+      "=bytesWritten": 0,
+      "=sceneItems": 0,
+      "=rejected": 0,
+    });
   });
 
   // COVERS: refreshing a placed table after an edit (lower.ts

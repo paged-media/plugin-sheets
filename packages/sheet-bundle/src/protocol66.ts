@@ -14,12 +14,20 @@
 //   `ElementGeometryItem.storyId` — a text frame's story on the geometry
 //       read. Detected by field presence on a text frame's item. Fallback:
 //       walk the stories and their frame chains.
+//   `host.document.onWillSave` — the editor awaits its listeners before it
+//       asks the engine for a .paged save's bytes. Probed with
+//       `supports("document.onWillSave@1")`. Fallback: the debounced
+//       persist and the flush on frame exit / deactivate.
+//   In-batch TABLE handles — `$h:t` bound to an `insertTable` resolves in a
+//       `tableId` / `table_id` position to the table's own id (core 66), so
+//       a placement is one batch. No probe key: see `tableHandlesLikely`.
 //
 // Remove this module (and use the plugin-api types) when the pins move to
 // the 66 canary.
 
 import type {
   BundleHost,
+  Disposable,
   ElementId,
   Mutation,
   MutationOutcome,
@@ -52,6 +60,12 @@ interface Doors66 {
   deleteTable?: boolean;
   minted?: boolean;
   geometryStoryId?: boolean;
+  /** Whether a one-batch placement with table handles applied (true) or
+   *  was refused (false) on this host. */
+  tableHandles?: boolean;
+  /** Whether the host answered `supports("document.onWillSave@1")` — asked
+   *  once, when a session registers its will-save listener. */
+  willSave?: boolean;
 }
 const known = new WeakMap<object, Doors66>();
 
@@ -83,6 +97,46 @@ export function isUnknownVariant(outcome: MutationOutcome, op: string): boolean 
     return false;
   }
   return text.includes("unknown variant") && text.includes(op);
+}
+
+/** What a will-save listener receives (plugin-api 66 `WillSaveEvent`). */
+export interface WillSaveEvent {
+  format: "paged";
+}
+
+/** Register `listener` on the host's will-save door (66), or return null
+ *  when the host has none. The editor awaits every listener (bounded) before
+ *  it takes a .paged save's bytes, so a listener that settles once its
+ *  state is in the document makes that state part of the file. */
+export function onWillSave(
+  host: BundleHost,
+  listener: (e: WillSaveEvent) => void | Promise<void>,
+): Disposable | null {
+  const supported = typeof host.supports === "function" && host.supports("document.onWillSave@1");
+  doors66(host).willSave = supported;
+  if (!supported) return null;
+  const door = (host.document as unknown as {
+    onWillSave?: (l: (e: WillSaveEvent) => void | Promise<void>) => Disposable;
+  }).onWillSave;
+  if (typeof door !== "function") return null;
+  return door.call(host.document, listener);
+}
+
+/** Whether a one-batch placement that addresses the table it inserts by
+ *  handle (`$h:t` in `tableId` / `table_id` positions — core 66) is worth
+ *  sending. There is no supports() key for an engine behaviour, and a
+ *  refused attempt is not free on a 0.64 engine (rolling back the batch's
+ *  `insertTextFrame` leaves its story behind in the model), so it is sent
+ *  only on POSITIVE evidence of a 66 host — a 66 door it answered (the will-
+ *  save door a session probed, `minted` on an outcome, `storyId` on a
+ *  frame's geometry; all remembered, so deciding costs no call) —
+ *  and never again on a host that refused one. The placement reads its
+ *  ids from `minted`, so a host known not to send it is excluded too. */
+export function tableHandlesLikely(host: BundleHost): boolean {
+  const d = doors66(host);
+  if (d.tableHandles !== undefined) return d.tableHandles;
+  if (d.minted === false) return false;
+  return d.minted === true || d.geometryStoryId === true || d.willSave === true;
 }
 
 /** The story of a text-frame geometry item (66), or undefined. */

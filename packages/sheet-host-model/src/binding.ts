@@ -50,8 +50,14 @@ export const BINDING_VERSION = 1;
  *  column widths it was sized with. Additive inside the v1 envelope: an
  *  older binding simply has none. */
 export interface TableRecord {
-  storyId: string;
-  tableId: string;
+  /** The table's story and id. ABSENT on a table placed in ONE batch (core
+   *  66 in-batch handles): the binding rides the batch that mints them and a
+   *  `$h:` reference is never rewritten inside a metadata VALUE, so a later
+   *  session reads them off the page instead (the frame's story; the table
+   *  under its first cell). The first refresh re-stamps them. Both or
+   *  neither. */
+  storyId?: string;
+  tableId?: string;
   /** {@link contentHash} of the LoweredContent the table shows. */
   hash: string;
   /** The column widths (pt) the table carries. */
@@ -115,12 +121,16 @@ export function contentHash(value: unknown): string {
 function parseTableRecord(input: unknown): TableRecord | null {
   if (typeof input !== "object" || input === null) return null;
   const t = input as Record<string, unknown>;
-  if (typeof t.storyId !== "string" || typeof t.tableId !== "string") return null;
+  const ids = t.storyId !== undefined || t.tableId !== undefined;
+  if (ids && (typeof t.storyId !== "string" || typeof t.tableId !== "string")) return null;
   if (typeof t.hash !== "string") return null;
   if (!Array.isArray(t.widths) || !t.widths.every((w) => typeof w === "number" && Number.isFinite(w))) {
     return null;
   }
-  return { storyId: t.storyId, tableId: t.tableId, hash: t.hash, widths: [...t.widths] };
+  const widths = [...(t.widths as number[])];
+  return ids
+    ? { storyId: t.storyId as string, tableId: t.tableId as string, hash: t.hash, widths }
+    : { hash: t.hash, widths };
 }
 
 /** Defensive parse: accept only a well-formed binding envelope, else

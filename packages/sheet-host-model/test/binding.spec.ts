@@ -103,6 +103,14 @@ describe("sheet_plugin_binding_metadata: rejects garbage", () => {
     });
   });
 
+  it("a one-batch placement's record carries no ids; half a pair is malformed [sheet.plugin.persistence]", () => {
+    const table = { hash: "0badf00d", widths: [40] };
+    const b = makeBinding("S", "A1:B2", 4, table);
+    expect(parseBinding(JSON.parse(JSON.stringify(b)))).toEqual(b);
+    const half = { v: 1, data: { sheet: "S", range: "A1", contentVersion: 1, table: { storyId: "Story/u1", hash: "x", widths: [] } } };
+    expect(parseBinding(half)?.data.table).toBeUndefined();
+  });
+
   it("contentHash is stable and content-sensitive [sheet.plugin.persistence]", () => {
     const a = { rows: [{ cells: [{ text: "1" }] }] };
     expect(contentHash(a)).toBe(contentHash(JSON.parse(JSON.stringify(a))));

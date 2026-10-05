@@ -291,7 +291,16 @@ impl XlsxDocument {
         let (xf_to_style, visual_styles, dxfs, workbook_locale) = match &styles_part {
             Some(name) => match container.part(name) {
                 Some(p) => {
-                    let parsed = parts::styles::parse(p.bytes(), &mut model.styles)?;
+                    // The theme part's scheme resolves `theme="N"` colours
+                    // for the page lowering (round 2; get_style already did).
+                    let theme = wb_rels
+                        .by_type("/theme")
+                        .map(|r| resolve_target(&wb_base, &r.target))
+                        .and_then(|t| container.part(&t))
+                        .and_then(|t| parts::theme::ThemePalette::parse(t.bytes()).ok());
+                    let colors = parts::styles::ColorContext::new(p.bytes(), theme);
+                    let parsed =
+                        parts::styles::parse_with_colors(p.bytes(), &mut model.styles, &colors)?;
                     (
                         parsed.xf_to_style,
                         parsed.visual,
