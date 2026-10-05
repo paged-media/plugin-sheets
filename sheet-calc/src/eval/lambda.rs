@@ -362,7 +362,8 @@ fn subst(e: &Expr, name: &str, repl: &Expr) -> Expr {
         | Expr::Range(_)
         | Expr::Name(_)
         | Expr::StructuredRef(_)
-        | Expr::Local(_) => e.clone(),
+        | Expr::Local(_)
+        | Expr::Missing => e.clone(),
         Expr::Unary(op, a) => Expr::Unary(*op, Box::new(s(a))),
         Expr::Binary(op, a, b) => Expr::Binary(*op, Box::new(s(a)), Box::new(s(b))),
         Expr::SpillRef(a) => Expr::SpillRef(Box::new(s(a))),

@@ -467,7 +467,16 @@ impl Parser<'_> {
             return Ok(args);
         }
         loop {
-            args.push(self.parse_bp(0)?);
+            // An empty slot — `IF(a,,b)`, `F(,x)`, or the trailing `F(a,)` —
+            // is an OMITTED argument, not a syntax error (Excel).
+            if matches!(
+                self.peek().map(|t| &t.kind),
+                Some(TokKind::Comma | TokKind::RParen)
+            ) {
+                args.push(Expr::Missing);
+            } else {
+                args.push(self.parse_bp(0)?);
+            }
             match self.peek().map(|t| &t.kind) {
                 Some(TokKind::Comma) => {
                     self.bump();

@@ -152,7 +152,9 @@ fn fill_cell(c: CellRef, drow: i64, dcol: i64) -> Option<CellRef> {
 fn fill_expr(e: &Expr, drow: i64, dcol: i64) -> Expr {
     let f = |x: &Expr| fill_expr(x, drow, dcol);
     match e {
-        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) => e.clone(),
+        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) | Expr::Missing => {
+            e.clone()
+        }
         Expr::Ref(r) => match fill_cell(*r, drow, dcol) {
             Some(c) => Expr::Ref(c),
             None => ref_error(),
@@ -172,7 +174,7 @@ fn fill_expr(e: &Expr, drow: i64, dcol: i64) -> Expr {
 
 fn rewrite_expr(e: &Expr, plan: &Plan) -> Expr {
     match e {
-        Expr::Lit(_) | Expr::Name(_) => e.clone(),
+        Expr::Lit(_) | Expr::Name(_) | Expr::Missing => e.clone(),
         Expr::Ref(r) => match shift_cell(*r, plan) {
             Some(c) => Expr::Ref(c),
             None => ref_error(),

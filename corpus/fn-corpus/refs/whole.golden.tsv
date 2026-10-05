@@ -1,0 +1,37 @@
+# Whole-column (A:A) and whole-row (1:1) references (round 2, sheet.parser.dialect).
+# Format: id<TAB>formula<TAB>setup<TAB>expected   (TAB-separated; '#'-lines are comments).
+#   setup is ;-separated ADDR=VALUE; the formula sits at Z99 (outside every band used here).
+# Expected values are Excel's (oracle/excel/recorded/refs.tsv).
+sum-col	=SUM(A:A)	A1=1;A2=2;A3=3	6
+sum-col-abs	=SUM($A:$A)	A1=1;A2=2;A3=3	6
+sum-cols	=SUM(A:B)	A1=1;B2=2	3
+sum-mixed	=SUM($A:B)	A1=1;B2=2;C3=4	3
+sum-row	=SUM(2:2)	A2=1;C2=5	6
+sum-rows-abs	=SUM($1:$2)	A1=1;B2=2;C3=4	3
+far-below-data	=SUM(C:C)	C1=1;C900000=2	3
+rows-col	=ROWS(A:C)	-	1048576
+columns-col	=COLUMNS(B:D)	-	3
+columns-row	=COLUMNS(1:1)	-	16384
+rows-row	=ROWS(2:4)	-	3
+count-col	=COUNT(A:A)	A1=1;A2=x;A3=3	2
+counta-col	=COUNTA(A:A)	A1=1;A2=x;A3=3	3
+countblank-col	=COUNTBLANK(A:A)	A1=1;A2=2	1048574
+countif-blank-col	=COUNTIF(A:A,"")	A1=1	1048575
+countif-nonblank-col	=COUNTIF(A:A,"<>")	A1=1;A2=x	2
+countif-eq-blank	=COUNTIF(A1:A4,"=")	A1=1;A3=x	2
+countif-ne-blank	=COUNTIF(A1:A4,"<>")	A1=1;A3=x	2
+sumif-blank-criteria	=SUMIF(A:A,"",B:B)	A1=1;B1=10;B2=20;B9=5	25
+sumif-col	=SUMIF(A:A,">1",B:B)	A1=1;A2=2;A3=3;B1=10;B2=20;B3=30	50
+averageif-col	=AVERAGEIF(A:A,">1",B:B)	A1=1;A2=2;A3=3;B1=10;B2=20;B3=30	25
+vlookup-exact	=VLOOKUP(3,A:B,2,FALSE)	A1=1;A2=3;B2=c	c
+vlookup-approx	=VLOOKUP(2.5,A:B,2)	A1=1;A2=2;A3=3;B2=two	two
+vlookup-approx-past-end	=VLOOKUP(99,A:B,2,TRUE)	A1=1;A2=2;B2=two	two
+vlookup-approx-inner-blank	=VLOOKUP(2.5,A1:B4,2)	A1=1;A3=2;A4=3;B3=two	two
+match-approx	=MATCH(2.5,A:A)	A1=1;A2=2;A3=3	2
+match-approx-inner-blank	=MATCH(2.5,A1:A4)	A1=1;A3=2;A4=3	3
+match-exact-missing	=MATCH(9,A:A,0)	A1=1	#N/A
+index-col	=INDEX(B:B,2)	B2=x	x
+max-col-negatives	=MAX(A:A)	A1=-5;A2=-2	-2
+min-row	=MIN(1:1)	A1=5;C1=3	3
+average-col	=AVERAGE(C:C)	C1=2;C5=4	3
+sumproduct-cols	=SUMPRODUCT(A:A,B:B)	A1=1;A2=2;B1=3;B2=4	11

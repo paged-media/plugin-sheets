@@ -96,6 +96,15 @@ pub enum Expr {
     /// LET-bound `f(2)`. The callee is any expression that reduces to a
     /// `LAMBDA`; anything else is `#VALUE!`.
     Call(Box<Expr>, Vec<Expr>),
+    /// An OMITTED argument — the empty slot in `IF(a,,b)` or the trailing
+    /// one in `VLOOKUP(k,t,2,)` (round-2 versioned amendment, 2026-10-05).
+    /// It is present (it counts toward the call's arity, which is why
+    /// `IF(FALSE,1,)` is `0` while `IF(FALSE,1)` is `FALSE`) but has no
+    /// value of its own; the evaluator hands the kernel a blank, and the few
+    /// functions where Excel treats a missing argument differently from a
+    /// blank one say so in their kernels. Only ever appears as a direct
+    /// argument of `Func`/`Call`; prints as nothing.
+    Missing,
 }
 
 /// An Excel structured (table) reference (spec §6.4 / ECMA-376 §18.17.2.4).

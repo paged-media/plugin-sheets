@@ -123,6 +123,9 @@ pub fn expr_spills(expr: &Expr) -> bool {
 fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillState) -> CellValue {
     match e {
         Expr::Lit(lit) => lit_to_value(lit),
+        // An omitted argument reaches a kernel as a blank (its per-function
+        // meaning, where Excel's differs from a blank, is the kernel's).
+        Expr::Missing => CellValue::Empty,
         Expr::Ref(r) => argview::cell_value(model, *r),
         // A range (or array/union/intersection) in scalar position is #VALUE!
         // (T0 ruling: ranges are only meaningful as function arguments).
@@ -833,9 +836,59 @@ fn eval_func(
     if sheet_core::funcs::meta(fid).special_form {
         return eval_special_form(model, fid, args, ctx, spills);
     }
-    let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
+    let args = with_missing_defaults(fid, args);
+    let (bufs, plans) = plan_args(model, fid, &args, ctx, spills);
     let built = build_args(&bufs, &plans);
     sheet_fn::dispatch(fid, &built, ctx)
+}
+
+/// Omitted arguments (`F(a,,b)`, `F(a,)`) whose Excel meaning is "not given"
+/// rather than "a blank" (round 2, Excel-recorded in `corpus/fn-corpus/refs`).
+/// By default an [`Expr::Missing`] reaches the kernel as a blank, which is
+/// Excel's rule for most functions (`IF(FALSE,1,)` is `0`, `AND(,TRUE)` is
+/// FALSE, `SUM(1,,2)` is 3). For the parameters listed here Excel instead
+/// applies the parameter's DEFAULT: a trailing run of them is dropped (the
+/// kernel then sees the shorter call it already defaults), an inner one is
+/// replaced by the default's literal value.
+fn missing_default(name: &str, idx: usize) -> Option<sheet_core::ast::LitValue> {
+    use sheet_core::ast::{LitValue, OrderedF64};
+    let n = |v: f64| Some(LitValue::Number(OrderedF64::new(v)));
+    match (name, idx) {
+        // ADDRESS(row, col, [abs_num=1], [a1=TRUE], [sheet])
+        ("ADDRESS", 2) => n(1.0),
+        ("ADDRESS", 3) => Some(LitValue::Bool(true)),
+        // XLOOKUP(key, lookup, return, [if_not_found=#N/A], [match=0], [search=1])
+        ("XLOOKUP", 3) => Some(LitValue::Error(CellError::Na)),
+        ("XLOOKUP", 4) => n(0.0),
+        ("XLOOKUP", 5) => n(1.0),
+        // XMATCH(key, lookup, [match=0], [search=1])
+        ("XMATCH", 2) => n(0.0),
+        ("XMATCH", 3) => n(1.0),
+        // TEXTJOIN(delim, [ignore_empty=TRUE], text, ...)
+        ("TEXTJOIN", 1) => Some(LitValue::Bool(true)),
+        _ => None,
+    }
+}
+
+fn with_missing_defaults(fid: FuncId, args: &[Expr]) -> Cow<'_, [Expr]> {
+    if !args.iter().any(|a| matches!(a, Expr::Missing)) {
+        return Cow::Borrowed(args);
+    }
+    let name = sheet_core::funcs::meta(fid).name;
+    let mut out: Vec<Expr> = args.to_vec();
+    while matches!(out.last(), Some(Expr::Missing))
+        && missing_default(name, out.len() - 1).is_some()
+    {
+        out.pop();
+    }
+    for (i, a) in out.iter_mut().enumerate() {
+        if matches!(a, Expr::Missing) {
+            if let Some(lit) = missing_default(name, i) {
+                *a = Expr::Lit(lit);
+            }
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// Evaluate a function call through the RICH (array) door (spec §6.4). Same
@@ -858,7 +911,8 @@ fn eval_func_rich(
         }
         return FnResult::Scalar(eval_special_form(model, fid, args, ctx, spills));
     }
-    let (bufs, plans) = plan_args(model, fid, args, ctx, spills);
+    let args = with_missing_defaults(fid, args);
+    let (bufs, plans) = plan_args(model, fid, &args, ctx, spills);
     let built = build_args(&bufs, &plans);
     sheet_fn::dispatch_rich(fid, &built, ctx)
 }
@@ -1123,13 +1177,14 @@ fn offset_target(
     let d_rows = arg_to_i64(model, &args[1], ctx, spills)?;
     let d_cols = arg_to_i64(model, &args[2], ctx, spills)?;
     // Optional height/width default to the base range's dimensions.
+    // An omitted `OFFSET(r,0,0,,)` height/width is the default too.
     let height = match args.get(3) {
+        Some(Expr::Missing) | None => base.rows() as i64,
         Some(e) => arg_to_i64(model, e, ctx, spills)?,
-        None => base.rows() as i64,
     };
     let width = match args.get(4) {
+        Some(Expr::Missing) | None => base.cols() as i64,
         Some(e) => arg_to_i64(model, e, ctx, spills)?,
-        None => base.cols() as i64,
     };
     if height <= 0 || width <= 0 {
         return Err(CellError::Ref);

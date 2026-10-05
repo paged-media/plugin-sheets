@@ -142,6 +142,8 @@ impl Printer<'_> {
 
     fn expr_inner(&self, e: &Expr, out: &mut String) {
         match e {
+            // An omitted argument prints as nothing (`IF(a,,b)`).
+            Expr::Missing => {}
             Expr::Lit(l) => self.lit(l, out),
             Expr::Ref(r) => self.cell(r, out),
             Expr::Range(r) => self.range(r, out),
@@ -517,7 +519,7 @@ fn expr_prec(e: &Expr) -> Prec {
         // Structured/spill refs are atoms (a `#` postfix on an atom is still
         // atomic for re-parse purposes).
         Expr::Array(_) | Expr::StructuredRef(_) | Expr::SpillRef(_) => Prec::ATOM,
-        Expr::Local(_) | Expr::Call(_, _) => Prec::ATOM,
+        Expr::Local(_) | Expr::Call(_, _) | Expr::Missing => Prec::ATOM,
         Expr::Unary(UnOp::Percent, _) => Prec::PERCENT,
         Expr::Unary(_, _) => Prec::UNARY,
         Expr::Binary(op, _, _) => binop_prec(*op),

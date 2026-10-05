@@ -792,6 +792,41 @@ fn whole_bands_fill_honours_dollar_flags__feat__sheet_parser_dialect() {
     assert_eq!(fill("SUM(A:A)", 0, -1), "SUM(#REF!)");
 }
 
+// ---- Omitted arguments (round 2) ----
+
+#[test]
+fn omitted_arguments_parse_and_print__feat__sheet_parser_dialect() {
+    for t in [
+        "IF(A1,,2)",
+        "IF(A1,1,)",
+        "VLOOKUP(1,A1:B9,2,)",
+        "AND(,TRUE)",
+        "INDEX(A1:C3,,2)",
+        "CONCATENATE(\"a\",,\"b\")",
+        "SUM(,)",
+        "OFFSET(A1,,1)",
+    ] {
+        assert_eq!(roundtrip(t), t, "{t}");
+    }
+    let Expr::Func(_, args) = p("IF(A1,,2)").root else {
+        panic!("not a call")
+    };
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[1], Expr::Missing);
+    let Expr::Func(_, args) = p("IF(A1,1,)").root else {
+        panic!("not a call")
+    };
+    assert_eq!((args.len(), &args[2]), (3, &Expr::Missing));
+    // `F()` is still zero arguments, not one omitted one.
+    let Expr::Func(_, args) = p("NOW()").root else {
+        panic!("not a call")
+    };
+    assert!(args.is_empty());
+    // An empty slot is only an argument: elsewhere it is still an error.
+    assert!(parse("1+", &Ctx::new()).is_err());
+    assert!(parse("(1,)", &Ctx::new()).is_err());
+}
+
 // A sanity check on CellValue so the import is exercised (it ties the
 // parser's error literal to the stored value the xlsx side caches).
 #[test]

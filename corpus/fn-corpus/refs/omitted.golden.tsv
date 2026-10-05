@@ -1,0 +1,51 @@
+# Omitted arguments F(a,,b) / F(a,) (round 2, sheet.parser.dialect): an empty slot
+# is an argument that is present but has no value. Format as whole.golden.tsv.
+# Expected values are Excel's (oracle/excel/recorded/refs.tsv).
+if-omitted-then	=IF(TRUE,,1)	-	0
+if-omitted-else	=IF(FALSE,1,)	-	0
+if-two-args	=IF(FALSE,1)	-	FALSE
+and-omitted-first	=AND(,TRUE)	-	FALSE
+and-omitted-last	=AND(TRUE,)	-	FALSE
+or-omitted	=OR(,TRUE)	-	TRUE
+sum-omitted	=SUM(1,,2)	-	3
+count-omitted	=COUNT(1,,2)	-	3
+counta-omitted	=COUNTA(1,,2)	-	3
+counta-trailing	=COUNTA(1,)	-	2
+average-omitted	=AVERAGE(2,,4)	-	2
+max-omitted	=MAX(-1,,-2)	-	0
+min-omitted	=MIN(5,,7)	-	0
+concatenate-omitted	=CONCATENATE("a",,"b")	-	ab
+vlookup-omitted-range-lookup	=VLOOKUP(2.5,A1:B3,2,)	A1=1;A2=2;A3=3;B2=two	#N/A
+vlookup-omitted-range-lookup-hit	=VLOOKUP(2,A1:B3,2,)	A1=1;A2=2;A3=3;B2=two	two
+vlookup-omitted-index	=VLOOKUP(1,A1:B3,,FALSE)	A1=1	#VALUE!
+index-omitted-row	=INDEX(A1:C1,,2)	A1=1;B1=2;C1=3	2
+index-omitted-col	=INDEX(A1:A3,2,)	A2=7	7
+offset-omitted-rows	=OFFSET(A1,,1)	B1=5	5
+offset-omitted-cols	=SUM(OFFSET(A1,1,,2))	A2=1;A3=2	3
+address-omitted-abs	=ADDRESS(1,1,,FALSE)	-	R1C1
+address-omitted-a1	=ADDRESS(2,3,4,)	-	C2
+round-omitted-digits	=ROUND(2.5,)	-	3
+left-omitted-count	=LEFT("abc",)	-	
+substitute-omitted-new	=SUBSTITUTE("abc","b",)	-	ac
+date-omitted-month	=DATE(2024,,1)	-	45261
+iferror-omitted	=IFERROR(1/0,)	-	0
+choose-omitted	=CHOOSE(2,"a",)	-	0
+mid-omitted-start	=MID("abc",,1)	-	#VALUE!
+if-omitted-cond	=IF(,1,2)	-	2
+isnumber-omitted-result	=ISNUMBER(IF(TRUE,,1))	-	FALSE
+isblank-omitted-result	=ISBLANK(CHOOSE(1,))	-	TRUE
+ifs-omitted	=IFS(FALSE,1,TRUE,)	-	0
+switch-omitted	=SWITCH(1,1,)	-	0
+match-omitted-type	=MATCH(2.5,A1:A3,)	A1=1;A2=2;A3=3	#N/A
+hlookup-omitted-range-lookup	=HLOOKUP(2.5,A1:C2,2,)	A1=1;B1=2;C1=3;B2=two	#N/A
+xlookup-omitted-not-found	=XLOOKUP(9,A1:A3,B1:B3,)	A1=1;A2=2;A3=3;B1=x	#N/A
+xlookup-omitted-mode	=XLOOKUP(2,A1:A3,B1:B3,,)	A1=1;A2=2;A3=3;B2=y	y
+offset-omitted-size	=ROWS(OFFSET(A1:A3,0,0,,))	-	3
+index-omitted-col-2d	=SUM(INDEX(A1:B2,2,))	A1=1;B1=2;A2=3;B2=4	7
+textjoin-omitted-ignore	=TEXTJOIN("-",,"a","","b")	-	a-b
+concat-omitted	=CONCAT(,"a")	-	a
+pmt-omitted-fv-type	=PMT(0.1,10,1000,,)	-	-162.745394882512
+fv-omitted-nper	=FV(0.1,,100)	-	0
+sum-refs-omitted	=SUM(A1,,A2)	A1=1;A2=2	3
+round-omitted-number	=ROUND(,1)	-	0
+text-omitted-format	=TEXT(12.5,)	-	

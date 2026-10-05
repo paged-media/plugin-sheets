@@ -90,7 +90,9 @@ fn has_relative(e: &Expr) -> bool {
         Expr::Func(_, args) => args.iter().any(has_relative),
         Expr::Call(c, args) => has_relative(c) || args.iter().any(has_relative),
         Expr::Array(rows) => rows.iter().flatten().any(has_relative),
-        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) => false,
+        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) | Expr::Missing => {
+            false
+        }
     }
 }
 
@@ -125,7 +127,9 @@ fn rebase(e: &Expr, at: CellRef) -> Expr {
         Expr::Array(rows) => Expr::Array(rows.iter().map(|r| r.iter().map(f).collect()).collect()),
         Expr::SpillRef(a) => Expr::SpillRef(Box::new(f(a))),
         Expr::Call(c, args) => Expr::Call(Box::new(f(c)), args.iter().map(f).collect()),
-        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) => e.clone(),
+        Expr::Lit(_) | Expr::Name(_) | Expr::StructuredRef(_) | Expr::Local(_) | Expr::Missing => {
+            e.clone()
+        }
     }
 }
 

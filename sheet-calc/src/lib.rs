@@ -610,9 +610,10 @@ impl Engine {
                     .next()
                     .and_then(|r| r.into_iter().next())
                     .unwrap_or(CellValue::Empty),
-            };
+            }
+            .into_shown();
         }
-        eval::eval_expr(&self.model, &f.root, &ctx, &self.spills)
+        eval::eval_expr(&self.model, &f.root, &ctx, &self.spills).into_shown()
     }
 
     /// The `(rows, cols)` area of the legacy array formula anchored at
@@ -768,9 +769,14 @@ impl Engine {
         perf_count!(evaluations, 1);
         if let Some((rows, cols)) = self.array_area(cref) {
             let r = eval::eval_array(&self.model, &f.root, &ctx, &self.spills);
-            return FnResult::Array(fit_to_area(r, rows, cols));
+            return shown_result(FnResult::Array(fit_to_area(r, rows, cols)));
         }
-        eval::eval_expr_rich(&self.model, &f.root, &ctx, &self.spills)
+        shown_result(eval::eval_expr_rich(
+            &self.model,
+            &f.root,
+            &ctx,
+            &self.spills,
+        ))
     }
 
     /// Materialize a `rows × cols` array block anchored at `anchor` (spec §6.4).
@@ -1292,6 +1298,36 @@ impl ParseCtx for ModelParseCtx<'_> {
     }
     fn current_sheet(&self) -> SheetId {
         self.current
+    }
+}
+
+/// What a FORMULA cell shows for a blank result (Excel): a formula never
+/// yields a blank cell — `=A1` over an empty `A1`, `IF(TRUE,,1)`, or a blank
+/// element of a spilled block is `0` (round 2, omitted arguments; the corpus
+/// had 37 `=D41`-shaped cells caching `0` where the engine stored a blank).
+/// Inside an expression the value stays blank (`ISBLANK(CHOOSE(1,))` is
+/// TRUE); only the stored cell result is grounded.
+trait IntoShown {
+    fn into_shown(self) -> CellValue;
+}
+
+impl IntoShown for CellValue {
+    fn into_shown(self) -> CellValue {
+        match self {
+            CellValue::Empty => CellValue::Number(0.0),
+            v => v,
+        }
+    }
+}
+
+fn shown_result(r: FnResult) -> FnResult {
+    match r {
+        FnResult::Scalar(v) => FnResult::Scalar(v.into_shown()),
+        FnResult::Array(g) => FnResult::Array(
+            g.into_iter()
+                .map(|row| row.into_iter().map(IntoShown::into_shown).collect())
+                .collect(),
+        ),
     }
 }
 
