@@ -229,6 +229,28 @@ class Emitter {
   }
 }
 
+/** What the object model (ADR 323, `src/object-model.ts`) needs from the
+ *  session: the engine, the after-write bookkeeping, the version swap a
+ *  document undo/redo or open drives, and the frames that host the
+ *  workbook's label. */
+export interface ObjectBridge {
+  engine(): SheetEngine | null;
+  /** Bumps whenever the workbook is REPLACED (import, blank, CSV, dataset,
+   *  document switch) — a version history belongs to one workbook. */
+  epoch(): number;
+  /** After an object-model write: caches dropped, the placements refreshed
+   *  and the cache part re-saved (debounced), listeners told. */
+  afterWrite(regions: readonly CellRegion[] | null): void;
+  /** Swap in a stored version's bytes (document undo/redo, or the version
+   *  the open document's label names). Placements are KEPT and NOT
+   *  refreshed: the document's own history already restored the page. */
+  loadVersion(bytes: Uint8Array, name: string): boolean;
+  /** The text frames the workbook is placed in (sync; most recent last). */
+  hostFrames(): string[];
+  /** Re-read the document's sheet-bound frames when none are known. */
+  discoverHostFrames(): Promise<string[]>;
+}
+
 /** The session's reactive state — a plain snapshot the panel renders. */
 export interface SessionState {
   /** The booted engine, or null before the first successful import. */
@@ -252,7 +274,15 @@ export interface SessionState {
    *  revision (`stale`). Null when the workbook was hand-entered / imported
    *  from XLSX (the snapshot is committed content either way — §1.1 honesty:
    *  no auto-refetch; a refresh is an explicit re-source). */
-  dataSource: { providerId: string; revision: string; stale: boolean } | null;
+  dataSource: {
+    providerId: string;
+    revision: string;
+    stale: boolean;
+    /** Re-pulled on every provider revision (the default since the
+     *  object-model wave); false = the snapshot is kept and only marked
+     *  stale. */
+    live?: boolean;
+  } | null;
   /** Wave 5 — bumps on every Cmd+F / "Find in sheet": the grid panel
    *  focuses its find field when it changes. */
   findRequest: number;
@@ -534,7 +564,10 @@ export interface WorkbookSession {
    *  revision marks the sheet stale (logged "re-source to refresh"; NO
    *  auto-refetch — §1.1 / the RFC). A no-op (logged) when the provider is
    *  gone, the surface is absent, or the engine cannot boot. */
-  sourceFromDataset(providerId: string): Promise<void>;
+  sourceFromDataset(providerId: string, opts?: { live?: boolean }): Promise<void>;
+  /** ADR 323 — the object model's door into the session
+   *  (`src/object-model.ts`). Not a panel API. */
+  objectBridge(): ObjectBridge;
   /** Write any committed-but-unsaved edits to the container part + blob
    *  NOW (cancelling the pending debounce) and resolve when every queued
    *  write has landed. Edits persist on their own after
@@ -1787,8 +1820,10 @@ export function createWorkbookSession(
   function seedSheetFromRecords(
     engine: SheetEngine,
     records: ProviderRecordSet,
-  ): void {
+    clear?: { rows: number; cols: number },
+  ): { rows: number; cols: number } {
     const fields = records.schema.fields;
+    const extent = { rows: records.rowCount + 1, cols: Math.max(fields.length, records.columns.length) };
     // Header row (row 0) — the schema field names; body rows 1.. — column-
     // major: columns[c][r] is the cell value for data-row r, which lands
     // on sheet row r + 1.
@@ -1802,18 +1837,58 @@ export function createWorkbookSession(
         inputs.push({ sheet: 0, row: r + 1, col: c, input: cellToString(col[r]) });
       }
     }
+    // A re-pull clears what the previous snapshot wrote beyond this one.
+    if (clear) {
+      for (let r = 0; r < clear.rows; r++) {
+        for (let c = 0; c < clear.cols; c++) {
+          if (r < extent.rows && c < extent.cols) continue;
+          inputs.push({ sheet: 0, row: r, col: c, input: "" });
+        }
+      }
+    }
     // ONE write + ONE recalc through the batch door when the engine has it;
     // per cell otherwise, or when the batch refuses an input (a bad cell is
     // then skipped alone).
     if (engine.setCells) {
       try {
         engine.setCells(inputs);
-        return;
+        return extent;
       } catch (err) {
         host.log.debug("sourceFromDataset: batch seed refused — per cell", err);
       }
     }
     for (const i of inputs) writeCell(engine, i.row, i.col, i.input);
+    return extent;
+  }
+
+  /** The extent the linked dataset last wrote (a re-pull clears beyond). */
+  let seededExtent: { rows: number; cols: number } | null = null;
+
+  /** Live dataset (object-model wave): pull the provider's newest snapshot
+   *  into the SAME workbook — sheet 0 rewritten in one batch write, cells
+   *  the previous snapshot wrote beyond the new one cleared — and refresh
+   *  what is placed. The workbook's formulas elsewhere keep working. */
+  async function repullDataset(providerId: string): Promise<void> {
+    const engine = state.engine;
+    if (!engine || !host.dataProviders) return;
+    let snapshot;
+    try {
+      snapshot = await host.dataProviders.get(providerId);
+    } catch (err) {
+      host.log.warn(`dataset "${providerId}": re-pull failed`, err);
+      return;
+    }
+    if (!snapshot || state.engine !== engine || state.dataSource?.providerId !== providerId) return;
+    const prev = seededExtent;
+    seededExtent = seedSheetFromRecords(engine, snapshot.records, prev ?? undefined);
+    state.dataSource = { providerId, revision: snapshot.revision, stale: false, live: true };
+    const rows = Math.max(seededExtent.rows, prev?.rows ?? 0);
+    const cols = Math.max(seededExtent.cols, prev?.cols ?? 0);
+    markEdited();
+    emitter.emit({
+      kind: "cells",
+      regions: [{ sheet: 0, firstRow: 0, firstCol: 0, lastRow: Math.max(rows - 1, 0), lastCol: Math.max(cols - 1, 0) }],
+    });
   }
 
   /** Write one cell through the engine, tolerating a throw (an out-of-range
@@ -1921,6 +1996,11 @@ export function createWorkbookSession(
     if (!state.engine) return;
     revision += 1;
     scheduleRefresh();
+    schedulePersist();
+  }
+
+  /** Re-save the cache part (and blob) after the debounce. */
+  function schedulePersist(): void {
     persistDirty = true;
     if (persistTimer !== null) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
@@ -2415,7 +2495,53 @@ export function createWorkbookSession(
     emitter.emit();
   }
 
+  // ADR 323 — the object model's door (src/object-model.ts).
+  const bridge: ObjectBridge = {
+    engine: () => state.engine,
+    epoch: () => loadEpoch,
+    afterWrite(regions) {
+      markEdited();
+      emitter.emit(regions && regions.length > 0 ? { kind: "cells", regions } : OTHER_CHANGE);
+    },
+    loadVersion(bytes, name) {
+      const engine = state.engine;
+      if (!engine) return false;
+      try {
+        engine.loadXlsx(bytes);
+      } catch (err) {
+        host.log.error("object model: stored workbook version failed to load", err);
+        return false;
+      }
+      state.fileName = name;
+      readCache.clear();
+      revision += 1;
+      editJournal = [];
+      journalCursor = 0;
+      const sheets = engine.listSheets();
+      if (!sheets.some((x) => x.id === state.activeSheet)) {
+        state.activeSheet = sheets.length > 0 ? sheets[0].id : null;
+        state.gridSelection = null;
+        defaultRangeForActive();
+      }
+      schedulePersist(); // the cache part follows; the page already did
+      emitter.emit();
+      return true;
+    },
+    hostFrames() {
+      const ids = [...loweredTables.keys()];
+      if (lastFrameId && !ids.includes(lastFrameId)) ids.push(lastFrameId);
+      return ids;
+    },
+    async discoverHostFrames() {
+      if (loweredTables.size === 0 && state.engine) {
+        await rediscoverPlacements().catch((err) => host.log.warn("rediscover failed", err));
+      }
+      return bridge.hostFrames();
+    },
+  };
+
   const api: WorkbookSession = {
+    objectBridge: () => bridge,
     state: () => state,
     onDidChange: (l) => emitter.on(l),
 
@@ -3178,7 +3304,8 @@ export function createWorkbookSession(
       }
     },
 
-    async sourceFromDataset(providerId: string) {
+    async sourceFromDataset(providerId: string, opts?: { live?: boolean }) {
+      const live = opts?.live ?? true;
       // S-15 — honest defer when no registry is wired (graceful absence,
       // like the existing honest-missing patterns). No surface ⇒ nothing
       // to source.
@@ -3228,9 +3355,10 @@ export function createWorkbookSession(
         host.log.warn("sourceFromDataset: prior engine dispose failed", err);
       }
 
-      seedSheetFromRecords(engine, snapshot.records);
+      seededExtent = seedSheetFromRecords(engine, snapshot.records);
 
       cancelPendingPersist(); // the prior workbook is replaced
+      loadEpoch += 1; // a new workbook: its version history starts here
       forgetPlacements();
       state.engine = engine;
       state.activeSheet = 0;
@@ -3246,6 +3374,7 @@ export function createWorkbookSession(
         providerId,
         revision: snapshot.revision,
         stale: false,
+        live,
       };
 
       // Replace the prior dataset subscription with one for this provider.
@@ -3253,6 +3382,11 @@ export function createWorkbookSession(
       dataSourceSub = host.dataProviders.onDidChange(providerId, (revision) => {
         if (state.dataSource?.providerId !== providerId) return;
         if (revision === state.dataSource.revision) return;
+        if (state.dataSource.live) {
+          // Live (the object-model wave): re-pull now.
+          void repullDataset(providerId);
+          return;
+        }
         state.dataSource = { ...state.dataSource, stale: true };
         host.log.info(
           `dataset "${providerId}" updated (revision ${revision}) — ` +

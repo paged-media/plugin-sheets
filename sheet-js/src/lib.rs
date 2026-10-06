@@ -767,6 +767,39 @@ mod wasm {
             to_js(&self.session.list_names())
         }
 
+        // ── the object-model doors (ADR 323) ─────────────────────────
+
+        /// `[{name, sheet, range, columns, headerRow, totalsRow, styleName?}]`
+        /// — every structured table (read-only: the table parts re-emit
+        /// verbatim).
+        /// The computed values of `range`, typed and unformatted: numbers,
+        /// strings, booleans, `null` (empty), `{error}` — row-major.
+        pub fn get_range_raw(&self, sheet: u16, range: &str) -> Result<JsValue, JsValue> {
+            to_js(&self.session.get_range_raw(sheet, range).map_err(map_err)?)
+        }
+
+        pub fn list_tables(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.list_tables())
+        }
+
+        /// Every chart with its series ranges and options:
+        /// `[{index, hostSheet, kind, title?, legend, series:[{name?, values,
+        /// categories?, color?}], categoryAxisTitle?, valueAxisTitle?,
+        /// valueAxisMin?, valueAxisMax?}]`.
+        pub fn chart_specs(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.chart_specs())
+        }
+
+        /// Patch chart `index` (`{kind?, title?, legend?, series?,
+        /// categoryAxisTitle?, valueAxisTitle?, valueAxisMin?, valueAxisMax?}`;
+        /// `null` clears a nullable field). Validated whole first.
+        /// Page-side only, like `add_chart`.
+        pub fn update_chart(&mut self, index: u32, patch: JsValue) -> Result<(), JsValue> {
+            let patch: crate::core::ChartPatch = serde_wasm_bindgen::from_value(patch)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            self.session.update_chart(index, patch).map_err(map_err)
+        }
+
         /// Resolve a range argument (A1, `Sheet!A1:B2`, a defined name or a
         /// table name) as seen from `sheet`: `{sheet, range}` (range in A1).
         pub fn resolve_range(&self, sheet: u16, text: &str) -> Result<JsValue, JsValue> {

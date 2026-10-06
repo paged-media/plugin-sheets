@@ -69,7 +69,9 @@ use sheet_xlsx::{XlsxChart, XlsxDocument};
 pub mod csv;
 mod fill;
 mod format;
+mod objects;
 mod ops;
+pub use objects::{ChartPatch, ChartSpec, RawValue, SeriesArg, SeriesSpec, TableInfo};
 pub use format::{
     EdgeArg, MergeResult, NameInfo, ResolvedRange, SetStyleResult, SheetLayoutInfo, StylePatchArg,
 };

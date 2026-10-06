@@ -504,6 +504,65 @@ export interface SheetEngine {
   /** Fill `dst` from `src` (`series` = the fill handle; false = fill
    *  down/right). The per-cell rewrites journal as one undo step. */
   fillRange?(sheet: number, src: string, dst: string, series: boolean): SortResult;
+  /** ADR 323 — the computed values of a range, typed and unformatted
+   *  (number | string | boolean | null, errors as `{ error }`). */
+  getRangeRaw?(sheet: number, range: string): RawValue[][];
+  /** ADR 323 — every structured table (read-only). */
+  listTables?(): TableInfo[];
+  /** ADR 323 — every chart with its series ranges and options. */
+  chartSpecs?(): ChartSpec[];
+  /** ADR 323 — patch one chart (validated whole; page-side only). */
+  updateChart?(index: number, patch: ChartPatch): void;
+}
+
+/** One computed cell value (no number format applied). */
+export type RawValue = number | string | boolean | null | { error: string };
+
+/** One structured table (ListObject) as the engine models it. */
+export interface TableInfo {
+  name: string;
+  sheet: number;
+  /** Full extent (header + body + totals), plain A1 without the sheet. */
+  range: string;
+  columns: string[];
+  headerRow: boolean;
+  totalsRow: boolean;
+  styleName?: string | null;
+}
+
+/** One chart series; ranges as `Sheet!A1:B2`. */
+export interface SeriesSpec {
+  name?: string | null;
+  values: string;
+  categories?: string | null;
+  color?: string | null;
+}
+
+/** One chart with the options the object model reads. */
+export interface ChartSpec {
+  index: number;
+  hostSheet: number;
+  kind: string;
+  title?: string | null;
+  legend: boolean;
+  series: SeriesSpec[];
+  categoryAxisTitle?: string | null;
+  valueAxisTitle?: string | null;
+  valueAxisMin?: number | null;
+  valueAxisMax?: number | null;
+}
+
+/** A chart patch: absent = unchanged, `null` clears a nullable field. A
+ *  series argument's empty strings mean none. */
+export interface ChartPatch {
+  kind?: string;
+  title?: string | null;
+  legend?: boolean;
+  series?: { values: string; categories: string; name: string; color: string }[];
+  categoryAxisTitle?: string | null;
+  valueAxisTitle?: string | null;
+  valueAxisMin?: number | null;
+  valueAxisMax?: number | null;
 }
 
 /** A range argument resolved by the engine: its sheet, normalized A1, and
@@ -708,6 +767,10 @@ export interface SheetWasmEngine {
   delete_name?(sheet: number, name: string, scope?: number): void;
   list_names?(): NameInfo[];
   resolve_range?(sheet: number, text: string): ResolvedRange;
+  get_range_raw?(sheet: number, range: string): (RawValue | undefined)[][];
+  list_tables?(): TableInfo[];
+  chart_specs?(): ChartSpec[];
+  update_chart?(index: number, patch: ChartPatch): void;
 }
 
 /** The module shape the wasm-bindgen `--target web` glue exports. */
@@ -869,6 +932,15 @@ export function wrapEngine(
     fillRange: (sheet, src, dst, series) => {
       tick();
       return need("fill_range")(sheet, src, dst, series) as SortResult;
+    },
+    getRangeRaw: (sheet, range) =>
+      (need("get_range_raw")(sheet, range) as (RawValue | undefined)[][]).map((row) =>
+        row.map((v) => (v === undefined ? null : v)),
+      ),
+    listTables: () => need("list_tables")() as TableInfo[],
+    chartSpecs: () => need("chart_specs")() as ChartSpec[],
+    updateChart: (index, patch) => {
+      need("update_chart")(index, patch);
     },
   };
 }
