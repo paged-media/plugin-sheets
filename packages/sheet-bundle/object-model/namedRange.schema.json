@@ -1,0 +1,24 @@
+[
+  {
+    "path": "name",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Name"
+  },
+  {
+    "path": "refersTo",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Refers to"
+  },
+  {
+    "path": "scope",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Scope",
+    "summary": "Empty = the workbook; else the sheet it is visible on."
+  }
+]

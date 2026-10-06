@@ -42,7 +42,7 @@ if (process.env.REQUIRE_REAL_ENGINE === "1" && !ENGINE_BUILT) {
 
 const val = (v: ObjectValue): unknown => (v.kind === "value" ? v.value : v);
 
-describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.om.model]", () => {
+describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.objects]", () => {
   vi.setConfig({ testTimeout: 60_000 });
   let h: HeadlessHost;
   let host: BundleHost;
@@ -106,20 +106,27 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.om.model]", () =
     expect(bad.kind).toBe("refused");
   });
 
-  it("refuses a write before the workbook is placed (no host for the label)", async () => {
+  it("writes before anything is placed: the version label is the document's [sheet.objects]", async () => {
     const r = await h.objects.set(`${P}/cell/Sheet1!A1`, "value", "7");
-    expect(r.applied).toBe(false);
-    expect(r.reason).toMatch(/place/);
+    expect(r).toMatchObject({ applied: true, undoSteps: 1 });
+    const label = await host.document.getDocumentMetadata();
+    const hash = (label?.data as { wb: string }).wb;
+    expect(hash).toMatch(/^[0-9a-f]{32}$/);
+    expect(val(await h.objects.get(`${P}/workbook/main`, "version"))).toBe(hash);
+    // The version is stored content-addressed; the label names it.
+    expect(await host.parts.read(`versions/${hash}.xlsx`)).not.toBeNull();
+    await host.document.undo();
+    await settle();
     expect(val(await h.objects.get(`${P}/cell/Sheet1!A1`, "value"))).toBe("1");
   });
 
-  it("a set is ONE document undo step; undo and redo move the workbook [sheet.om.undo]", async () => {
+  it("a set is ONE document undo step; undo and redo move the workbook [sheet.objects]", async () => {
     const frame = await place();
     expect(h.objects.schema).toBeDefined();
     const r = await h.objects.set(`${P}/cell/Sheet1!B2`, "value", "42");
     expect(r).toMatchObject({ applied: true, undoSteps: 1 });
     expect(val(await h.objects.get(`${P}/cell/Sheet1!B2`, "value"))).toBe("42");
-    // The label on the hosting frame names the live version.
+    // A placed cell's host is the frame it is placed in (ADR 559 labels).
     expect(s.objectBridge().hostFrames()).toContain(frame.replace(/^textFrame:/, ""));
 
     await host.document.undo();
@@ -166,7 +173,7 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.om.model]", () =
     expect(val(await h.objects.get(`${P}/cell/Sheet1!A1`, "value"))).toBe("1");
   });
 
-  it("a 100-cell range set is ONE batch: one engine write, one save, one commit [sheet.om.perf]", async () => {
+  it("a 100-cell range set is ONE batch: one engine write, one save, one commit [sheet.objects]", async () => {
     await place();
     await h.objects.set(`${P}/cell/Sheet1!A1`, "value", "1"); // the baseline version is stored once
     const engine = s.state().engine!;
@@ -219,7 +226,7 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.om.model]", () =
     expect(await h.objects.query(`${P}/namedRange`)).toEqual([]);
   });
 
-  it("charts: create, read series and options, patch [sheet.om.chart]", async () => {
+  it("charts: create, read series and options, patch [sheet.objects]", async () => {
     await place();
     const created = await h.objects.batch([
       {
@@ -232,6 +239,7 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.om.model]", () =
         },
       },
     ]);
+    expect(created.reason ?? "").toBe("");
     expect(created.applied).toBe(true);
     const charts = await h.objects.query(`${P}/chart`);
     expect(charts).toEqual([`${P}/chart/0`]);
@@ -272,7 +280,7 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.om.model]", () =
   });
 });
 
-describe.skipIf(!ENGINE_BUILT)("paged.sheet tables [sheet.om.table]", () => {
+describe.skipIf(!ENGINE_BUILT)("paged.sheet tables [sheet.objects]", () => {
   vi.setConfig({ testTimeout: 60_000 });
   it("reads a structured table; writes are refused (the part re-emits verbatim)", async () => {
     const h = await openHost();
@@ -299,7 +307,7 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet tables [sheet.om.table]", () => {
   });
 });
 
-describe.skipIf(!ENGINE_BUILT)("paged.sheet datasets, both directions [sheet.om.dataset]", () => {
+describe.skipIf(!ENGINE_BUILT)("paged.sheet datasets, both directions [sheet.objects] [sheet.data.consumer]", () => {
   vi.setConfig({ testTimeout: 60_000 });
 
   const records = (rows: [string, number][]): ProviderRecordSet => ({
@@ -385,7 +393,7 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet datasets, both directions [sheet.om.
   });
 });
 
-describe.skipIf(!ENGINE_BUILT)("the real bundle boots headless with its object model [sheet.om.headless]", () => {
+describe.skipIf(!ENGINE_BUILT)("the real bundle boots headless with its object model [sheet.objects]", () => {
   vi.setConfig({ testTimeout: 60_000 });
   it("activate registers the kinds and typed commands; get/set/batch/undo work", async () => {
     const h = await openHost();

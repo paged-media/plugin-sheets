@@ -329,6 +329,7 @@ impl SheetSession {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)] // `__feat__<id>` test-name links (cockpit rule)
 mod tests {
     use super::*;
 
@@ -348,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn chart_specs_carry_series_ranges__feat__sheet_om_chart() {
+    fn chart_specs_carry_series_ranges__feat__sheet_objects() {
         let mut s = session();
         let i = s.add_chart(0, "B2:C3", "A2:A3", "column", "Sales", "columns").unwrap();
         let spec = &s.chart_specs()[i as usize];
@@ -361,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn update_chart_patches_and_validates_whole__feat__sheet_om_chart() {
+    fn update_chart_patches_and_validates_whole__feat__sheet_objects() {
         let mut s = session();
         let i = s.add_chart(0, "B2:C3", "", "column", "", "columns").unwrap();
         let patch = ChartPatch {
@@ -401,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn get_range_raw_is_typed_and_unformatted__feat__sheet_om_cell() {
+    fn get_range_raw_is_typed_and_unformatted__feat__sheet_objects() {
         let mut s = session();
         s.set_cell(0, 3, 1, "=B2+B3").unwrap();
         s.set_cell(0, 3, 2, "TRUE").unwrap();
@@ -415,12 +416,13 @@ mod tests {
     }
 
     #[test]
-    fn list_tables_is_empty_without_tables__feat__sheet_om_table() {
+    fn list_tables_is_empty_without_tables__feat__sheet_objects() {
         assert!(session().list_tables().is_empty());
     }
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)] // `__feat__<id>` test-name links (cockpit rule)
 mod corpus_tests {
     use super::*;
 
@@ -431,7 +433,7 @@ mod corpus_tests {
     }
 
     #[test]
-    fn list_tables_reads_the_corpus_table__feat__sheet_om_table() {
+    fn list_tables_reads_the_corpus_table__feat__sheet_objects() {
         let tables = load("07-tables.xlsx").list_tables();
         assert!(!tables.is_empty(), "07-tables.xlsx carries a table");
         let t = &tables[0];
@@ -441,7 +443,7 @@ mod corpus_tests {
     }
 
     #[test]
-    fn chart_specs_read_a_parsed_chart__feat__sheet_om_chart() {
+    fn chart_specs_read_a_parsed_chart__feat__sheet_objects() {
         let specs = load("09-chart.xlsx").chart_specs();
         assert!(!specs.is_empty());
         assert!(!specs[0].series.is_empty());

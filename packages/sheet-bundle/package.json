@@ -22,9 +22,9 @@
     "react": "^18.3.0"
   },
   "devDependencies": {
-    "@paged-media/canvas-wasm": "0.64.0",
-    "@paged-media/plugin-api": "0.2.37-canary.0",
-    "@paged-media/plugin-sdk": "0.2.37-canary.0",
+    "@paged-media/canvas-wasm": "0.69.0",
+    "@paged-media/plugin-api": "0.2.42-canary.0",
+    "@paged-media/plugin-sdk": "0.2.42-canary.0",
     "@paged-media/sheet-host-model": "workspace:*",
     "@types/node": "20.19.39",
     "@types/react": "^18.3.31",
@@ -37,7 +37,8 @@
   "files": [
     "dist",
     "bin",
-    "manifest.json"
+    "manifest.json",
+    "object-model"
   ],
   "publishConfig": {
     "access": "public",

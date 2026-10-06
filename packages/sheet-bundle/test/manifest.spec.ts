@@ -93,11 +93,13 @@ describe("sheet_plugin_manifest_valid", () => {
     expect(manifest.capabilities.clipboard).toBe("full");
   });
 
-  it("declares the data-provider CONSUMER capability (S-15) — consume, not publish", () => {
+  it("declares the data-provider capability both ways: consume (S-15) and publish (a range as a dataset)", () => {
     // The consumer gate: the host refuses discover/get unless the manifest
-    // declares consume ∋ "dataset". paged.sheet never publishes.
+    // declares consume ∋ "dataset"; register needs publish ∋ "dataset"
+    // (object-model wave: a sheet range published as a dataset).
     expect(manifest.capabilities.dataProviders).toEqual({
       consume: ["dataset"],
+      publish: ["dataset"],
     });
   });
 

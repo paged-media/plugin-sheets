@@ -245,6 +245,8 @@ export interface ObjectBridge {
    *  the open document's label names). Placements are KEPT and NOT
    *  refreshed: the document's own history already restored the page. */
   loadVersion(bytes: Uint8Array, name: string): boolean;
+  /** Rename the workbook (its display / file name). */
+  setName(name: string): void;
   /** The text frames the workbook is placed in (sync; most recent last). */
   hostFrames(): string[];
   /** Re-read the document's sheet-bound frames when none are known. */
@@ -2526,6 +2528,11 @@ export function createWorkbookSession(
       schedulePersist(); // the cache part follows; the page already did
       emitter.emit();
       return true;
+    },
+    setName(name) {
+      state.fileName = name;
+      schedulePersist();
+      emitter.emit();
     },
     hostFrames() {
       const ids = [...loweredTables.keys()];

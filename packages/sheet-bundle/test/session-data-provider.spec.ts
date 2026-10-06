@@ -276,15 +276,18 @@ describe("sheet_data_provider_consumer: sourceFromDataset", () => {
       providerId: "fct_products",
       revision: "rev-1",
       stale: false,
+      live: true, // the default since the object-model wave
     });
     expect(changes).toBeGreaterThan(0);
   });
 
-  it("subscribes to onDidChange and marks the sheet stale on a new revision (no auto-refetch)", async () => {
+  it("a NON-live link subscribes to onDidChange and marks the sheet stale on a new revision (no auto-refetch)", async () => {
     const { host, changeListeners, getCalls } = fakeHost();
     const session = createWorkbookSession(host);
 
-    await session.sourceFromDataset("fct_products");
+    // `live: false` keeps the S-15 behaviour; live (the default) re-pulls —
+    // pinned against the real engine in object-model.spec.ts.
+    await session.sourceFromDataset("fct_products", { live: false });
     expect(changeListeners.has("fct_products")).toBe(true);
     expect(getCalls).toEqual(["fct_products"]); // one pull so far
 
@@ -297,6 +300,7 @@ describe("sheet_data_provider_consumer: sourceFromDataset", () => {
       providerId: "fct_products",
       revision: "rev-1",
       stale: true,
+      live: false,
     });
     expect(getCalls).toEqual(["fct_products"]);
   });

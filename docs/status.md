@@ -60,7 +60,31 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 - **Export.** An `.xlsx` exporter. Parts the session did not touch are written back with their
   original bytes, including pivot caches, macros and other parts never interpreted.
 
+- **Object model (ADR 323; on the `om/object-model` branch, needs plugin-api 0.2.42).** Seven
+  kinds under `plugin:media.paged.sheet/…`: `workbook/main`, `sheet/<name>`,
+  `cell/<sheet>!<A1>` (value, formula, input, display, number format, font, fill, alignment,
+  wrap), `range/<sheet>!<A1:B2>` (values, inputs, formula fill, display and the same format
+  rows), `namedRange/<name>`, `table/<name>` and `chart/<index>` (type, title, legend, series
+  ranges, axis titles and bounds). The rows are in `packages/sheet-bundle/object-model/`. A
+  `host.objects` batch applies to the engine, stores the workbook as a content-addressed version
+  (`versions/<hash>.xlsx` + `.json`) and sets the document label `x-paged:media.paged.sheet` to
+  that hash: one undo step, and document undo/redo reloads the version the label names. A
+  100-cell range write is one engine write, one save, one commit and two part writes (a pinned
+  budget). Typed commands (16 typed twins of palette commands, plus `publishDataset` /
+  `unpublishDataset`) take value-typed arguments; 8 commands remain untyped. The bundle boots in
+  `createHeadlessHost` with the real engine for get, set, batch and undo.
+- **Datasets, both ways.** A dataset-sourced sheet re-pulls on every provider revision by default
+  (`live: false` keeps the old mark-stale behaviour), and a sheet range can be published as a
+  `dataset` provider whose revision moves with every edit.
+
 ## Limits of what is shipped
+
+- **Object model.** Tables are read-only (the xlsx table part is written back byte for byte, so
+  a table edit would not survive a save). The version label is the document's, not a frame's:
+  core lets a plugin write only `x-paged:<id>` on an item, and the placement binding already
+  holds that key. The page refresh after a write is a second document step. Charts the object
+  model creates or changes are kept as a chart-op journal next to each version; charts authored
+  in the panel are not.
 
 - **Document writes.** Placing a range takes two writes and so two undo steps (frame and table,
   then content); one write needs the engine to resolve a table handle inside a batch, which

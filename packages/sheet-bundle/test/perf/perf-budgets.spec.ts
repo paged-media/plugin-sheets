@@ -71,6 +71,7 @@ import {
 } from "./counting-host";
 import { engineCounters, resetEngineCounters } from "./perf-engine";
 import {
+  CORE_PRE_66,
   ENGINE_BUILT,
   WASM,
   authorWorkbook,
@@ -228,11 +229,12 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
     }
     expectBudget("place 50x20", work, {
       "document.meta": 1,
-      "document.frameChain": 1, // the frame, read back off the table's story
+      // A pre-66 core: the frame read back off the table's story.
+      "document.frameChain": CORE_PRE_66 ? 1 : 0,
       "text.measureString": 20,
       // 1 on a protocol-66 host (core 0eff96b): see the next scenario. A
       // 0.64 host never gets the one-call batch (no 66 door answered).
-      "document.mutate": 2,
+      "document.mutate": CORE_PRE_66 ? 2 : 1,
       "selection.set": 1,
       // Wave 4: the PAGE door (styles + conditional formatting) replaces the
       // key-0 door one for one; the placement reads the selection (an
@@ -241,20 +243,23 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
       "selection.get": 1,
       "engine.listSheets": 1,
       "document.collection": 1, // the swatch read before the fill mints
-      "=mutations": 2,
+      "=mutations": CORE_PRE_66 ? 2 : 1,
       "=engineCalls": 2,
-      "=reads": 3,
+      "=reads": CORE_PRE_66 ? 3 : 2,
       "=bytesWritten": 0,
       "=sceneItems": 0,
       "=rejected": 0,
     });
     // Undo: the content is ONE step (all 1000 cells at once), the frame
-    // and its table the other — two steps where it was 1003.
+    // and its table the other — two steps where it was 1003. A 66+ core
+    // places the whole thing in ONE step.
     await raw.document.undo();
-    const emptied = await exportedTableCells(h);
-    expect(emptied).toHaveLength(1);
-    expect([...emptied[0].values()].every((t) => t === "")).toBe(true);
-    await raw.document.undo();
+    if (CORE_PRE_66) {
+      const emptied = await exportedTableCells(h);
+      expect(emptied).toHaveLength(1);
+      expect([...emptied[0].values()].every((t) => t === "")).toBe(true);
+      await raw.document.undo();
+    }
     expect(await exportedTableCells(h)).toHaveLength(0);
   });
 

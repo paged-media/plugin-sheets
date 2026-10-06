@@ -43,6 +43,16 @@ export const WASM = join(BIN, "sheet_js_bg.wasm");
 /** The sheet engine artifact is built (scripts/build-wasm.sh). */
 export const ENGINE_BUILT = existsSync(WASM);
 
+/** The installed core (`@paged-media/canvas-wasm`) predates protocol 66 —
+ *  the scenarios that pin a pre-66 core's behaviour run only then (the
+ *  object-model wave moved the dev pin to 0.69). */
+export const CORE_PRE_66 = (() => {
+  const pkg = JSON.parse(
+    readFileSync(join(PKG, "node_modules/@paged-media/canvas-wasm/package.json"), "utf8"),
+  ) as { version: string };
+  return Number(pkg.version.split(".")[1]) < 66;
+})();
+
 const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
 const mapBacking = () => {

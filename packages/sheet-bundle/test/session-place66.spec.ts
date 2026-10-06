@@ -38,6 +38,7 @@ import { parseBinding } from "@paged-media/sheet-host-model";
 import { createWorkbookSession, type WorkbookSession } from "../src";
 import { countingHost, Tally } from "./perf/counting-host";
 import {
+  CORE_PRE_66,
   ENGINE_BUILT,
   WASM,
   authorWorkbook,
@@ -168,7 +169,8 @@ describe.skipIf(!ENGINE_BUILT)("one-call placement [sheet.lower.page]", () => {
     ).toBeTruthy();
   });
 
-  it("the real 0.64 core with no 66 door: never sent, two mutates as before", async () => {
+  // These two pin a PRE-66 core (0.64): on 66+ the door answers.
+  it.skipIf(!CORE_PRE_66)("the real 0.64 core with no 66 door: never sent, two mutates as before", async () => {
     const tally = new Tally();
     const { host } = countingHost(raw, tally);
     const s = await placeOn(host);
@@ -180,7 +182,7 @@ describe.skipIf(!ENGINE_BUILT)("one-call placement [sheet.lower.page]", () => {
     expect(tally.work.mutations.some((m) => (m.kinds.bindCreated ?? 0) > 1)).toBe(false);
   });
 
-  it("a 66 signal over the real 0.64 core: refused once, rolled back, two-batch placement, remembered", async () => {
+  it.skipIf(!CORE_PRE_66)("a 66 signal over the real 0.64 core: refused once, rolled back, two-batch placement, remembered", async () => {
     // `minted` is a 66 door; 0.64 core does not resolve the table handle,
     // so the one-call batch is refused and the placement must still land
     // exactly once.

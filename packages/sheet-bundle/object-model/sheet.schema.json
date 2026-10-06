@@ -1,0 +1,49 @@
+[
+  {
+    "path": "name",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Name"
+  },
+  {
+    "path": "index",
+    "type": {
+      "kind": "number",
+      "integer": true
+    },
+    "access": "derived",
+    "title": "Index"
+  },
+  {
+    "path": "usedRange",
+    "type": {
+      "kind": "text"
+    },
+    "access": "derived",
+    "title": "Used range",
+    "nullable": true
+  },
+  {
+    "path": "freezeRows",
+    "type": {
+      "kind": "number",
+      "integer": true
+    },
+    "title": "Frozen rows",
+    "range": {
+      "min": 0
+    }
+  },
+  {
+    "path": "freezeCols",
+    "type": {
+      "kind": "number",
+      "integer": true
+    },
+    "title": "Frozen columns",
+    "range": {
+      "min": 0
+    }
+  }
+]

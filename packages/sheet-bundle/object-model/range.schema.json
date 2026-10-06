@@ -1,0 +1,174 @@
+[
+  {
+    "path": "values",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "list",
+        "of": {
+          "kind": "text"
+        }
+      }
+    },
+    "title": "Values",
+    "summary": "Rows of computed values; a write enters constants (its shape must match the range)."
+  },
+  {
+    "path": "inputs",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "list",
+        "of": {
+          "kind": "text"
+        }
+      }
+    },
+    "title": "Inputs"
+  },
+  {
+    "path": "formula",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Formula fill",
+    "summary": "Write: the formula entered in the top-left cell and filled across (relative references follow). Read: the top-left cell's formula.",
+    "nullable": true
+  },
+  {
+    "path": "display",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "list",
+        "of": {
+          "kind": "text"
+        }
+      }
+    },
+    "access": "derived",
+    "title": "Display"
+  },
+  {
+    "path": "rows",
+    "type": {
+      "kind": "number",
+      "integer": true
+    },
+    "access": "derived",
+    "title": "Rows"
+  },
+  {
+    "path": "cols",
+    "type": {
+      "kind": "number",
+      "integer": true
+    },
+    "access": "derived",
+    "title": "Columns"
+  },
+  {
+    "path": "numberFormat",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Number format",
+    "summary": "An Excel number-format code (`0.00`, `#,##0`, `yyyy-mm-dd`)."
+  },
+  {
+    "path": "fontName",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Font"
+  },
+  {
+    "path": "fontSize",
+    "type": {
+      "kind": "number",
+      "unit": "pt"
+    },
+    "title": "Font size",
+    "range": {
+      "min": 1,
+      "max": 409
+    }
+  },
+  {
+    "path": "bold",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Bold"
+  },
+  {
+    "path": "italic",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Italic"
+  },
+  {
+    "path": "underline",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Underline"
+  },
+  {
+    "path": "fontColor",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Font colour",
+    "summary": "`#RRGGBB`; empty = automatic."
+  },
+  {
+    "path": "fill",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Fill",
+    "summary": "`#RRGGBB`; empty = none."
+  },
+  {
+    "path": "hAlign",
+    "type": {
+      "kind": "enum",
+      "members": [
+        "general",
+        "left",
+        "center",
+        "right",
+        "fill",
+        "justify",
+        "centerContinuous",
+        "distributed"
+      ]
+    },
+    "title": "Horizontal alignment",
+    "default": "general"
+  },
+  {
+    "path": "vAlign",
+    "type": {
+      "kind": "enum",
+      "members": [
+        "top",
+        "center",
+        "bottom",
+        "justify",
+        "distributed"
+      ]
+    },
+    "title": "Vertical alignment",
+    "default": "bottom"
+  },
+  {
+    "path": "wrap",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Wrap text"
+  }
+]

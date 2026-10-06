@@ -1,0 +1,83 @@
+[
+  {
+    "path": "name",
+    "type": {
+      "kind": "text"
+    },
+    "access": "readOnly",
+    "title": "Name"
+  },
+  {
+    "path": "sheet",
+    "type": {
+      "kind": "text"
+    },
+    "access": "readOnly",
+    "title": "Sheet"
+  },
+  {
+    "path": "range",
+    "type": {
+      "kind": "text"
+    },
+    "access": "readOnly",
+    "title": "Range"
+  },
+  {
+    "path": "columns",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "text"
+      }
+    },
+    "access": "readOnly",
+    "title": "Columns"
+  },
+  {
+    "path": "headerRow",
+    "type": {
+      "kind": "bool"
+    },
+    "access": "readOnly",
+    "title": "Header row"
+  },
+  {
+    "path": "totalsRow",
+    "type": {
+      "kind": "bool"
+    },
+    "access": "readOnly",
+    "title": "Totals row"
+  },
+  {
+    "path": "style",
+    "type": {
+      "kind": "text"
+    },
+    "access": "readOnly",
+    "title": "Table style",
+    "nullable": true
+  },
+  {
+    "path": "totals",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "text"
+      }
+    },
+    "access": "derived",
+    "title": "Totals",
+    "summary": "The totals row's displayed values; empty without one."
+  },
+  {
+    "path": "rowCount",
+    "type": {
+      "kind": "number",
+      "integer": true
+    },
+    "access": "derived",
+    "title": "Body rows"
+  }
+]

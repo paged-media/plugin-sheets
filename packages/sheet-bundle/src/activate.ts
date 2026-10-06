@@ -52,6 +52,7 @@ import { makeSwatchesBindingProvider } from "./binding-provider/swatches-provide
 import { subscribeProviderInvalidation } from "./binding-provider/invalidation";
 import { makeTextBindingProvider } from "./binding-provider/text-provider";
 import { createWorkbookSession } from "./session";
+import { contributeObjectModel } from "./object-model";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
 import { makeGridPanel } from "./panels/grid-panel";
 import { makeDatasetsPanel } from "./panels/datasets-panel";
@@ -118,7 +119,12 @@ export function activate(host: BundleHost): BundleHandle {
   // S-08: restore the last persisted workbook from host.blob, if any. A
   // cheap no-op (one blob read) when nothing was persisted or no blob
   // store is wired — the engine boots only when there are bytes to load.
-  void session.restore();
+  // ADR 323 — the object model (kinds + typed commands), live for the whole
+  // session and headless: no DOM, no edit context. A restore, a document
+  // open and a document undo/redo all end in `reconcile`, which loads the
+  // workbook version the document's label names.
+  const objectModel = contributeObjectModel(host, session);
+  void session.restore().then(() => objectModel.reconcile());
   // The workbook belongs to the DOCUMENT, and activation runs at app boot —
   // before any document is open. Every later open (File ▸ Open, File ▸ New,
   // a reopened .paged) restores that document's own workbook from its
@@ -127,7 +133,9 @@ export function activate(host: BundleHost): BundleHandle {
   let unsubscribeDocs: (() => void) | null = null;
   try {
     unsubscribeDocs = host.editor.client.subscribe((msg) => {
-      if (msg.kind === "documentLoaded") void session.documentOpened();
+      if (msg.kind === "documentLoaded") {
+        void session.documentOpened().then(() => objectModel.reconcile());
+      }
     });
   } catch {
     /* no raw client: onEnter's ensureRestored covers it */
@@ -641,6 +649,7 @@ export function activate(host: BundleHost): BundleHandle {
       menuSub.dispose();
       textProviderHandle = null;
       unsubscribeDocs?.();
+      objectModel.dispose();
       session.dispose();
     },
   };

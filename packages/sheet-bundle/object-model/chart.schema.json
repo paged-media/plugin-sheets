@@ -1,0 +1,101 @@
+[
+  {
+    "path": "kind",
+    "type": {
+      "kind": "enum",
+      "members": [
+        "column",
+        "stackedColumn",
+        "bar",
+        "stackedBar",
+        "line",
+        "area",
+        "scatter",
+        "pie",
+        "donut",
+        "radar"
+      ]
+    },
+    "title": "Chart type"
+  },
+  {
+    "path": "title",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Title",
+    "nullable": true
+  },
+  {
+    "path": "legend",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Legend"
+  },
+  {
+    "path": "series",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "struct",
+        "fields": {
+          "values": {
+            "kind": "text"
+          },
+          "categories": {
+            "kind": "text"
+          },
+          "name": {
+            "kind": "text"
+          },
+          "color": {
+            "kind": "text"
+          }
+        }
+      }
+    },
+    "title": "Series",
+    "summary": "Ranges as `Sheet!A1:B2`; empty strings mean none."
+  },
+  {
+    "path": "categoryAxisTitle",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Category axis title",
+    "nullable": true
+  },
+  {
+    "path": "valueAxisTitle",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Value axis title",
+    "nullable": true
+  },
+  {
+    "path": "valueAxisMin",
+    "type": {
+      "kind": "number"
+    },
+    "title": "Value axis minimum",
+    "nullable": true
+  },
+  {
+    "path": "valueAxisMax",
+    "type": {
+      "kind": "number"
+    },
+    "title": "Value axis maximum",
+    "nullable": true
+  },
+  {
+    "path": "sheet",
+    "type": {
+      "kind": "text"
+    },
+    "access": "derived",
+    "title": "Sheet"
+  }
+]

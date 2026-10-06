@@ -1,0 +1,140 @@
+[
+  {
+    "path": "value",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Value",
+    "summary": "The computed value, unformatted (numbers as `5`, booleans `TRUE`). A write enters a constant; a text starting with `=` is refused (write `formula`)."
+  },
+  {
+    "path": "formula",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Formula",
+    "nullable": true,
+    "summary": "`=…`, or null when the cell holds a constant."
+  },
+  {
+    "path": "input",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Input",
+    "summary": "What the formula bar shows: a constant or `=…`."
+  },
+  {
+    "path": "display",
+    "type": {
+      "kind": "text"
+    },
+    "access": "derived",
+    "title": "Display",
+    "summary": "The formatted text."
+  },
+  {
+    "path": "numberFormat",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Number format",
+    "summary": "An Excel number-format code (`0.00`, `#,##0`, `yyyy-mm-dd`)."
+  },
+  {
+    "path": "fontName",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Font"
+  },
+  {
+    "path": "fontSize",
+    "type": {
+      "kind": "number",
+      "unit": "pt"
+    },
+    "title": "Font size",
+    "range": {
+      "min": 1,
+      "max": 409
+    }
+  },
+  {
+    "path": "bold",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Bold"
+  },
+  {
+    "path": "italic",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Italic"
+  },
+  {
+    "path": "underline",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Underline"
+  },
+  {
+    "path": "fontColor",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Font colour",
+    "summary": "`#RRGGBB`; empty = automatic."
+  },
+  {
+    "path": "fill",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Fill",
+    "summary": "`#RRGGBB`; empty = none."
+  },
+  {
+    "path": "hAlign",
+    "type": {
+      "kind": "enum",
+      "members": [
+        "general",
+        "left",
+        "center",
+        "right",
+        "fill",
+        "justify",
+        "centerContinuous",
+        "distributed"
+      ]
+    },
+    "title": "Horizontal alignment",
+    "default": "general"
+  },
+  {
+    "path": "vAlign",
+    "type": {
+      "kind": "enum",
+      "members": [
+        "top",
+        "center",
+        "bottom",
+        "justify",
+        "distributed"
+      ]
+    },
+    "title": "Vertical alignment",
+    "default": "bottom"
+  },
+  {
+    "path": "wrap",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Wrap text"
+  }
+]

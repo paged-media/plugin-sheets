@@ -1,0 +1,46 @@
+[
+  {
+    "path": "name",
+    "type": {
+      "kind": "text"
+    },
+    "title": "Name"
+  },
+  {
+    "path": "sheets",
+    "type": {
+      "kind": "list",
+      "of": {
+        "kind": "text"
+      }
+    },
+    "access": "derived",
+    "title": "Sheets"
+  },
+  {
+    "path": "iterative",
+    "type": {
+      "kind": "bool"
+    },
+    "title": "Iterative calculation"
+  },
+  {
+    "path": "version",
+    "type": {
+      "kind": "text"
+    },
+    "access": "derived",
+    "title": "Version",
+    "nullable": true,
+    "summary": "The content hash the document's label names."
+  },
+  {
+    "path": "dataSource",
+    "type": {
+      "kind": "text"
+    },
+    "access": "derived",
+    "title": "Dataset",
+    "nullable": true
+  }
+]
