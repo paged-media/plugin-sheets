@@ -24,9 +24,9 @@
 // entering its sheet frame logged "showGridInFrame: no workbook / sheet".
 //
 // The workbook belongs to the DOCUMENT: it is restored when a document
-// opens (the client's `documentLoaded` broadcast), lazily when a sheet
-// frame is entered with none loaded, and a second document never sees the
-// first one's workbook.
+// opens (`host.document.onDidOpen`; the client's raw `documentLoaded`
+// broadcast on an older host), lazily when a sheet frame is entered with
+// none loaded, and a second document never sees the first one's workbook.
 //
 // Real engine (the round trip is engine bytes): skipped without the
 // artifact, FAILS under REQUIRE_REAL_ENGINE=1.
@@ -72,9 +72,13 @@ async function workbookWith(marker: string): Promise<Uint8Array> {
 }
 
 /** An editor that opens documents one after another. Each document has its
- *  own container parts; the per-browser blob is shared by all of them. The
- *  client broadcasts `documentLoaded` on every open (when `broadcasts`). */
-function fakeEditor(opts: { broadcasts?: boolean } = {}) {
+ *  own container parts; the per-browser blob is shared by all of them. When
+ *  `broadcasts`, every open is announced: through `document.onDidOpen`
+ *  (`document.onDidOpen@1`), or — `rawOnly`, an older host — only on the
+ *  client's raw `documentLoaded` broadcast. */
+function fakeEditor(opts: { broadcasts?: boolean; rawOnly?: boolean } = {}) {
+  const door = !!opts.broadcasts && !opts.rawOnly;
+  const opened = new Set<(e: unknown) => void>();
   const docs = new Map<string, Map<string, Uint8Array>>();
   let current = new Map<string, Uint8Array>(); // no document yet
   const blobs = new Map<string, Uint8Array>();
@@ -89,6 +93,7 @@ function fakeEditor(opts: { broadcasts?: boolean } = {}) {
     "rendering.sceneLayer@1",
     "contribute.exporter@1",
     "contribute.editContext@1",
+    ...(door ? ["document.onDidOpen@1"] : []),
   ]);
   const host = {
     log: { debug() {}, info() {}, warn() {}, error() {} },
@@ -123,6 +128,14 @@ function fakeEditor(opts: { broadcasts?: boolean } = {}) {
     document: {
       elementGeometry: async () => [{ bounds: [0, 0, 200, 400] }],
       onDidChange: () => ({ dispose() {} }),
+      ...(door
+        ? {
+            onDidOpen(l: (e: unknown) => void) {
+              opened.add(l);
+              return { dispose: () => void opened.delete(l) };
+            },
+          }
+        : {}),
     },
     contribute: {
       panel: () => ({ dispose() {} }),
@@ -161,7 +174,10 @@ function fakeEditor(opts: { broadcasts?: boolean } = {}) {
         docs.set(id, doc);
       }
       current = doc;
-      if (opts.broadcasts) {
+      if (door) {
+        const e = { docId: id, pageCount: 1, pageIds: [], pageSizesPt: [] };
+        for (const l of opened) l(e);
+      } else if (opts.broadcasts) {
         const msg = {
           kind: "documentLoaded",
           payload: { docId: id, pageCount: 1, pageIds: [] },
@@ -170,6 +186,8 @@ function fakeEditor(opts: { broadcasts?: boolean } = {}) {
       }
     },
     parts: (id: string) => docs.get(id),
+    /** Raw client subscribers (the bundle uses the door where it exists). */
+    rawSubscribers: () => listeners.size,
     /** The active workbook as the exporter would save it, or null. */
     async exported(): Promise<Uint8Array | null> {
       const r = await exporters[0]!.export();
@@ -193,15 +211,20 @@ const texts = (layer: SceneLayer) =>
   layer.items.flatMap((i) => (i.kind === "text" ? [i.text] : []));
 
 describe.skipIf(!built)("the workbook follows the open document [sheet.plugin.persistence]", () => {
-  it("a document opened after boot restores its workbook part", async () => {
-    const ed = fakeEditor({ broadcasts: true });
-    const handle = activate(ed.host);
-    await vi.waitFor(async () => expect(await ed.exported()).toBeNull()); // boot: nothing yet
+  for (const rawOnly of [false, true]) {
+    it(`a document opened after boot restores its workbook part (${rawOnly ? "raw client broadcast" : "document.onDidOpen"})`, async () => {
+      const ed = fakeEditor({ broadcasts: true, rawOnly });
+      const handle = activate(ed.host);
+      await vi.waitFor(async () => expect(await ed.exported()).toBeNull()); // boot: nothing yet
+      // The door replaces the raw subscription; the raw one is the fallback.
+      expect(ed.rawSubscribers()).toBe(rawOnly ? 1 : 0);
 
-    ed.open("A", { "workbook.xlsx": await workbookWith("from A"), "workbook.name": new TextEncoder().encode("a.xlsx") });
-    await vi.waitFor(async () => expect(await a10(await ed.exported())).toBe("from A"));
-    handle.dispose();
-  });
+      ed.open("A", { "workbook.xlsx": await workbookWith("from A"), "workbook.name": new TextEncoder().encode("a.xlsx") });
+      await vi.waitFor(async () => expect(await a10(await ed.exported())).toBe("from A"));
+      handle.dispose();
+      expect(ed.rawSubscribers()).toBe(0);
+    });
+  }
 
   it("entering a sheet frame with no workbook loaded restores it first (no open signal)", async () => {
     const ed = fakeEditor({ broadcasts: false });

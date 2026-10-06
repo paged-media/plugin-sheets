@@ -122,15 +122,22 @@ export function activate(host: BundleHost): BundleHandle {
   // The workbook belongs to the DOCUMENT, and activation runs at app boot —
   // before any document is open. Every later open (File ▸ Open, File ▸ New,
   // a reopened .paged) restores that document's own workbook from its
-  // container part. The client broadcasts `documentLoaded` on each load; a
-  // host with no raw client falls back to the lazy restore on frame entry.
+  // container part. A host with `document.onDidOpen@1` reports each open
+  // there; an older one only through the client's raw `documentLoaded`
+  // broadcast; a host with neither falls back to the lazy restore on frame
+  // entry.
   let unsubscribeDocs: (() => void) | null = null;
-  try {
-    unsubscribeDocs = host.editor.client.subscribe((msg) => {
-      if (msg.kind === "documentLoaded") void session.documentOpened();
-    });
-  } catch {
-    /* no raw client: onEnter's ensureRestored covers it */
+  if (typeof host.document?.onDidOpen === "function" && host.supports("document.onDidOpen@1")) {
+    const sub = host.document.onDidOpen(() => void session.documentOpened());
+    unsubscribeDocs = () => sub.dispose();
+  } else {
+    try {
+      unsubscribeDocs = host.editor.client.subscribe((msg) => {
+        if (msg.kind === "documentLoaded") void session.documentOpened();
+      });
+    } catch {
+      /* no raw client: onEnter's ensureRestored covers it */
+    }
   }
 
   contributePanel(host, {
