@@ -382,3 +382,70 @@ export function withTableHandles66(h: HeadlessHost, host: BundleHost): BundleHos
     },
   });
 }
+
+/** A PRE-66 host over the real core: the doors a protocol-66+ engine and
+ *  SDK answer are taken away — no `minted` on an outcome, no `storyId` on a
+ *  geometry item, `supports("document.onWillSave@1")` false — so the
+ *  fallback lanes the bundle keeps for older hosts run against the engine
+ *  under test (0.68 since the 0.2.41 contract; they ran on the real 0.64
+ *  core before). */
+export function withoutDoors66(host: BundleHost): BundleHost {
+  const raw = host.document;
+  const document = new Proxy(raw, {
+    get(o, p, r) {
+      if (p === "mutate") {
+        return async (m: Parameters<typeof raw.mutate>[0]) => {
+          const out = await raw.mutate(m);
+          if (!out.applied) return out;
+          const { minted: _minted, ...rest } = out as typeof out & { minted?: unknown };
+          return rest;
+        };
+      }
+      if (p === "elementGeometry") {
+        return async (ids: Parameters<typeof raw.elementGeometry>[0]) =>
+          (await raw.elementGeometry(ids)).map((it) => {
+            const { storyId: _storyId, ...rest } = it as typeof it & { storyId?: unknown };
+            return rest;
+          });
+      }
+      return Reflect.get(o, p, r);
+    },
+  });
+  return new Proxy(host, {
+    get(o, p, r) {
+      if (p === "document") return document;
+      if (p === "supports") {
+        return (f: string) => f !== "document.onWillSave@1" && host.supports(f);
+      }
+      return Reflect.get(o, p, r);
+    },
+  });
+}
+
+/** A host whose core refuses a batch naming the in-batch TABLE handle
+ *  (`$h:t`) — what a pre-66 core does with the one-call placement (it
+ *  resolves no table handle, so the whole batch is refused and nothing
+ *  lands). Anything else passes through. */
+export function refusingTableHandles(host: BundleHost): BundleHost {
+  const raw = host.document;
+  const namesTableHandle = (v: unknown): boolean =>
+    v === "$h:t" ||
+    (Array.isArray(v) ? v.some(namesTableHandle) : !!v && typeof v === "object" && Object.values(v).some(namesTableHandle));
+  const document = new Proxy(raw, {
+    get(o, p, r) {
+      if (p === "mutate") {
+        return async (m: Parameters<typeof raw.mutate>[0]) =>
+          namesTableHandle(m)
+            ? { applied: false as const, error: "unresolved handle $h:t (pre-66 core)" }
+            : raw.mutate(m);
+      }
+      return Reflect.get(o, p, r);
+    },
+  });
+  return new Proxy(host, {
+    get(o, p, r) {
+      if (p === "document") return document;
+      return Reflect.get(o, p, r);
+    },
+  });
+}

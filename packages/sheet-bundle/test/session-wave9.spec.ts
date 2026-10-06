@@ -1,9 +1,9 @@
 // Wave 9 — consuming the protocol-66 doors, against a REAL headless host
 // (core via canvas-wasm: real document undo, real plugin metadata) and the
-// REAL sheet engine. Each 66 door is FEATURE-DETECTED: the real host under
-// test predates it (pins stay at 0.2.37 until the owner tags 66), so these
-// scenarios drive the fallback path for real, and the 66 path through a
-// host wrapper that adds the door's reply shape.
+// REAL sheet engine. Each 66 door is FEATURE-DETECTED. The real host under
+// test has them since the pins moved past 66, so the fallback path runs
+// through `withoutDoors66` (the real core with those doors taken away), and
+// the 66 path through a host wrapper that adds the door's reply shape.
 //
 // Real engine: skipped without the wasm artifact, FAILS under
 // REQUIRE_REAL_ENGINE=1 (the engine-real.spec.ts dual gate).
@@ -33,6 +33,7 @@ import {
   sheetHost,
   withDoors66,
   withSceneChannel,
+  withoutDoors66,
 } from "./perf/workload";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -219,7 +220,7 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placed charts and frame stories", () 
     // A pre-66 host: the geometry item has no story — asked once, then the
     // walk; the second resolution skips the geometry read.
     const t64 = new Tally();
-    const h64 = countingHost(raw, t64).host;
+    const h64 = countingHost(withoutDoors66(raw), t64).host;
     expect(await storyOfFrame(h64, frameId)).toBe(storyId);
     expect(await storyOfFrame(h64, frameId)).toBe(storyId);
     expect(t64.work.count("document.elementGeometry")).toBe(1);

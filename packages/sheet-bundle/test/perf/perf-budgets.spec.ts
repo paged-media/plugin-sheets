@@ -82,6 +82,7 @@ import {
   testClipboard,
   withSceneChannel,
   withTableHandles66,
+  withoutDoors66,
   type TestClipboard,
 } from "./workload";
 
@@ -206,9 +207,12 @@ describe.skipIf(!ENGINE_BUILT)("perf budgets — work counted at the doors", () 
   // batch since v0.61, one rebuild per batch since v0.63). Was 1003
   // mutates: one awaited round trip — and one rebuild — per cell.
   it("place a 50×20 range as a native table [sheet.lower.page]", async () => {
+    // The two-batch lane: a host without the 66 doors (the engine under
+    // test has them; the next scenario is the one-call lane).
     const s = await open(
       await authorWorkbook(50, 20, (r, c) => `r${r}c${c}`),
       "A1:T50",
+      withoutDoors66,
     );
     const frame = await s.lowerSelection();
     await settle();

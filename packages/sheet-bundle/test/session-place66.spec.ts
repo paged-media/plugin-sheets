@@ -19,9 +19,10 @@
 // The ONE-CALL placement (protocol 66: core resolves a table handle in a
 // `tableId` / `table_id` position, 0eff96b). On a 66 host the frame, its
 // binding, the table, the pour, the decor and the text styles are one
-// `mutate`. On the real 0.64 core under test it is never sent unless the
-// host shows a 66 door; when it is sent anyway and refused, the placement
-// falls back to the two-batch path and remembers the refusal.
+// `mutate`. On a host without a 66 door (`withoutDoors66` over the real
+// core) it is never sent; when it is sent anyway and refused (a core that
+// resolves no table handle, `refusingTableHandles`), the placement falls
+// back to the two-batch path and remembers the refusal.
 //
 // The 66 host is `withTableHandles66` (test/perf/workload.ts) over the REAL
 // headless core: the engine applies what 66 would, the bundle makes one call.
@@ -44,11 +45,13 @@ import {
   blankPageIdml,
   exportedTableCells,
   openHost,
+  refusingTableHandles,
   settle,
   sheetHost,
   withDoors66,
   withSceneChannel,
   withTableHandles66,
+  withoutDoors66,
 } from "./perf/workload";
 
 if (process.env.REQUIRE_REAL_ENGINE === "1" && !ENGINE_BUILT) {
@@ -168,9 +171,9 @@ describe.skipIf(!ENGINE_BUILT)("one-call placement [sheet.lower.page]", () => {
     ).toBeTruthy();
   });
 
-  it("the real 0.64 core with no 66 door: never sent, two mutates as before", async () => {
+  it("a host with no 66 door: never sent, two mutates as before", async () => {
     const tally = new Tally();
-    const { host } = countingHost(raw, tally);
+    const { host } = countingHost(withoutDoors66(raw), tally);
     const s = await placeOn(host);
     tally.work.reset();
     expect(await s.lowerSelection()).not.toBeNull();
@@ -180,12 +183,16 @@ describe.skipIf(!ENGINE_BUILT)("one-call placement [sheet.lower.page]", () => {
     expect(tally.work.mutations.some((m) => (m.kinds.bindCreated ?? 0) > 1)).toBe(false);
   });
 
-  it("a 66 signal over the real 0.64 core: refused once, rolled back, two-batch placement, remembered", async () => {
-    // `minted` is a 66 door; 0.64 core does not resolve the table handle,
-    // so the one-call batch is refused and the placement must still land
-    // exactly once.
+  it("a 66 signal over a core without table handles: refused once, rolled back, two-batch placement, remembered", async () => {
+    // `minted` is a 66 door; a pre-66 core does not resolve the table
+    // handle, so the one-call batch is refused and the placement must still
+    // land exactly once. (The engine under test resolves it; the wrapper
+    // refuses that batch as the 0.64 core did.)
     const tally = new Tally();
-    const { host } = countingHost(withDoors66(h, raw, { minted: true }), tally);
+    const { host } = countingHost(
+      refusingTableHandles(withDoors66(h, withoutDoors66(raw), { minted: true })),
+      tally,
+    );
     const s = await placeOn(host);
     // The first placement knows nothing yet (two batches); its outcome
     // carries `minted` — the 66 signal.
@@ -209,10 +216,10 @@ describe.skipIf(!ENGINE_BUILT)("one-call placement [sheet.lower.page]", () => {
     expect(tables).toHaveLength(tablesBefore + 1);
     expect(tables[tablesBefore].get("2:1")).toBe("21");
     // Two undo steps (the two batches) and the page is as it was: the
-    // refused attempt left no step behind. (Core 0.64 does leave the
-    // refused frame's empty STORY in its model — a rolled-back or undone
-    // insertTextFrame keeps its ParentStory; it has no frame and is not
-    // exported. Core defect, reported; not asserted here.)
+    // refused attempt left no step behind. (Core 0.64 refusing the batch
+    // itself left the refused frame's empty STORY in its model — a
+    // rolled-back insertTextFrame kept its ParentStory, with no frame and
+    // not exported; not asserted here.)
     await raw.document.undo();
     await raw.document.undo();
     await settle();
