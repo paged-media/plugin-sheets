@@ -60,15 +60,20 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 - **Export.** An `.xlsx` exporter. Parts the session did not touch are written back with their
   original bytes, including pivot caches, macros and other parts never interpreted.
 
-- **Object model (ADR 323; on the `om/object-model` branch, needs plugin-api 0.2.42).** Seven
+- **Object model (ADR 323; on the `om/object-model` branch, needs plugin-api 0.2.43).** Seven
   kinds under `plugin:media.paged.sheet/…`: `workbook/main`, `sheet/<name>`,
   `cell/<sheet>!<A1>` (value, formula, input, display, number format, font, fill, alignment,
   wrap), `range/<sheet>!<A1:B2>` (values, inputs, formula fill, display and the same format
   rows), `namedRange/<name>`, `table/<name>` and `chart/<index>` (type, title, legend, series
   ranges, axis titles and bounds). The rows are in `packages/sheet-bundle/object-model/`. A
-  `host.objects` batch applies to the engine, stores the workbook as a content-addressed version
-  (`versions/<hash>.xlsx` + `.json`) and sets the document label `x-paged:media.paged.sheet` to
-  that hash: one undo step, and document undo/redo reloads the version the label names. A
+  `host.objects` batch reaches ONE plugin-level planner (every kind's ops, in batch order),
+  applies to the engine, stores the workbook as a content-addressed version
+  (`versions/<hash>.xlsx` + `.json`) and answers a `state` write hosted on `doc` under the
+  sub-key `x-paged:media.paged.sheet.wb`, which the registry merges into the document label's
+  `data.wb` (other sub-keys survive; labels written before read unchanged): one undo step, and
+  document undo/redo reloads the version the label names. The range `values`, `inputs` and
+  `display` rows are `heavy` (skipped by `getAll` unless asked); typed command arguments carry
+  struct defaults (`count` 1, `live` true, `header` true, the find options false). A
   100-cell range write is one engine write, one save, one commit and two part writes (a pinned
   budget). Typed commands (16 typed twins of palette commands, plus `publishDataset` /
   `unpublishDataset`) take value-typed arguments; 8 commands remain untyped. The bundle boots in
@@ -81,8 +86,7 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 
 - **Object model.** Tables are read-only (the xlsx table part is written back byte for byte, so
   a table edit would not survive a save). The version label is the document's, not a frame's:
-  core lets a plugin write only `x-paged:<id>` on an item, and the placement binding already
-  holds that key. The page refresh after a write is a second document step. Charts the object
+  core keeps one label per plugin per host, and a frame's already holds the placement binding. The page refresh after a write is a second document step. Charts the object
   model creates or changes are kept as a chart-op journal next to each version; charts authored
   in the panel are not.
 

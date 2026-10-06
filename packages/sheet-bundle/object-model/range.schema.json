@@ -11,7 +11,8 @@
       }
     },
     "title": "Values",
-    "summary": "Rows of computed values; a write enters constants (its shape must match the range)."
+    "summary": "Rows of computed values; a write enters constants (its shape must match the range).",
+    "heavy": true
   },
   {
     "path": "inputs",
@@ -24,7 +25,8 @@
         }
       }
     },
-    "title": "Inputs"
+    "title": "Inputs",
+    "heavy": true
   },
   {
     "path": "formula",
@@ -47,7 +49,8 @@
       }
     },
     "access": "derived",
-    "title": "Display"
+    "title": "Display",
+    "heavy": true
   },
   {
     "path": "rows",

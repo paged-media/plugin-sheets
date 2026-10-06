@@ -41,19 +41,22 @@
 // `versions/<hash>.json` (name + the chart-op journal, since authored and
 // patched charts are page-side only and never reach the xlsx) — and the
 // LABEL `x-paged:media.paged.sheet = {v:1,data:{wb:<hash>}}` names it. The
-// label is the DOCUMENT's (protocol 69 `setDocumentMetadata`, the designmap
-// Label InDesign keeps), not a frame's, for two reasons found against the
-// engine: the workbook is document-scoped (one per document), and core
-// lets a plugin write exactly `x-paged:<id>` on an item — the frame's key
-// already holds the placement binding, and a `.wb` sub-key is refused
-// (`metadata key … is outside this plugin's namespace`). So a write answers
-// `{ kind: "mutations" }` with the one `setDocumentMetadata`, after writing
-// the content-addressed parts itself (harmless if the commit then fails);
-// the registry folds it into its ONE batch = one undo step. Document undo
-// reverts the label; the follower here reloads the version the label now
-// names (the baseline version stands for "no label"). The `workbook.xlsx`
-// part stays what it was: a cache, refreshed (debounced) after every
-// change. A document open prefers the version its label names.
+// label is the DOCUMENT's (`doc`, the designmap Label InDesign keeps), not a
+// frame's: the workbook is document-scoped (one per document), and core
+// keeps ONE label per plugin per host — a frame's already holds the
+// placement binding. So a write answers a `state` write (SDK 0.2.43,
+// DESIGN.md §21.8) hosted on `doc` under the SUB-KEY
+// `x-paged:media.paged.sheet.wb`: the registry writes the content-addressed
+// parts first (harmless if the commit then fails), merges `wb` into the
+// document envelope (other sub-keys survive) and commits ONE batch = one
+// undo step. The layout `{v:1,data:{wb}}` is the one the earlier direct
+// `setDocumentMetadata` wrote, so labels from before read unchanged.
+// Every op of a batch, across all seven kinds, reaches ONE plugin-level
+// planner (`batch`): one engine pass, one saved version, one label.
+// Document undo reverts the label; the follower here reloads the version
+// the label now names (the baseline version stands for "no label"). The
+// `workbook.xlsx` part stays what it was: a cache, refreshed (debounced)
+// after every change. A document open prefers the version its label names.
 //
 // `hostOf` still names the frame a cell is placed in — where ADR 559 puts a
 // binding's labels — and never a table cell (InDesign renumbers ids and
@@ -75,6 +78,7 @@ import type {
   PartChange,
   PropertySchema,
   ProviderField,
+  StructField,
   ProviderRecordSet,
   TypedCommandContribution,
   ValueType,
@@ -97,8 +101,12 @@ export const PLUGIN_ID = manifest.id;
 export const SHEET_KINDS = ["workbook", "sheet", "cell", "range", "namedRange", "table", "chart"] as const;
 export type SheetKind = (typeof SHEET_KINDS)[number];
 
-/** The document label naming the live workbook version. */
+/** The plugin's ONE label per host (core's rule: exactly `x-paged:<id>`,
+ *  envelope `{v, data}`); on `doc` it names the live workbook version. */
 export const VERSION_LABEL_KEY = `x-paged:${PLUGIN_ID}`;
+/** The sub-key a `state` write sets: the registry merges it into
+ *  `data.wb` of the document envelope. */
+export const VERSION_SUB_KEY = `${VERSION_LABEL_KEY}.wb`;
 const VERSIONS = "versions/";
 const WORKBOOK_ID = "main";
 
@@ -192,10 +200,14 @@ export const SHEET_SCHEMAS: Record<SheetKind, PropertySchema[]> = {
     ...STYLE_ROWS,
   ],
   range: [
-    rw("values", grid, { title: "Values", summary: "Rows of computed values; a write enters constants (its shape must match the range)." }),
-    rw("inputs", grid, { title: "Inputs" }),
+    rw("values", grid, {
+      title: "Values",
+      summary: "Rows of computed values; a write enters constants (its shape must match the range).",
+      heavy: true,
+    }),
+    rw("inputs", grid, { title: "Inputs", heavy: true }),
     rw("formula", text, { title: "Formula fill", summary: "Write: the formula entered in the top-left cell and filled across (relative references follow). Read: the top-left cell's formula.", nullable: true }),
-    derived("display", grid, { title: "Display" }),
+    derived("display", grid, { title: "Display", heavy: true }),
     derived("rows", int, { title: "Rows" }),
     derived("cols", int, { title: "Columns" }),
     ...STYLE_ROWS,
@@ -960,12 +972,23 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     return { ok: true, hash: next.hash, parts };
   }
 
-  const labelValue = (hash: string) => JSON.stringify({ v: 1, data: { wb: hash } });
-  const labelMutation = (hash: string) =>
-    ({
+  /** The document envelope with `data.wb = hash`, other sub-keys kept
+   *  (a typed command commits through its own door, so it merges here the
+   *  way the registry merges a sub-key `state` write). */
+  async function labelMutation(hash: string) {
+    let data: Record<string, unknown> = {};
+    try {
+      const env = await host.document?.getDocumentMetadata?.();
+      if (env && typeof env.data === "object" && env.data !== null) data = { ...(env.data as Record<string, unknown>) };
+    } catch {
+      /* no readable label: start a fresh envelope */
+    }
+    data.wb = hash;
+    return {
       op: "setDocumentMetadata",
-      args: { key: VERSION_LABEL_KEY, value: labelValue(hash), caller: PLUGIN_ID },
-    }) as const;
+      args: { key: VERSION_LABEL_KEY, value: JSON.stringify({ v: 1, data }), caller: PLUGIN_ID },
+    } as const;
+  }
 
   async function writeParts(parts: readonly PartChange[]): Promise<void> {
     for (const part of parts) {
@@ -973,9 +996,31 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     }
   }
 
-  async function batchWrite(kind: SheetKind, ops: readonly ObjectOp[]): Promise<ObjectWrite> {
+  /** The kind an op targets: a `create` names it (qualified or bare),
+   *  every other op by its address. */
+  function kindOf(op: ObjectOp): SheetKind {
+    const prefix = `plugin:${PLUGIN_ID}/`;
+    const raw =
+      op.op === "create"
+        ? op.kind.startsWith(prefix)
+          ? op.kind.slice(prefix.length)
+          : op.kind
+        : op.op === "invoke"
+          ? ""
+          : op.address.startsWith(prefix)
+            ? op.address.slice(prefix.length).split("/")[0]!
+            : "";
+    if (!(SHEET_KINDS as readonly string[]).includes(raw)) throw new Refuse(`${JSON.stringify(op)} is not a paged.sheet op`);
+    return raw as SheetKind;
+  }
+
+  /** The PLUGIN-level planner (SDK 0.2.43): every op of a batch, across all
+   *  seven kinds, in batch order — one engine pass, one saved version, one
+   *  doc-hosted `state` write. */
+  async function batchWrite(ops: readonly ObjectOp[]): Promise<ObjectWrite> {
     const r = await write((engine) =>
       ops.map((op) => {
+        const kind = kindOf(op);
         if (op.op === "set") return planSet(engine, kind, op.address, op.path, op.value);
         if (op.op === "create") return planCreate(engine, kind, op.props ?? {});
         if (op.op === "delete") return planDelete(engine, kind, op.address);
@@ -983,12 +1028,15 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
       }),
     );
     if (!r.ok) return { kind: "rejected", reason: r.reason };
-    try {
-      await writeParts(r.parts);
-    } catch (err) {
-      return { kind: "rejected", reason: `the workbook version could not be stored: ${String(err)}` };
-    }
-    return { kind: "mutations", mutations: [labelMutation(r.hash) as never] };
+    return {
+      kind: "state",
+      parts: r.parts,
+      host: "doc",
+      labelKey: VERSION_SUB_KEY,
+      // JSON text, so the registry stores data.wb as a string even for an
+      // all-digit hash.
+      labelValue: JSON.stringify(r.hash),
+    };
   }
 
   /** A typed command's write: the same versioning, committed through the
@@ -997,7 +1045,7 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     const r = await write(() => [apply]);
     if (!r.ok) throw new Error(r.reason);
     await writeParts(r.parts);
-    const outcome = await host.document.mutate(labelMutation(r.hash) as never);
+    const outcome = await host.document.mutate((await labelMutation(r.hash)) as never);
     if (!(outcome as { applied?: boolean }).applied) {
       host.log.warn("object model: the version label was refused — the change is not an undo step", outcome);
     }
@@ -1153,21 +1201,22 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
       await session.ensureRestored();
       return read(kind, address, path);
     },
-    batch: (ops) => batchWrite(kind, ops),
   }));
 
   // ── typed commands ───────────────────────────────────────────────────
 
   const C = (s: string) => `${PLUGIN_ID}.command.${s}`;
-  const struct = (fields: Record<string, ValueType>): ValueType => ({ kind: "struct", fields });
-  const findOpts = { matchCase: bool, entireCell: bool, inFormulas: bool };
+  const struct = (fields: Record<string, StructField>): ValueType => ({ kind: "struct", fields });
+  /** A field the caller may omit; `invoke` fills the default in. */
+  const dflt = (type: ValueType, d: unknown): StructField => ({ ...type, default: d });
+  const findOpts = { matchCase: dflt(bool, false), entireCell: dflt(bool, false), inFormulas: dflt(bool, false) };
 
   const cellRange = (range: string) => resolveRef(engineOrThrow(), range, false);
 
   const structural = (id: string, title: string, kind: StructuralEditKind): TypedCommandContribution => ({
     id: C(id),
     title,
-    args: struct({ sheet: text, at: int, count: int }),
+    args: struct({ sheet: text, at: int, count: dflt(int, 1) }),
     async handler(_ctx, a) {
       const { sheet, at, count } = a as { sheet: string; at: number; count: number };
       await commandWrite((engine) => {
@@ -1206,7 +1255,7 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     {
       id: C("importXlsx"),
       title: "Import workbook (.xlsx)",
-      args: struct({ bytes: { kind: "bytes", mime: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] }, name: text }),
+      args: struct({ bytes: { kind: "bytes", mime: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] }, name: dflt(text, "workbook.xlsx") }),
       result: text,
       async handler(_ctx, a) {
         const { bytes, name } = a as { bytes: Uint8Array; name: string };
@@ -1242,7 +1291,7 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     {
       id: C("sheetFromDataset"),
       title: "Sheet from dataset",
-      args: struct({ providerId: text, live: bool }),
+      args: struct({ providerId: text, live: dflt(bool, true) }),
       result: text,
       async handler(_ctx, a) {
         const { providerId, live } = a as { providerId: string; live: boolean };
@@ -1254,7 +1303,7 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     {
       id: C("publishDataset"),
       title: "Publish a range as a dataset",
-      args: struct({ name: text, range: text, header: bool }),
+      args: struct({ name: text, range: text, header: dflt(bool, true) }),
       result: text,
       async handler(_ctx, a) {
         await session.ensureRestored();
@@ -1280,13 +1329,13 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     {
       id: C("addSheet"),
       title: "Add sheet",
-      args: struct({ name: text }),
+      args: struct({ name: { ...text, optional: true } }),
       result: text,
       async handler(_ctx, a) {
         let made = "";
         await commandWrite((engine) => {
           if (!engine.addSheet) throw new Error("engine wasm predates add_sheet");
-          made = sheetName(engine, engine.addSheet((a as { name: string }).name));
+          made = sheetName(engine, engine.addSheet((a as { name?: string }).name ?? ""));
         });
         return addressOf("sheet", escapeId(made));
       },
@@ -1314,7 +1363,7 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
     {
       id: C("sortRange"),
       title: "Sort range",
-      args: struct({ range: text, keyColumn: int, ascending: bool, hasHeader: bool }),
+      args: struct({ range: text, keyColumn: dflt(int, 0), ascending: dflt(bool, true), hasHeader: dflt(bool, false) }),
       async handler(_ctx, a) {
         const { range, keyColumn, ascending, hasHeader } = a as {
           range: string;
@@ -1364,10 +1413,12 @@ export function contributeObjectModel(host: BundleHost, session: WorkbookSession
   ];
 
   // A host that predates the object model (plugin-api < 0.2.42) has no
-  // door: the bundle still works, its objects are just not addressable.
+  // door: the bundle still works, its objects are just not addressable. A
+  // 0.2.42 registry ignores the plugin-level `batch` and finds no per-kind
+  // one: writes then refuse (reads still work) — peers require 0.2.43.
   const handle: ObjectModelHandle | null =
     typeof host.contribute?.objectModel === "function"
-      ? host.contribute.objectModel({ kinds, commands })
+      ? host.contribute.objectModel({ kinds, commands, batch: batchWrite })
       : null;
 
   return {

@@ -159,7 +159,8 @@
                 ]
               },
               "name": {
-                "kind": "text"
+                "kind": "text",
+                "default": "workbook.xlsx"
               }
             }
           },
@@ -213,7 +214,8 @@
                 "kind": "text"
               },
               "live": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": true
               }
             }
           },
@@ -234,7 +236,8 @@
                 "kind": "text"
               },
               "header": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": true
               }
             }
           },
@@ -264,7 +267,8 @@
             "kind": "struct",
             "fields": {
               "name": {
-                "kind": "text"
+                "kind": "text",
+                "optional": true
               }
             }
           },
@@ -287,7 +291,8 @@
               },
               "count": {
                 "kind": "number",
-                "integer": true
+                "integer": true,
+                "default": 1
               }
             }
           }
@@ -307,7 +312,8 @@
               },
               "count": {
                 "kind": "number",
-                "integer": true
+                "integer": true,
+                "default": 1
               }
             }
           }
@@ -327,7 +333,8 @@
               },
               "count": {
                 "kind": "number",
-                "integer": true
+                "integer": true,
+                "default": 1
               }
             }
           }
@@ -347,7 +354,8 @@
               },
               "count": {
                 "kind": "number",
-                "integer": true
+                "integer": true,
+                "default": 1
               }
             }
           }
@@ -399,13 +407,16 @@
               },
               "keyColumn": {
                 "kind": "number",
-                "integer": true
+                "integer": true,
+                "default": 0
               },
               "ascending": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": true
               },
               "hasHeader": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               }
             }
           }
@@ -420,13 +431,16 @@
                 "kind": "text"
               },
               "matchCase": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               },
               "entireCell": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               },
               "inFormulas": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               }
             }
           },
@@ -450,13 +464,16 @@
                 "kind": "text"
               },
               "matchCase": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               },
               "entireCell": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               },
               "inFormulas": {
-                "kind": "bool"
+                "kind": "bool",
+                "default": false
               }
             }
           },

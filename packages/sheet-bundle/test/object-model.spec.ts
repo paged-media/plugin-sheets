@@ -199,6 +199,117 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.objects]", () =>
     expect(val(await h.objects.get(`${P}/cell/Sheet1!J19`, "value"))).toBe("99");
   });
 
+  it("a batch across kinds is ONE plugin plan: one save, one commit, one undo step [sheet.objects]", async () => {
+    await place();
+    await h.objects.set(`${P}/cell/Sheet1!A1`, "value", "1"); // the baseline version is stored once
+    const engine = s.state().engine!;
+    const count = { save: 0, commit: 0 };
+    const save = engine.saveXlsx.bind(engine);
+    engine.saveXlsx = () => {
+      count.save += 1;
+      return save();
+    };
+    const core = h.objects.core!;
+    const commit = core.commit.bind(core);
+    core.commit = (m) => {
+      count.commit += 1;
+      return commit(m);
+    };
+    // sheet + cell + range + workbook ops share the workbook: planned per
+    // kind, each kind would save its own version and set its own label.
+    const r = await h.objects.batch([
+      { op: "create", kind: `${P}/sheet`, props: { name: "Data" } },
+      { op: "set", address: `${P}/cell/Sheet1!A1`, path: "value", value: "11" },
+      { op: "set", address: `${P}/range/Sheet1!B1:C1`, path: "values", value: [["12", "13"]] },
+      { op: "set", address: `${P}/workbook/main`, path: "iterative", value: true },
+    ]);
+    expect(r).toMatchObject({ applied: true, undoSteps: 1 });
+    expect(count).toEqual({ save: 1, commit: 1 });
+    expect(await h.objects.query(`${P}/sheet`)).toEqual([`${P}/sheet/Sheet1`, `${P}/sheet/Data`]);
+    const hash = ((await host.document.getDocumentMetadata())?.data as { wb: string }).wb;
+    expect(val(await h.objects.get(`${P}/workbook/main`, "version"))).toBe(hash);
+    await host.document.undo();
+    await settle();
+    expect(val(await h.objects.get(`${P}/range/Sheet1!A1:C1`, "values"))).toEqual([["1", "2", "3"]]);
+    expect(await h.objects.query(`${P}/sheet`)).toEqual([`${P}/sheet/Sheet1`]);
+  });
+
+  it("the version label is a doc-hosted state write: it merges into the document envelope [sheet.objects]", async () => {
+    // Another sub-key on the plugin's document label survives a write (the
+    // registry merges `x-paged:media.paged.sheet.wb` into data.wb).
+    const seeded = await host.document.mutate({
+      op: "setDocumentMetadata",
+      args: {
+        key: "x-paged:media.paged.sheet",
+        value: JSON.stringify({ v: 1, data: { note: "keep" } }),
+        caller: "media.paged.sheet",
+      },
+    } as never);
+    expect((seeded as { applied?: boolean }).applied).toBe(true);
+    const r = await h.objects.set(`${P}/cell/Sheet1!A1`, "value", "8");
+    expect(r).toMatchObject({ applied: true, undoSteps: 1 });
+    const env = await host.document.getDocumentMetadata();
+    expect(env?.data).toMatchObject({ note: "keep", wb: expect.stringMatching(/^[0-9a-f]{32}$/) });
+    // A typed command's write keeps the other sub-key too.
+    await h.objects.invoke("media.paged.sheet.command.clearCells", { range: "Sheet1!A1" });
+    const after = await host.document.getDocumentMetadata();
+    expect(after?.data).toMatchObject({ note: "keep" });
+    expect((after?.data as { wb: string }).wb).not.toBe((env?.data as { wb: string }).wb);
+  });
+
+  it("a label written by the pre-0.2.43 layout ({v:1,data:{wb}}) still names the version on open [sheet.objects]", async () => {
+    await h.objects.set(`${P}/cell/Sheet1!A1`, "value", "77");
+    const hash = ((await host.document.getDocumentMetadata())?.data as { wb: string }).wb;
+    // Rewrite the label exactly as the earlier code did (the whole envelope).
+    await host.document.mutate({
+      op: "setDocumentMetadata",
+      args: { key: "x-paged:media.paged.sheet", value: JSON.stringify({ v: 1, data: { wb: hash } }), caller: "media.paged.sheet" },
+    } as never);
+    // A fresh session over the same document (a reopen): another workbook
+    // is loaded, then reconcile follows the label to the stored version.
+    om.dispose();
+    s.dispose();
+    s = createWorkbookSession(host);
+    const model = contributeObjectModel(host, s);
+    om = model;
+    await s.import(await authorWorkbook(1, 1, () => "0"), "other.xlsx");
+    await model.reconcile();
+    expect(val(await h.objects.get(`${P}/cell/Sheet1!A1`, "value"))).toBe("77");
+  });
+
+  it("getAll skips the heavy range rows unless asked [sheet.objects]", async () => {
+    const all = await h.objects.getAll(`${P}/range/Sheet1!A1:C3`);
+    expect(Object.keys(all)).not.toEqual(expect.arrayContaining(["values"]));
+    expect(all.values).toBeUndefined();
+    expect(all.inputs).toBeUndefined();
+    expect(all.display).toBeUndefined();
+    expect(val(all.rows!)).toBe(3);
+    const full = await h.objects.getAll(`${P}/range/Sheet1!A1:C3`, { content: true });
+    expect(val(full.values!)).toEqual([
+      ["1", "2", "3"],
+      ["4", "5", "6"],
+      ["7", "8", "9"],
+    ]);
+    // A cell's rows are cheap: all of them come back.
+    expect(val((await h.objects.getAll(`${P}/cell/Sheet1!B2`)).value!)).toBe("5");
+  });
+
+  it("typed command args fill their defaults (StructField) [sheet.objects]", async () => {
+    await place();
+    // count defaults to 1.
+    await h.objects.invoke("media.paged.sheet.command.insertRows", { sheet: "Sheet1", at: 0 });
+    expect(val(await h.objects.get(`${P}/cell/Sheet1!A2`, "value"))).toBe("1");
+    // the find options default to false.
+    const hits = (await h.objects.invoke("media.paged.sheet.command.findInSheet", { needle: "5" })) as string[];
+    expect(hits).toEqual([`${P}/cell/Sheet1!B3`]);
+    const cmds = (await h.objects.commands()).filter((c) => c.owner === "media.paged.sheet");
+    const sort = cmds.find((c) => c.id === "media.paged.sheet.command.sortRange")!;
+    expect(sort.args).toMatchObject({
+      kind: "struct",
+      fields: { ascending: { kind: "bool", default: true }, hasHeader: { kind: "bool", default: false } },
+    });
+  });
+
   it("sheets: create, rename, freeze, delete", async () => {
     await place();
     expect((await h.objects.batch([{ op: "create", kind: `${P}/sheet`, props: { name: "Data" } }])).applied).toBe(true);
