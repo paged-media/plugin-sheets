@@ -64,9 +64,15 @@ function fakeHost() {
       f === "contribute.importer@1" ||
       f === "contribute.exporter@1" ||
       f === "contribute.objectType@1" ||
-      f === "contribute.editContext@1",
+      f === "contribute.editContext@1" ||
+      f === "contribute.schemaPanel@1",
     contribute: {
       panel(c: PanelContribution): Disposable {
+        panels.push(c);
+        return track();
+      },
+      // ADR 323 — the property-rows panel registers as a schema panel.
+      schemaPanel(c: PanelContribution): Disposable {
         panels.push(c);
         return track();
       },
@@ -91,6 +97,9 @@ function fakeHost() {
         return track();
       },
     },
+    bindings: { publish() {}, get: () => undefined, delete() {}, onDidChange: () => ({ dispose() {} }) },
+    selection: { get: () => [], onDidChange: () => ({ dispose() {} }) },
+    objects: { query: async () => [], get: async () => ({ kind: "absent" }), onDidChange: () => ({ dispose() {} }) },
     shell: {
       openPanel(id: string) {
         openedPanels.push(id);
@@ -112,13 +121,14 @@ function fakeHost() {
 }
 
 describe("sheet_plugin_bundle_activate", () => {
-  it("registers the workbook + grid + datasets panels under their declared ids", () => {
+  it("registers the workbook + grid + datasets + properties panels under their declared ids", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     expect(fake.panels.map((p) => p.id)).toEqual([
       "media.paged.sheet.panel.workbook",
       "media.paged.sheet.panel.grid",
       "media.paged.sheet.panel.datasets",
+      "media.paged.sheet.panel.properties",
     ]);
     expect(fake.panels[0].title).toBe("Workbook");
     expect(fake.panels[0].defaultDock).toBe("right");

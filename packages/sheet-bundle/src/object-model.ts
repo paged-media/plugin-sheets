@@ -283,6 +283,14 @@ function columnLabel(col: number): string {
 }
 const a1 = (row: number, col: number): string => `${columnLabel(col)}${row + 1}`;
 
+/** The address of one cell (`plugin:media.paged.sheet/cell/<sheet>!<A1>`),
+ *  as the kinds format it — for a panel that publishes the active cell. */
+export const cellAddressOf = (sheet: string, row: number, col: number): Address =>
+  addressOf("cell", escapeId(`${sheet}!${a1(row, col)}`));
+
+/** The address of the workbook (there is one per document). */
+export const WORKBOOK_ADDRESS: Address = `plugin:${PLUGIN_ID}/workbook/main`;
+
 class Refuse extends Error {}
 
 // --------------------------------------------------------------- values

@@ -33,7 +33,7 @@
 import type { BundleHandle, BundleHost, EditContextContribution } from "@paged-media/plugin-api";
 import type { ContentWheelEvent, ContentWheelHook } from "./protocol66";
 import { contributeMenu } from "./menu";
-import { contributePanel } from "@paged-media/plugin-sdk";
+import { contributePanel, contributeSchemaPanel } from "@paged-media/plugin-sdk";
 import { parseBinding } from "../../sheet-host-model/src";
 
 import manifest from "../manifest.json";
@@ -56,6 +56,11 @@ import { contributeObjectModel } from "./object-model";
 import { makeWorkbookPanel } from "./panels/workbook-panel";
 import { makeGridPanel } from "./panels/grid-panel";
 import { makeDatasetsPanel } from "./panels/datasets-panel";
+import {
+  PROPERTIES_PANEL_ID,
+  SHEET_PROPERTIES_PANEL,
+  publishPropertyBindings,
+} from "./panels/properties-panel";
 
 const PANEL_ID = "media.paged.sheet.panel.workbook";
 const GRID_PANEL_ID = "media.paged.sheet.panel.grid";
@@ -171,6 +176,19 @@ export function activate(host: BundleHost): BundleHandle {
     component: makeDatasetsPanel(host, session),
     defaultDock: "right",
   });
+
+  // ADR 323 — the object properties as host-rendered PropertyFields (a
+  // schema panel of property rows over host.objects).
+  const propertyBindings = host.supports("contribute.schemaPanel@1")
+    ? (contributeSchemaPanel(host, {
+        id: PROPERTIES_PANEL_ID,
+        title: SHEET_PROPERTIES_PANEL.title,
+        icon: SHEET_PROPERTIES_PANEL.icon,
+        defaultDock: "right",
+        schema: SHEET_PROPERTIES_PANEL,
+      }),
+      publishPropertyBindings(host, session))
+    : null;
 
   host.contribute.command({
     id: "media.paged.sheet.command.importXlsx",
@@ -649,6 +667,7 @@ export function activate(host: BundleHost): BundleHandle {
       menuSub.dispose();
       textProviderHandle = null;
       unsubscribeDocs?.();
+      propertyBindings?.dispose();
       objectModel.dispose();
       session.dispose();
     },

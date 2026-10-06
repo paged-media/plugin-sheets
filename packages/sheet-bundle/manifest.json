@@ -41,7 +41,8 @@
     "panels": [
       "media.paged.sheet.panel.workbook",
       "media.paged.sheet.panel.grid",
-      "media.paged.sheet.panel.datasets"
+      "media.paged.sheet.panel.datasets",
+      "media.paged.sheet.panel.properties"
     ],
     "commands": [
       "media.paged.sheet.command.importXlsx",

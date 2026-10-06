@@ -52,6 +52,7 @@ describe("sheet_plugin_manifest_valid", () => {
       "media.paged.sheet.panel.workbook",
       "media.paged.sheet.panel.grid",
       "media.paged.sheet.panel.datasets",
+      "media.paged.sheet.panel.properties",
     ]);
     expect(manifest.contributes.commands).toEqual([
       "media.paged.sheet.command.importXlsx",
