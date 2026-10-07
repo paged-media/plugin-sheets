@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { HeadlessHost } from "@paged-media/plugin-sdk";
+import { editValue, type HeadlessHost } from "@paged-media/plugin-sdk";
 import type { BundleHost, ObjectValue, ProviderRecordSet } from "@paged-media/plugin-api";
 
 import { sheetBundle } from "../src";
@@ -372,6 +372,39 @@ describe.skipIf(!ENGINE_BUILT)("paged.sheet object model [sheet.objects]", () =>
     await host.document.undo();
     await settle();
     expect(val(await h.objects.get(`${P}/chart/0`, "kind"))).toBe("column");
+  });
+
+  it("the properties panel's list rows edit through planValueEdit: range grid rows, chart series items [sheet.objects]", async () => {
+    // Selected range: one row of the value grid (shape kept), then a format row across it.
+    const R = `${P}/range/Sheet1!A1:C3`;
+    expect(await editValue(h.objects, [R], "values", { edit: "itemSet", index: 1, value: ["40", "50", "60"] })).toMatchObject({
+      applied: true,
+      undoSteps: 1,
+    });
+    expect(val(await h.objects.get(R, "values"))).toEqual([["1", "2", "3"], ["40", "50", "60"], ["7", "8", "9"]]);
+    // A grid-changing edit is refused by the kind (the range's shape is fixed).
+    expect((await editValue(h.objects, [R], "values", { edit: "remove", index: 0 })).applied).toBe(false);
+    expect((await h.objects.set(R, "bold", true)).applied).toBe(true);
+    expect(val(await h.objects.get(`${P}/cell/Sheet1!C3`, "bold"))).toBe(true);
+    // Chart series: add an item, set one of its fields, reorder, remove.
+    await place();
+    await h.objects.batch([
+      { op: "create", kind: `${P}/chart`, props: { kind: "column", series: [{ values: "Sheet1!B1:B3", categories: "", name: "B", color: "" }] } },
+    ]);
+    const C = `${P}/chart/0`;
+    expect(
+      await editValue(h.objects, [C], "series", { edit: "add", item: { values: "Sheet1!C1:C3", categories: "", name: "C", color: "" } }),
+    ).toMatchObject({ applied: true, undoSteps: 1 });
+    expect(await editValue(h.objects, [C], "series", { edit: "itemSet", index: 1, field: "color", value: "#FF0000" })).toMatchObject({
+      applied: true,
+    });
+    expect(await editValue(h.objects, [C], "series", { edit: "move", from: 1, to: 0 })).toMatchObject({ applied: true });
+    expect(val(await h.objects.get(C, "series"))).toEqual([
+      { values: "Sheet1!C1:C3", categories: "", name: "C", color: "#FF0000" },
+      { values: "Sheet1!B1:B3", categories: "", name: "B", color: "" },
+    ]);
+    expect(await editValue(h.objects, [C], "series", { edit: "remove", index: 1 })).toMatchObject({ applied: true });
+    expect((val(await h.objects.get(C, "series")) as unknown[]).length).toBe(1);
   });
 
   it("typed commands are listed with value-typed args", async () => {

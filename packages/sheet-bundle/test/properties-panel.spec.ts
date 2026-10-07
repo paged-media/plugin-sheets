@@ -60,15 +60,34 @@ describe("sheet properties panel (property rows)", () => {
     expect(SHEET_PANEL_FIELDS.some((f) => (f.kind as string) === "table")).toBe(false);
   });
 
+  it("covers EVERY writable row of every kind (derived / read-only rows are readouts)", () => {
+    const declared = new Set(SHEET_PANEL_FIELDS.map((f) => `${f.kind}.${f.path}`));
+    const writable = SHEET_KINDS.flatMap((k) =>
+      SHEET_SCHEMAS[k].filter((r) => (r.access ?? "readWrite") === "readWrite").map((r) => `${k}.${r.path}`),
+    );
+    expect(writable.filter((w) => !declared.has(w))).toEqual([]);
+  });
+
+  it("list rows: range grids row by row at a fixed shape, chart series as struct items", () => {
+    const row = (kind: string, path: string) =>
+      propertyRowsOf(SHEET_PROPERTIES_PANEL).find((r) => r.field.kind === `${PREFIX}${kind}` && r.field.path === path)!.field;
+    for (const p of ["values", "inputs"]) {
+      expect(row("range", p).items).toEqual({ add: false, remove: false, reorder: false });
+      expect(row("range", p).address).toEqual({ bind: BIND.range });
+    }
+    expect(row("chart", "series").items).toMatchObject({ fields: ["name", "values", "categories", "color"], itemLabel: "name" });
+  });
+
   it("is declared in the manifest", () => {
     expect(manifest.contributes.panels).toContain(PROPERTIES_PANEL_ID);
   });
 
   it("publishes the grid's active cell as the cell rows' address", () => {
     let active: { row: number; col: number } | null = { row: 1, col: 2 };
+    let grid: { anchorRow: number; anchorCol: number; rows: number; cols: number } | null = { anchorRow: 1, anchorCol: 2, rows: 1, cols: 1 };
     const listeners: Array<(c: { kind: string }) => void> = [];
     const session = {
-      state: () => ({ activeSheet: 7 }),
+      state: () => ({ activeSheet: 7, gridSelection: grid }),
       activeCell: () => active,
       sheets: () => [{ id: 7, name: "Sheet1", rows: 3, cols: 3 }],
       onDidChange: (l: (c: { kind: string }) => void) => (listeners.push(l), { dispose() {} }),
@@ -86,12 +105,19 @@ describe("sheet properties panel (property rows)", () => {
     };
     const d = publishPropertyBindings(host as never, session as never);
     expect(values.get(BIND.cell)).toBe(`${PREFIX}cell/Sheet1!C2`);
+    // One cell selected: no range (the Cell section edits it).
+    expect(values.has(BIND.range)).toBe(false);
+    grid = { anchorRow: 0, anchorCol: 0, rows: 3, cols: 2 };
+    for (const l of listeners) l({ kind: "selection" });
+    expect(values.get(BIND.range)).toBe(`${PREFIX}range/Sheet1!A1:B3`);
+    grid = null;
     active = { row: 0, col: 0 };
     for (const l of listeners) l({ kind: "selection" });
     expect(values.get(BIND.cell)).toBe(`${PREFIX}cell/Sheet1!A1`);
     active = null;
     for (const l of listeners) l({ kind: "selection" });
     expect(values.has(BIND.cell)).toBe(false);
+    expect(values.has(BIND.range)).toBe(false);
     d.dispose();
   });
 });

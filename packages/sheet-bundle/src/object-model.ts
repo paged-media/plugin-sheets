@@ -288,6 +288,11 @@ const a1 = (row: number, col: number): string => `${columnLabel(col)}${row + 1}`
 export const cellAddressOf = (sheet: string, row: number, col: number): Address =>
   addressOf("cell", escapeId(`${sheet}!${a1(row, col)}`));
 
+/** The address of a rectangular range (`plugin:media.paged.sheet/range/<sheet>!<A1>:<B2>`),
+ *  as the kinds format it — for a panel that publishes the grid selection. */
+export const rangeAddressOf = (sheet: string, top: number, left: number, rows: number, cols: number): Address =>
+  addressOf("range", escapeId(`${sheet}!${a1(top, left)}:${a1(top + rows - 1, left + cols - 1)}`));
+
 /** The address of the workbook (there is one per document). */
 export const WORKBOOK_ADDRESS: Address = `plugin:${PLUGIN_ID}/workbook/main`;
 

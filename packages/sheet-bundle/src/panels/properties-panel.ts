@@ -27,16 +27,21 @@
 //   · Sheet / Named range / Chart — a list (publishObjectList) and the
 //     picked object's rows, addressed `{ bind }`.
 //   · Cell — the grid's ACTIVE cell, published from the session.
+//   · Selected range — the grid selection (more than one cell), published
+//     from the session: value / input grids row by row, formula fill and
+//     the format rows across the whole range.
+//   · Chart series — a list of struct items (values / categories ranges,
+//     name, colour), edited item by item (plugin-sdk planValueEdit).
 
-import type { Address, BundleHost, Disposable, PanelSchema, PanelSchemaRow } from "@paged-media/plugin-api";
+import type { Address, BundleHost, Disposable, PanelSchema, PanelSchemaPropertyRow, PanelSchemaRow } from "@paged-media/plugin-api";
 import { propertyRows, publishObjectList } from "@paged-media/plugin-sdk";
 
-import { PLUGIN_ID, WORKBOOK_ADDRESS, cellAddressOf } from "../object-model";
+import { PLUGIN_ID, WORKBOOK_ADDRESS, cellAddressOf, rangeAddressOf } from "../object-model";
 import type { WorkbookSession } from "../session";
 
 export const PROPERTIES_PANEL_ID = "media.paged.sheet.panel.properties";
 
-type FieldKind = "workbook" | "sheet" | "cell" | "namedRange" | "chart";
+type FieldKind = "workbook" | "sheet" | "cell" | "range" | "namedRange" | "chart";
 
 /** The schema-driven panel fields (ADR 323 / Wave 4), in panel order. Every
  *  entry is a writable row of its kind (a spec holds it to that); tables
@@ -49,6 +54,7 @@ export const SHEET_PANEL_FIELDS: ReadonlyArray<{ kind: FieldKind; path: string; 
   { kind: "sheet", path: "freezeCols", group: "Sheet" },
   { kind: "cell", path: "value", group: "Cell" },
   { kind: "cell", path: "formula", group: "Cell" },
+  { kind: "cell", path: "input", group: "Cell" },
   { kind: "cell", path: "numberFormat", group: "Cell" },
   { kind: "cell", path: "fontName", group: "Cell" },
   { kind: "cell", path: "fontSize", group: "Cell" },
@@ -60,12 +66,27 @@ export const SHEET_PANEL_FIELDS: ReadonlyArray<{ kind: FieldKind; path: string; 
   { kind: "cell", path: "hAlign", group: "Cell" },
   { kind: "cell", path: "vAlign", group: "Cell" },
   { kind: "cell", path: "wrap", group: "Cell" },
+  { kind: "range", path: "values", group: "Selected range" },
+  { kind: "range", path: "inputs", group: "Selected range" },
+  { kind: "range", path: "formula", group: "Selected range" },
+  { kind: "range", path: "numberFormat", group: "Selected range" },
+  { kind: "range", path: "fontName", group: "Selected range" },
+  { kind: "range", path: "fontSize", group: "Selected range" },
+  { kind: "range", path: "bold", group: "Selected range" },
+  { kind: "range", path: "italic", group: "Selected range" },
+  { kind: "range", path: "underline", group: "Selected range" },
+  { kind: "range", path: "fontColor", group: "Selected range" },
+  { kind: "range", path: "fill", group: "Selected range" },
+  { kind: "range", path: "hAlign", group: "Selected range" },
+  { kind: "range", path: "vAlign", group: "Selected range" },
+  { kind: "range", path: "wrap", group: "Selected range" },
   { kind: "namedRange", path: "name", group: "Named range" },
   { kind: "namedRange", path: "refersTo", group: "Named range" },
   { kind: "namedRange", path: "scope", group: "Named range" },
   { kind: "chart", path: "kind", group: "Chart" },
   { kind: "chart", path: "title", group: "Chart" },
   { kind: "chart", path: "legend", group: "Chart" },
+  { kind: "chart", path: "series", group: "Chart" },
   { kind: "chart", path: "categoryAxisTitle", group: "Chart" },
   { kind: "chart", path: "valueAxisTitle", group: "Chart" },
   { kind: "chart", path: "valueAxisMin", group: "Chart" },
@@ -77,6 +98,7 @@ const qualified = (kind: FieldKind) => `plugin:${PLUGIN_ID}/${kind}`;
 /** Published bindings the lists and their property rows share. */
 export const BIND = {
   cell: "sheet.properties.cell",
+  range: "sheet.properties.range",
   sheets: "sheet.properties.sheets",
   sheet: "sheet.properties.sheet",
   names: "sheet.properties.namedRanges",
@@ -93,10 +115,29 @@ const list = (rows: string, select: string): PanelSchemaRow => ({
   list: { items: { kind: "binding", bind: rows }, labelField: "name", secondaryField: "secondary", selectionBinding: select },
 });
 
-const section = (group: string, address: Parameters<typeof propertyRows>[2], lead: PanelSchemaRow[] = []) => ({
-  title: group,
-  rows: [...lead, ...propertyRows(qualified(kindOf(group)), pathsOf(group), address)],
-});
+/** List / struct presentation per (kind.path). A range's rows are fixed
+ *  by its shape (a write must match it), so its value grids edit row by
+ *  row without add / remove / reorder; a chart's series are a stack of
+ *  struct items titled by their name. */
+const ROW_OPTIONS: Readonly<Record<string, Omit<PanelSchemaPropertyRow, "field" | "path" | "address">>> = {
+  "range.values": { items: { add: false, remove: false, reorder: false } },
+  "range.inputs": { items: { add: false, remove: false, reorder: false } },
+  "chart.series": {
+    items: {
+      fields: ["name", "values", "categories", "color"],
+      itemLabel: "name",
+      newItem: { values: "", categories: "", name: "", color: "" },
+    },
+  },
+};
+
+const section = (group: string, address: Parameters<typeof propertyRows>[2], lead: PanelSchemaRow[] = []) => {
+  const kind = kindOf(group);
+  return {
+    title: group,
+    rows: [...lead, ...propertyRows(qualified(kind), pathsOf(group), address, { row: (p) => ROW_OPTIONS[`${kind}.${p}`] ?? {} })],
+  };
+};
 
 /** The panel, from `SHEET_PANEL_FIELDS`. */
 export const SHEET_PROPERTIES_PANEL: PanelSchema = {
@@ -106,6 +147,7 @@ export const SHEET_PROPERTIES_PANEL: PanelSchema = {
   defaultDock: "right",
   sections: [
     section("Cell", { bind: BIND.cell }),
+    { ...section("Selected range", { bind: BIND.range }), collapsible: true },
     section("Sheet", { bind: BIND.sheet }, [list(BIND.sheets, BIND.sheet)]),
     section("Workbook", { addresses: [WORKBOOK_ADDRESS] }),
     { ...section("Named range", { bind: BIND.name }, [list(BIND.names, BIND.name)]), collapsible: true },
@@ -122,6 +164,16 @@ export function activeCellAddress(session: WorkbookSession): Address | null {
   return name ? cellAddressOf(name, at.row, at.col) : null;
 }
 
+/** The grid selection as a range address, or null (no selection, or a
+ *  single cell: the Cell section edits that one). */
+export function selectedRangeAddress(session: WorkbookSession): Address | null {
+  const st = session.state();
+  const g = st.gridSelection;
+  if (st.activeSheet === null || !g || (g.rows <= 1 && g.cols <= 1)) return null;
+  const name = session.sheets().find((s) => s.id === st.activeSheet)?.name;
+  return name ? rangeAddressOf(name, g.anchorRow, g.anchorCol, g.rows, g.cols) : null;
+}
+
 /** Keep the panel's bindings live: the active cell (from the session) and
  *  the sheet / named-range / chart lists (from `host.objects`). */
 export function publishPropertyBindings(host: BundleHost, session: WorkbookSession): Disposable {
@@ -129,6 +181,9 @@ export function publishPropertyBindings(host: BundleHost, session: WorkbookSessi
     const a = activeCellAddress(session);
     if (a === null) host.bindings.delete(BIND.cell);
     else if (host.bindings.get(BIND.cell) !== a) host.bindings.publish(BIND.cell, a);
+    const r = selectedRangeAddress(session);
+    if (r === null) host.bindings.delete(BIND.range);
+    else if (host.bindings.get(BIND.range) !== r) host.bindings.publish(BIND.range, r);
   };
   publishCell();
   const sub = session.onDidChange(publishCell);
