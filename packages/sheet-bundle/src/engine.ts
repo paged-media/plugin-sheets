@@ -811,7 +811,7 @@ export function wrapEngine(
     }
     return (f as (...a: unknown[]) => unknown).bind(wasm);
   };
-  return {
+  const facade: SheetEngine = {
     loadXlsx: (bytes) => {
       tick();
       wasm.load_xlsx(bytes);
@@ -943,6 +943,46 @@ export function wrapEngine(
       need("update_chart")(index, patch);
     },
   };
+  return guardTraps(facade);
+}
+
+/** A wasm TRAP (a Rust panic, or a read of memory that is not this
+ *  engine's) leaves the instance unusable: the shadow stack and any
+ *  borrow it held are never unwound, so the next call reads garbage or
+ *  traps again somewhere unrelated. The guard turns the first trap into a
+ *  diagnostic naming the call, and refuses every later call with the same
+ *  diagnostic instead of re-entering the broken instance (`dispose` of a
+ *  trapped engine is a no-op). Boundary errors (`Err` → a thrown string or
+ *  Error) pass through untouched — the engine stays healthy after those. */
+export function guardTraps(engine: SheetEngine): SheetEngine {
+  let trapped: Error | null = null;
+  const isTrap = (err: unknown) =>
+    typeof WebAssembly !== "undefined" && err instanceof WebAssembly.RuntimeError;
+  const out: Record<string, unknown> = {};
+  for (const [name, member] of Object.entries(engine)) {
+    if (typeof member !== "function") {
+      out[name] = member;
+      continue;
+    }
+    out[name] = (...args: unknown[]) => {
+      if (trapped) {
+        if (name === "dispose") return undefined;
+        throw trapped;
+      }
+      try {
+        return (member as (...a: unknown[]) => unknown)(...args);
+      } catch (err) {
+        if (!isTrap(err)) throw err;
+        trapped = new Error(
+          `sheet engine trapped in ${name} (${(err as Error).message}); ` +
+            "the engine is unusable until the workbook is reopened in a fresh editor",
+          { cause: err },
+        );
+        throw trapped;
+      }
+    };
+  }
+  return out as unknown as SheetEngine;
 }
 
 // ------------------------------------------------------------- the boot
@@ -967,7 +1007,26 @@ function isNode(): boolean {
  *  the XLSX-load boot and the EMPTY-workbook boot (S-15) share one
  *  instantiate path. Rejects with ENGINE_NOT_BUILT-flavoured detail when
  *  the artifact is missing. */
-async function loadModule(): Promise<SheetWasmModule> {
+/** The one module load per realm (single flight). The glue keeps ONE
+ *  module-level instance, and its async `default()` checks "already
+ *  initialised" BEFORE its await: two boots in flight at once (a reopened
+ *  document restores on activation AND on `documentLoaded`) both
+ *  instantiated, the second replaced the instance, and an engine built on
+ *  the first then read the second's memory with its own pointer —
+ *  "memory access out of bounds" in `list_freeze_panes`. Every boot shares
+ *  this promise; a failed load is forgotten so a later boot can retry. */
+let moduleLoad: Promise<SheetWasmModule> | null = null;
+function loadModule(): Promise<SheetWasmModule> {
+  if (!moduleLoad) {
+    moduleLoad = instantiateModule().catch((err: unknown) => {
+      moduleLoad = null;
+      throw err;
+    });
+  }
+  return moduleLoad;
+}
+
+async function instantiateModule(): Promise<SheetWasmModule> {
   let mod: SheetWasmModule;
   try {
     // @ts-ignore — the artifact (bin/sheet_js.js, the wasm-bindgen
