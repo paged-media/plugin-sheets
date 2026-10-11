@@ -173,9 +173,9 @@ export function registerBindingProvider(
 ): BindingProviderHandle | null {
   if (!supportsBindingProviders(host)) {
     host.log.info(
-      `binding provider for "${contextType}" not registered — this host ` +
-        `has no ADR-023 binding-provider registry (the shared Swatches ` +
-        `panel will read core, which is the pre-ADR behaviour)`,
+      `binding provider for "${contextType}" not registered — this editor ` +
+        `version does not support binding providers (the shared Swatches ` +
+        `panel shows the document's own swatches instead)`,
     );
     return null;
   }
