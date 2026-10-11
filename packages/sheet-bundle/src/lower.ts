@@ -1522,7 +1522,7 @@ async function paginatePass(
   if (spare.some((t) => !t.blank)) {
     host.log.warn(
       `chain-lower: ${spare.length} table(s) no longer needed were emptied — ` +
-        "the host has no deleteTable door (protocol 66)",
+        "this editor version cannot delete tables",
     );
   }
   for (const t of spare) {
