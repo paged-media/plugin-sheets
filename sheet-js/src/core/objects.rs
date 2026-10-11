@@ -127,7 +127,11 @@ fn plain_range(model: &SheetModel, r: &RangeRef) -> String {
     if n.start.row == n.end.row && n.start.col == n.end.col {
         format!("{sheet}!{}", at(n.start.row, n.start.col))
     } else {
-        format!("{sheet}!{}:{}", at(n.start.row, n.start.col), at(n.end.row, n.end.col))
+        format!(
+            "{sheet}!{}:{}",
+            at(n.start.row, n.start.col),
+            at(n.end.row, n.end.col)
+        )
     }
 }
 
@@ -153,9 +157,18 @@ impl SheetSession {
     /// The computed VALUES of `range` as seen from `sheet`, typed and
     /// unformatted, row-major. Bounded by the same cell cap as the display
     /// read.
-    pub fn get_range_raw(&self, sheet: u16, range: &str) -> Result<Vec<Vec<RawValue>>, SessionError> {
+    pub fn get_range_raw(
+        &self,
+        sheet: u16,
+        range: &str,
+    ) -> Result<Vec<Vec<RawValue>>, SessionError> {
         let (sheet, cr) = self.resolve_range(sheet, range)?;
-        let (top, left, bottom, right) = (cr.r0.min(cr.r1), cr.c0.min(cr.c1), cr.r0.max(cr.r1), cr.c0.max(cr.c1));
+        let (top, left, bottom, right) = (
+            cr.r0.min(cr.r1),
+            cr.c0.min(cr.c1),
+            cr.r0.max(cr.r1),
+            cr.c0.max(cr.c1),
+        );
         let area = (bottom as u64 - top as u64 + 1) * (right as u64 - left as u64 + 1);
         if area > super::T0_LOWER_CELL_CAP {
             return Err(SessionError(format!(
@@ -175,7 +188,9 @@ impl SheetSession {
                     Some(sheet_core::CellValue::Number(n)) => RawValue::Number(*n),
                     Some(sheet_core::CellValue::Text(t)) => RawValue::Text(t.to_string()),
                     Some(sheet_core::CellValue::Bool(b)) => RawValue::Bool(*b),
-                    Some(sheet_core::CellValue::Error(e)) => RawValue::Error { error: e.as_str().to_string() },
+                    Some(sheet_core::CellValue::Error(e)) => RawValue::Error {
+                        error: e.as_str().to_string(),
+                    },
                 });
             }
             rows.push(row);
@@ -269,11 +284,16 @@ impl SheetSession {
             .charts
             .get(index as usize)
             .map(|c| c.host_sheet)
-            .ok_or_else(|| SessionError(format!("chart index {index} out of range ({count} charts)")))?;
+            .ok_or_else(|| {
+                SessionError(format!("chart index {index} out of range ({count} charts)"))
+            })?;
         let kind = match &patch.kind {
             None => None,
             Some(tag) => Some(chart_kind_from_tag(tag).ok_or_else(|| {
-                SessionError(format!("unknown chart kind {tag:?} ({})", CHART_KIND_TAGS.join("|")))
+                SessionError(format!(
+                    "unknown chart kind {tag:?} ({})",
+                    CHART_KIND_TAGS.join("|")
+                ))
             })?),
         };
         let series = match &patch.series {
@@ -335,9 +355,13 @@ mod tests {
 
     fn session() -> SheetSession {
         let mut s = SheetSession::new();
-        for (r, row) in [["", "Q1", "Q2"], ["North", "10", "20"], ["South", "30", "40"]]
-            .iter()
-            .enumerate()
+        for (r, row) in [
+            ["", "Q1", "Q2"],
+            ["North", "10", "20"],
+            ["South", "30", "40"],
+        ]
+        .iter()
+        .enumerate()
         {
             for (c, v) in row.iter().enumerate() {
                 if !v.is_empty() {
@@ -351,7 +375,9 @@ mod tests {
     #[test]
     fn chart_specs_carry_series_ranges__feat__sheet_objects() {
         let mut s = session();
-        let i = s.add_chart(0, "B2:C3", "A2:A3", "column", "Sales", "columns").unwrap();
+        let i = s
+            .add_chart(0, "B2:C3", "A2:A3", "column", "Sales", "columns")
+            .unwrap();
         let spec = &s.chart_specs()[i as usize];
         assert_eq!(spec.kind, "column");
         assert_eq!(spec.title.as_deref(), Some("Sales"));
@@ -364,7 +390,9 @@ mod tests {
     #[test]
     fn update_chart_patches_and_validates_whole__feat__sheet_objects() {
         let mut s = session();
-        let i = s.add_chart(0, "B2:C3", "", "column", "", "columns").unwrap();
+        let i = s
+            .add_chart(0, "B2:C3", "", "column", "", "columns")
+            .unwrap();
         let patch = ChartPatch {
             kind: Some("line".into()),
             title: Some(Some("Trend".into())),
@@ -396,7 +424,14 @@ mod tests {
         assert!(s.update_chart(i, bad).is_err());
         assert_eq!(s.chart_specs()[i as usize].title.as_deref(), Some("Trend"));
         // Clearing with null.
-        s.update_chart(i, ChartPatch { title: Some(None), ..Default::default() }).unwrap();
+        s.update_chart(
+            i,
+            ChartPatch {
+                title: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(s.chart_specs()[i as usize].title, None);
         assert!(s.update_chart(9, ChartPatch::default()).is_err());
     }

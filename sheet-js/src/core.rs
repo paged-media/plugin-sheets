@@ -71,10 +71,10 @@ mod fill;
 mod format;
 mod objects;
 mod ops;
-pub use objects::{ChartPatch, ChartSpec, RawValue, SeriesArg, SeriesSpec, TableInfo};
 pub use format::{
     EdgeArg, MergeResult, NameInfo, ResolvedRange, SetStyleResult, SheetLayoutInfo, StylePatchArg,
 };
+pub use objects::{ChartPatch, ChartSpec, RawValue, SeriesArg, SeriesSpec, TableInfo};
 pub use ops::{CalcSettingsInfo, StructuralEdit};
 
 // ─────────────────────────────────────────── serde wire structs (camelCase)
