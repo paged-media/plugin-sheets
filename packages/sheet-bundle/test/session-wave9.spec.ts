@@ -22,7 +22,6 @@ import { createWorkbookSession, storyOfFrame, type WorkbookSession } from "../sr
 import { countingHost, Tally } from "./perf/counting-host";
 
 import {
-  CORE_PRE_66,
   ENGINE_BUILT,
   WASM,
   authorWorkbook,
@@ -219,9 +218,7 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placed charts and frame stories", () 
     expect(t66.work.calls).toEqual({ "document.elementGeometry": 1 });
 
     // A pre-66 host: the geometry item has no story — asked once, then the
-    // walk; the second resolution skips the geometry read. (Only a pre-66
-    // core answers that way; 66+ carries the story.)
-    if (!CORE_PRE_66) return;
+    // walk; the second resolution skips the geometry read.
     const t64 = new Tally();
     const h64 = countingHost(withoutDoors66(raw), t64).host;
     expect(await storyOfFrame(h64, frameId)).toBe(storyId);
