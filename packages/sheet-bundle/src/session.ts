@@ -149,6 +149,14 @@ const PALETTE_PROBE_HPT = 300;
  *  - `cells`: only the VALUES / inputs of these cells changed (an edit,
  *    paste, sort, replace, undo/redo of those) — no style, sheet or
  *    workbook structure. `regions` bound every written cell. */
+/** A one-line answer for the user ({@link WorkbookSession.notice}). */
+export interface SessionNotice {
+  text: string;
+  tone: "ok" | "error";
+  /** Bumps on every post, so the same text posted twice still re-shows. */
+  seq: number;
+}
+
 export type SessionChange =
   | { kind: "selection" }
   | { kind: "cells"; regions: readonly CellRegion[] }
@@ -444,6 +452,13 @@ export interface WorkbookSession {
     | { ok: true; rows: number; cols: number }
     | { ok: false; message: string }
   >;
+  /** The last answer of copy or paste, for the grid panel to show. Copy and
+   *  paste are reached from the panel buttons, the grid keys, the in-frame
+   *  keys and the commands; a refusal from any of them is posted here, so
+   *  the user sees it instead of only the log. Null until one is posted. */
+  notice(): SessionNotice | null;
+  /** Subscribe to {@link notice}. */
+  onNotice(listener: (notice: SessionNotice) => void): { dispose(): void };
   /** S-04 formula bar — the engine's registry-generated function name table
    *  for the autocomplete (constitution §7: the completion names are the
    *  ENGINE's, never a TS list). Cached after the first call (the registry
@@ -2872,7 +2887,7 @@ export function createWorkbookSession(
       // TSV text fallback) to the system clipboard. Thin glue (§3): the engine
       // owns the values, the host owns the clipboard.
       if (!state.engine || state.activeSheet === null) {
-        return { ok: false as const, message: "no workbook / sheet" };
+        return { ok: false as const, message: "open a workbook first" };
       }
       const sel = state.gridSelection;
       if (!sel) {
@@ -2934,7 +2949,7 @@ export function createWorkbookSession(
       // the rich tabular half; falls back to TSV. Thin glue (§3): the engine
       // re-types each cell's string in Rust; this only routes + journals.
       if (!state.engine || state.activeSheet === null) {
-        return { ok: false as const, message: "no workbook / sheet" };
+        return { ok: false as const, message: "open a workbook first" };
       }
       const sel = state.gridSelection;
       if (!sel) {
@@ -3179,7 +3194,7 @@ export function createWorkbookSession(
         return {
           ok: false as const,
           message:
-            "no lowered table — lower a range to a frame first, then pick a cell",
+            "place a range on the page first, then pick a cell in it",
         };
       }
       const sel = state.gridSelection;
@@ -3192,7 +3207,7 @@ export function createWorkbookSession(
         return {
           ok: false as const,
           message:
-            "the selected cell is on a different sheet than the lowered table",
+            "the selected cell is on a different sheet than the placed table",
         };
       }
 
@@ -3210,7 +3225,7 @@ export function createWorkbookSession(
         );
       } catch (err) {
         host.log.warn("newCellStyleFromSelection: lower read failed", err);
-        return { ok: false as const, message: "could not read the lowered range" };
+        return { ok: false as const, message: "could not read the placed range" };
       }
       const pos =
         tableCellPositionOf(content, sel.anchorRow, sel.anchorCol) ??
@@ -4066,7 +4081,41 @@ export function createWorkbookSession(
       }
       state.engine = null;
       emitter.clear();
+      noticeListeners.clear();
     },
+    notice() {
+      return lastNotice;
+    },
+    onNotice(listener) {
+      noticeListeners.add(listener);
+      return { dispose: () => void noticeListeners.delete(listener) };
+    },
+  };
+
+  // Copy and paste keep their {ok} answers for the callers; the wrapper
+  // also posts each answer as the grid notice (internal callers go through
+  // `api`, so the keys and the commands post too).
+  let lastNotice: SessionNotice | null = null;
+  const noticeListeners = new Set<(n: SessionNotice) => void>();
+  const postNotice = (text: string, tone: SessionNotice["tone"]) => {
+    lastNotice = { text, tone, seq: (lastNotice?.seq ?? 0) + 1 };
+    for (const l of [...noticeListeners]) l(lastNotice);
+  };
+  const cellCount = (rows: number, cols: number) =>
+    `${rows} × ${cols} cell${rows * cols === 1 ? "" : "s"}`;
+  const copyImpl = api.copySelection;
+  const pasteImpl = api.pasteAtSelection;
+  api.copySelection = async () => {
+    const r = await copyImpl.call(api);
+    if (r.ok) postNotice(`Copied ${cellCount(r.rows, r.cols)}.`, "ok");
+    else postNotice(`Can't copy: ${r.message}.`, "error");
+    return r;
+  };
+  api.pasteAtSelection = async () => {
+    const r = await pasteImpl.call(api);
+    if (r.ok) postNotice(`Pasted ${cellCount(r.rows, r.cols)}.`, "ok");
+    else postNotice(`Can't paste: ${r.message}.`, "error");
+    return r;
   };
   return api;
 }

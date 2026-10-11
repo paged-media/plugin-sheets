@@ -57,7 +57,8 @@ import {
   type GridSelection,
 } from "../../../sheet-host-model/src";
 
-import { columnLabel, type WorkbookSession } from "../session";
+import type { FindMatch } from "../engine";
+import { columnLabel, type SessionNotice, type WorkbookSession } from "../session";
 import {
   fillTarget,
   fullyVisible,
@@ -144,12 +145,17 @@ const completionList: CSSProperties = {
   boxShadow: "var(--shadow-md, 0 4px 12px rgba(0,0,0,0.18))",
 };
 
-// The viewport size the grid windows into (content-space pt). The interim
-// panel is a fixed scroll box; the in-frame surface (S-02) will size to the
-// frame's content box. Scroll steps move the origin one row/col at a time
-// (the engine re-windows from there — virtualization keeps it cheap).
-const VIEWPORT_W_PT = 480;
+// The viewport the grid windows into (content-space pt). Its WIDTH follows
+// the panel: a ResizeObserver measures the panel's content box, so the grid
+// fills a narrow dock and grows when the dock is widened. The default is the
+// width of the standard 320 px dock, used until the first measurement (and
+// where there is no ResizeObserver, e.g. headless tests). Scroll steps move
+// the origin one row/col at a time (the engine re-windows from there).
+const DEFAULT_VIEWPORT_W_PT = 280;
+const MIN_VIEWPORT_W_PT = 120;
 const VIEWPORT_H_PT = 320;
+/** The surface's left + right border, inside the measured content box. */
+const SURFACE_BORDER_PX = 2;
 
 /** The pixel size the SVG renders at (1 pt = 1 px in the interim panel; the
  *  in-frame surface honours the document zoom). */
@@ -162,7 +168,7 @@ interface EditorState {
 }
 
 export function makeGridPanel(
-  host: BundleHost,
+  _host: BundleHost,
   session: WorkbookSession,
 ): () => ReactElement {
   return function GridPanel(): ReactElement {
@@ -182,19 +188,76 @@ export function makeGridPanel(
 
     const st = session.state();
 
-    // Wave 5 — find in the sheet: the field Cmd+F / "Find in sheet…" focus
-    // (they bump `findRequest`); Enter / Next select + reveal the next
-    // match after the active cell (in this grid AND in-frame).
+    // The viewport width, measured from the panel (see DEFAULT_VIEWPORT_W_PT).
+    // A callback ref, because the empty state and the grid render different
+    // root elements: each one is observed while it is mounted.
+    const [viewW, setViewW] = useState(DEFAULT_VIEWPORT_W_PT);
+    const observer = useRef<ResizeObserver | null>(null);
+    const rootRef = useCallback((el: HTMLDivElement | null) => {
+      observer.current?.disconnect();
+      observer.current = null;
+      if (!el || typeof ResizeObserver === "undefined") return;
+      const ro = new ResizeObserver((entries) => {
+        const width = entries[entries.length - 1]?.contentRect.width ?? 0;
+        if (width <= 0) return; // hidden (a collapsed dock): keep the last size
+        const next = Math.max(MIN_VIEWPORT_W_PT, Math.floor(width / PX_PER_PT) - SURFACE_BORDER_PX);
+        setViewW((prev) => (prev === next ? prev : next));
+      });
+      ro.observe(el);
+      observer.current = ro;
+    }, []);
+    useEffect(() => () => observer.current?.disconnect(), []);
+
+    // One status line for answers that used to reach only the log: copy and
+    // paste (posted by the session, whichever caller asked), a refused fill
+    // and an edit that did not commit.
+    const [notice, setNotice] = useState<SessionNotice | null>(() => session.notice());
+    useEffect(() => {
+      const sub = session.onNotice(setNotice);
+      return () => sub.dispose();
+    }, []);
+    const showError = (text: string) =>
+      setNotice((prev) => ({ text, tone: "error", seq: (prev?.seq ?? 0) + 1 }));
+
+    // Find and replace in the sheet (the one home for find): Cmd+F, "Find in
+    // sheet…" and "Find & replace…" focus the field (they bump
+    // `findRequest`); Enter / Next select + reveal the next match after the
+    // active cell (in this grid AND in-frame). Replace, the match toggles
+    // and the full hit list sit under "Replace and options".
     const [findText, setFindText] = useState("");
     const [findStatus, setFindStatus] = useState<string | null>(null);
+    const [replacement, setReplacement] = useState("");
+    const [matchCase, setMatchCase] = useState(false);
+    const [entireCell, setEntireCell] = useState(false);
+    const [inFormulas, setInFormulas] = useState(false);
+    const [hits, setHits] = useState<FindMatch[] | null>(null);
+    const [findMsg, setFindMsg] = useState<string | null>(null);
     const findInputRef = useRef<HTMLInputElement | null>(null);
     useEffect(() => {
       if (st.findRequest > 0) findInputRef.current?.focus();
     }, [st.findRequest]);
+    const findOpts = { matchCase, entireCell, inFormulas };
     const runFind = (backwards: boolean) => {
-      const hit = session.findNext(findText, undefined, backwards);
+      const hit = session.findNext(findText, findOpts, backwards);
       setFindStatus(
-        hit ? `${columnLabel(hit.col)}${hit.row + 1}` : findText ? "no match" : null,
+        hit ? `${columnLabel(hit.col)}${hit.row + 1}` : findText ? "No match" : null,
+      );
+    };
+    const onFindAll = () => {
+      if (!findText) return;
+      const found = session.findAll(findText, findOpts, "sheet");
+      setHits(found);
+      setFindMsg(`${found.length} match${found.length === 1 ? "" : "es"}.`);
+    };
+    const onReplaceAll = () => {
+      if (!findText) return;
+      const res = session.replaceAll(findText, replacement, findOpts, "sheet");
+      setHits(null); // stale after a replace
+      setFindMsg(
+        "error" in res
+          ? res.error
+          : `Replaced ${res.occurrences} occurrence${res.occurrences === 1 ? "" : "s"} in ${res.replacedCells} cell${res.replacedCells === 1 ? "" : "s"}` +
+              (res.skipped > 0 ? ` (${res.skipped} skipped).` : "."),
       );
     };
 
@@ -327,7 +390,7 @@ export function makeGridPanel(
     // or when windowing fails — the panel says so).
     const scene: GridScene | null =
       st.activeSheet !== null
-        ? session.gridScene(firstRow, firstCol, VIEWPORT_W_PT, VIEWPORT_H_PT)
+        ? session.gridScene(firstRow, firstCol, viewW, VIEWPORT_H_PT)
         : null;
 
     // Keep the editor focused while open.
@@ -395,7 +458,7 @@ export function makeGridPanel(
         setFillDrag(null);
         if (fillDrag.target) {
           const r = session.fillSelectionTo(fillDrag.target, true);
-          if (!r.ok) host.log.warn(`fill: ${r.message}`);
+          if (!r.ok) showError(`Can't fill: ${r.message}.`);
         }
       }
     }, [fillDrag]);
@@ -421,7 +484,7 @@ export function makeGridPanel(
       if (!active || !scene) return;
       const next = scrollToShow(
         { firstRow, firstCol },
-        fullyVisible(scene, VIEWPORT_W_PT, VIEWPORT_H_PT),
+        fullyVisible(scene, viewW, VIEWPORT_H_PT),
         active,
       );
       if (next.firstRow !== firstRow) setFirstRow(next.firstRow);
@@ -487,7 +550,7 @@ export function makeGridPanel(
         editor.col,
         editor.value,
       );
-      if (!ok) host.log.warn("grid: cell edit was not committed");
+      if (!ok) showError("The cell edit was not saved.");
       setEditor(null);
       if (then) {
         session.handleGridKey({
@@ -519,15 +582,26 @@ export function makeGridPanel(
     if (st.activeSheet === null || !scene) {
       return (
         <div
+          ref={rootRef}
           data-sheet-panel="grid"
           style={{ padding: "var(--space-3, 12px)" }}
         >
           <div style={kicker}>Grid</div>
-          <p style={{ ...note, marginTop: 0 }}>
+          <p data-grid-empty style={{ ...note, marginTop: 0 }}>
             {st.bootError
-              ? `Engine unavailable — ${st.bootError}.`
-              : "Import a workbook to edit it in the grid."}
+              ? `The spreadsheet engine could not start: ${st.bootError}.`
+              : "Open or create a workbook to edit it here."}
           </p>
+          {!st.bootError && (
+            <button
+              type="button"
+              data-grid-new
+              onClick={() => void session.newWorkbook()}
+              style={{ ...scrollBtn, marginTop: "var(--space-2, 8px)" }}
+            >
+              New blank workbook
+            </button>
+          )}
         </div>
       );
     }
@@ -543,6 +617,7 @@ export function makeGridPanel(
 
     return (
       <div
+        ref={rootRef}
         data-sheet-panel="grid"
         style={{
           padding: "var(--space-3, 12px)",
@@ -621,14 +696,16 @@ export function makeGridPanel(
           )}
         </div>
 
-        {/* Find in sheet (Wave 5). */}
-        <div data-sheet-find style={{ display: "flex", gap: "var(--space-1, 4px)" }}>
+        {/* Find and replace in the sheet (Wave 5; the one home for find). */}
+        <div data-grid-find style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1, 4px)" }}>
           <input
             ref={findInputRef}
             data-find-input
+            data-sheet-find-needle
             type="text"
             value={findText}
             placeholder="Find in sheet"
+            aria-label="Find in sheet"
             onChange={(e) => {
               setFindText(e.target.value);
               setFindStatus(null);
@@ -642,12 +719,13 @@ export function makeGridPanel(
                 surfaceRef.current?.focus();
               }
             }}
-            style={{ ...formulaInput, flex: 1 }}
+            style={{ ...formulaInput, flex: "1 1 120px", minWidth: 0 }}
           />
           <button
             type="button"
             data-find-prev
             disabled={!findText}
+            title={findText ? "Previous match (Shift+Enter)" : "Type something to find first"}
             onClick={() => runFind(true)}
             style={scrollBtn}
           >
@@ -657,17 +735,28 @@ export function makeGridPanel(
             type="button"
             data-find-next
             disabled={!findText}
+            title={findText ? "Next match (Enter)" : "Type something to find first"}
             onClick={() => runFind(false)}
             style={scrollBtn}
           >
             Next
+          </button>
+          <button
+            type="button"
+            data-sheet-find
+            disabled={!findText}
+            title={findText ? "List every match in this sheet" : "Type something to find first"}
+            onClick={onFindAll}
+            style={scrollBtn}
+          >
+            Find all
           </button>
           {findStatus && (
             <span
               data-find-status
               style={{
                 alignSelf: "center",
-                font: "11px var(--font-mono, monospace)",
+                font: "11px var(--font-sans, sans-serif)",
                 color: "var(--pg-muted-fg)",
               }}
             >
@@ -675,12 +764,105 @@ export function makeGridPanel(
             </span>
           )}
         </div>
+        <details data-sheet-replace-section style={{ font: "12px var(--font-sans, sans-serif)" }}>
+          <summary style={{ cursor: "pointer", color: "var(--pg-muted-fg)" }}>
+            Replace and options
+          </summary>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1, 4px)", marginTop: "var(--space-1, 4px)" }}>
+            <input
+              data-sheet-find-replacement
+              type="text"
+              value={replacement}
+              onChange={(e) => setReplacement(e.target.value)}
+              placeholder="Replace with"
+              aria-label="Replace with"
+              style={{ ...formulaInput, flex: "1 1 120px", minWidth: 0 }}
+            />
+            <button
+              type="button"
+              data-sheet-replace-all
+              disabled={!findText}
+              title={findText ? "Replace every match in this sheet" : "Type something to find first"}
+              onClick={onReplaceAll}
+              style={scrollBtn}
+            >
+              Replace all
+            </button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2, 8px)", marginTop: "var(--space-1, 4px)" }}>
+            {(
+              [
+                ["data-sheet-find-case", "Match case", matchCase, setMatchCase],
+                ["data-sheet-find-entire", "Entire cell", entireCell, setEntireCell],
+                ["data-sheet-find-formulas", "In formulas", inFormulas, setInFormulas],
+              ] as const
+            ).map(([attr, label, checked, set]) => (
+              <label key={attr} style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--pg-fg)" }}>
+                <input
+                  {...{ [attr]: true }}
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => set(e.target.checked)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </details>
+        {findMsg && (
+          <p data-sheet-find-msg role="status" style={{ ...note, marginTop: 0, color: "var(--pg-fg)", fontSize: 12 }}>
+            {findMsg}
+          </p>
+        )}
+        {hits && hits.length > 0 && (
+          <ul
+            data-sheet-find-hits
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              maxHeight: 160,
+              overflowY: "auto",
+              border: "1px solid var(--pg-border)",
+              borderRadius: "var(--radius-sm, 4px)",
+            }}
+          >
+            {hits.map((h, i) => (
+              <li key={`${h.sheet}:${h.row}:${h.col}:${i}`}>
+                <button
+                  type="button"
+                  data-sheet-find-hit={`${h.row}:${h.col}`}
+                  onClick={() => session.goToCell(h.sheet, h.row, h.col)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    font: "12px var(--font-sans, sans-serif)",
+                    color: "var(--pg-fg)",
+                    background: "none",
+                    border: "none",
+                    padding: "3px 6px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+                    {columnLabel(h.col)}
+                    {h.row + 1}
+                  </span>{" "}
+                  {h.excerpt}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
         {/* Scroll controls — one row/col per step; the engine re-windows. */}
-        <div style={{ display: "flex", gap: "var(--space-1, 4px)" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1, 4px)" }}>
           <button
             type="button"
             data-grid-scroll="up"
+            aria-label="Scroll up one row"
+            title="Scroll up one row"
             onClick={() => setFirstRow((r) => Math.max(0, r - 1))}
             style={scrollBtn}
           >
@@ -689,6 +871,8 @@ export function makeGridPanel(
           <button
             type="button"
             data-grid-scroll="down"
+            aria-label="Scroll down one row"
+            title="Scroll down one row"
             onClick={() => setFirstRow((r) => r + 1)}
             style={scrollBtn}
           >
@@ -697,6 +881,8 @@ export function makeGridPanel(
           <button
             type="button"
             data-grid-scroll="left"
+            aria-label="Scroll left one column"
+            title="Scroll left one column"
             onClick={() => setFirstCol((c) => Math.max(0, c - 1))}
             style={scrollBtn}
           >
@@ -705,6 +891,8 @@ export function makeGridPanel(
           <button
             type="button"
             data-grid-scroll="right"
+            aria-label="Scroll right one column"
+            title="Scroll right one column"
             onClick={() => setFirstCol((c) => c + 1)}
             style={scrollBtn}
           >
@@ -727,11 +915,8 @@ export function makeGridPanel(
             type="button"
             data-grid-copy
             disabled={!sel}
-            onClick={() => {
-              void session.copySelection().then((r) => {
-                if (!r.ok) host.log.warn(`copy: ${r.message}`);
-              });
-            }}
+            title={sel ? "Copy the selected cells" : "Select cells to copy first"}
+            onClick={() => void session.copySelection()}
             style={{ ...scrollBtn, marginLeft: "var(--space-2, 8px)" }}
           >
             Copy
@@ -740,16 +925,28 @@ export function makeGridPanel(
             type="button"
             data-grid-paste
             disabled={!sel}
-            onClick={() => {
-              void session.pasteAtSelection().then((r) => {
-                if (!r.ok) host.log.warn(`paste: ${r.message}`);
-              });
-            }}
+            title={sel ? "Paste at the selected cell" : "Select a cell to paste at first"}
+            onClick={() => void session.pasteAtSelection()}
             style={scrollBtn}
           >
             Paste
           </button>
         </div>
+
+        {notice && (
+          <p
+            key={notice.seq}
+            data-grid-notice={notice.tone}
+            role={notice.tone === "error" ? "alert" : "status"}
+            style={{
+              margin: 0,
+              font: "12px var(--font-sans, sans-serif)",
+              color: notice.tone === "error" ? "var(--status-error)" : "var(--pg-muted-fg)",
+            }}
+          >
+            {notice.text}
+          </p>
+        )}
 
         {/* The grid surface: the engine-windowed SVG + the cell editor. */}
         <div
@@ -760,6 +957,7 @@ export function makeGridPanel(
           style={{
             position: "relative",
             width: wPx,
+            maxWidth: "100%",
             height: hPx,
             border: "1px solid var(--pg-border)",
             borderRadius: "var(--radius-sm, 4px)",
@@ -812,12 +1010,17 @@ export function makeGridPanel(
 
         {/* S-01/S-02 honesty: this is the interim panel grid, not the
             in-frame sheets-mode surface (still SDK-blocked). */}
-        <p data-grid-honesty style={note}>
-          Click or drag to select (shift extends), type or F2 to edit, Enter /
-          Tab to commit and move, Delete to clear, drag the corner handle to
-          fill. The same grid edits in place inside a placed sheet frame
-          (double-click the frame).
+        <p data-grid-honesty style={{ ...note, marginTop: 0 }}>
+          Click a cell to select it and type to edit; the same grid edits
+          inside a placed sheet frame.
         </p>
+        <details style={{ ...note, marginTop: 0 }}>
+          <summary style={{ cursor: "pointer" }}>About</summary>
+          Drag or Shift+click to select a range. F2 edits the cell, Enter or
+          Tab commits and moves, Delete clears. Drag the corner handle to
+          fill. Double-click a placed sheet frame on the page to edit it
+          there.
+        </details>
       </div>
     );
   };

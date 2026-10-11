@@ -198,7 +198,7 @@ describe("sheet_plugin_cell_style_from_cell: session glue", () => {
     session.setGridSelection(0, 0, 1, 1);
     const res = await session.newCellStyleFromSelection("X");
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.message).toMatch(/lower a range/);
+    if (!res.ok) expect(res.message).toMatch(/place a range on the page/);
   });
 
   it("requires a selection — refuses when no cell is selected", async () => {

@@ -169,14 +169,23 @@ describe("sheet_plugin_bundle_activate", () => {
     ]);
   });
 
-  it("sortRange / findReplace commands open the workbook panel (the controls live there)", () => {
+  it("titles the placing verbs 'Place … on page' (the ids keep their names)", () => {
+    const fake = fakeHost();
+    sheetBundle.activate(fake.host);
+    const title = (suffix: string) =>
+      fake.commands.find((c) => c.id === `media.paged.sheet.command.${suffix}`)?.title;
+    expect(title("lowerToFrame")).toBe("Place selection on page");
+    expect(title("lowerChartToFrame")).toBe("Place chart on page");
+  });
+
+  it("sortRange opens the workbook panel; findReplace the grid panel (where find lives)", () => {
     const fake = fakeHost();
     sheetBundle.activate(fake.host);
     fake.commands.find((c) => c.id.endsWith("sortRange"))?.handler(undefined);
     fake.commands.find((c) => c.id.endsWith("findReplace"))?.handler(undefined);
     expect(fake.openedPanels).toEqual([
       "media.paged.sheet.panel.workbook",
-      "media.paged.sheet.panel.workbook",
+      "media.paged.sheet.panel.grid",
     ]);
   });
 

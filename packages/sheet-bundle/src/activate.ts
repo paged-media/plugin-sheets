@@ -209,7 +209,7 @@ export function activate(host: BundleHost): BundleHandle {
   });
   host.contribute.command({
     id: "media.paged.sheet.command.lowerToFrame",
-    title: "Lower selection to frame",
+    title: "Place selection on page",
     category: "Sheet",
     handler: () => session.lowerSelection(),
   });
@@ -219,7 +219,7 @@ export function activate(host: BundleHost): BundleHandle {
   // no-op the command logs.
   host.contribute.command({
     id: "media.paged.sheet.command.lowerChartToFrame",
-    title: "Lower chart to frame",
+    title: "Place chart on page",
     category: "Sheet",
     handler: async () => {
       const charts = session.listCharts();
@@ -253,10 +253,10 @@ export function activate(host: BundleHost): BundleHandle {
     category: "Sheet",
     handler: () => session.hideGridInFrame(),
   });
-  // Phase 4b — "Sort range…" / "Find & replace…": both lead to the workbook
-  // panel, where the minimal controls live (key column / direction / header;
-  // needle / replacement / match toggles). The actual semantics are the
-  // engine's (sheet.edit.*); the session routes + journals.
+  // Phase 4b — "Sort range…" leads to the workbook panel (key column /
+  // direction / header); "Find & replace…" to the grid panel's find field,
+  // where replace and the match toggles live too. The actual semantics are
+  // the engine's (sheet.edit.*); the session routes + journals.
   host.contribute.command({
     id: "media.paged.sheet.command.sortRange",
     title: "Sort range…",
@@ -267,7 +267,10 @@ export function activate(host: BundleHost): BundleHandle {
     id: "media.paged.sheet.command.findReplace",
     title: "Find & replace…",
     category: "Sheet",
-    handler: () => host.shell.openPanel(PANEL_ID),
+    handler: () => {
+      host.shell.openPanel(GRID_PANEL_ID);
+      session.requestFind();
+    },
   });
   // S-15 — open the datasets panel to source a sheet from a governed
   // dataset (the consumer flow: discover → pick → seed). The actual

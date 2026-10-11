@@ -7,13 +7,9 @@
  * there was no menu door at all, so every verb here lived behind Cmd+K
  * and nowhere else.
  *
- * TWO PATHS DELIBERATELY DO NOT MATCH THEIR COMMAND TITLES.
- * `lowerToFrame` is registered as "Lower selection to frame" and
- * `lowerChartToFrame` as "Lower chart to frame" — compiler vocabulary
- * for the step that actually puts the sheet on the page. A menu is read
- * by someone deciding what to do next, so these read as "Place on
- * page". The command titles are a separate fix; a menu that repeated
- * them would spread the problem rather than route around it.
+ * The verb that puts a range or a chart on the page reads "Place … on
+ * page" here, in the command titles and in the panels alike. The command
+ * ids keep their older `lower…ToFrame` names, which are API.
  *
  * `Object ▸ Insert spreadsheet…` is the SAME path the host curates as a
  * courtesy. That is intentional and is what `fallbackFor` exists for:

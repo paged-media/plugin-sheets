@@ -217,7 +217,7 @@ describe("sheet_grid_panel_edit_contract: render", () => {
     const notice = byData(tree, "data-grid-honesty");
     expect(notice).toHaveLength(1);
     const text = JSON.stringify(notice[0].props.children);
-    expect(text).toContain("Click or drag to select");
+    expect(text).toContain("Click a cell to select it");
     expect(text).toContain("inside a placed sheet frame");
   });
 
@@ -328,5 +328,81 @@ describe("sheet_grid_panel_edit_contract: edit-commit", () => {
     const origin = byData(tree, "data-grid-origin")[0];
     const text = JSON.stringify(origin.props.children);
     expect(text).toContain("1"); // R1
+  });
+});
+
+describe("sheet_grid_panel_edit_contract: panel UX", () => {
+  it("sizes the grid viewport from the panel's measured width, not a fixed width", () => {
+    const { engine } = fakeEngine();
+    const widths: number[] = [];
+    const getGridScene = engine.getGridScene.bind(engine);
+    engine.getGridScene = (sheet, r, c, w, h, o) => {
+      widths.push(w);
+      return getGridScene(sheet, r, c, w, h, o);
+    };
+    let fire: ((width: number) => void) | null = null;
+    const g = globalThis as { ResizeObserver?: unknown };
+    const prev = g.ResizeObserver;
+    g.ResizeObserver = class {
+      constructor(private cb: (e: { contentRect: { width: number } }[]) => void) {
+        fire = (width) => this.cb([{ contentRect: { width } }]);
+      }
+      observe() {}
+      disconnect() {}
+    };
+    try {
+      const host = fakeHost();
+      const session = createWorkbookSession(host);
+      const st = session.state();
+      st.engine = engine;
+      st.activeSheet = 0;
+      const Panel = makeGridPanel(host, session);
+      let tree!: ReactTestRenderer;
+      act(() => {
+        tree = create(createElement(Panel), { createNodeMock: () => ({}) });
+      });
+      // Before a measurement: the standard dock's width, never 480.
+      expect(widths.at(-1)).toBe(280);
+      act(() => fire?.(600));
+      expect(widths.at(-1)).toBe(598); // the content box minus the border
+      act(() => fire?.(0)); // a hidden dock keeps the last size
+      expect(widths.at(-1)).toBe(598);
+      act(() => tree.unmount());
+    } finally {
+      g.ResizeObserver = prev;
+    }
+  });
+
+  it("shows a copy or paste refusal in the panel, not only in the log", async () => {
+    const { tree, session } = mountPanel();
+    expect(byData(tree, "data-grid-notice")).toHaveLength(0);
+    await act(async () => {
+      await session.copySelection(); // no selection → refused
+    });
+    const notice = byData(tree, "data-grid-notice", "error");
+    expect(notice).toHaveLength(1);
+    expect(JSON.stringify(notice[0].props.children)).toContain("Can't copy");
+    await act(async () => {
+      await session.pasteAtSelection();
+    });
+    expect(JSON.stringify(byData(tree, "data-grid-notice")[0].props.children)).toContain(
+      "Can't paste",
+    );
+  });
+
+  it("find all, replace and the match toggles live in the grid (the one home for find)", () => {
+    const { tree } = mountPanel();
+    act(() => {
+      byData(tree, "data-sheet-find-needle")[0].props.onChange({ target: { value: "Name" } });
+    });
+    const findAll = byData(tree, "data-sheet-find").filter((n) => n.type === "button");
+    expect(findAll).toHaveLength(1);
+    act(() => findAll[0].props.onClick());
+    expect(JSON.stringify(byData(tree, "data-sheet-find-msg")[0].props.children)).toContain(
+      "0 matches",
+    );
+    expect(byData(tree, "data-sheet-find-replacement")).toHaveLength(1);
+    expect(byData(tree, "data-sheet-replace-all")).toHaveLength(1);
+    expect(byData(tree, "data-sheet-find-case")).toHaveLength(1);
   });
 });

@@ -18,9 +18,15 @@
 
 // The workbook panel — a React expert-leaf factory closing over the
 // BundleHost + the in-memory session. It owns the file input (S-11: no
-// host file picker), the sheet list, the range input, the "Lower to
-// frame" action, the S-08 in-memory honesty notice, and the engine-boot
-// failure state (S-10) — rendered honestly, never faked.
+// host file picker), the sheet list, the range input, the "Place on page"
+// action, the S-08 storage notice, and the engine-boot failure state
+// (S-10) — rendered honestly, never faked.
+//
+// Layout: the file and sheet controls stay on top; everything else sits in
+// collapsible sections (native <details>), with "Place on page" open by
+// default. Settings with another home are a one-line pointer here: find
+// and replace live in the Grid panel; number format, font, fill, alignment
+// and iterative calculation in Sheet properties (when the host renders it).
 //
 // Built from host surfaces + React ONLY (no @paged-media/shell): all
 // spreadsheet work is the engine's; the panel reads the session snapshot
@@ -36,15 +42,19 @@ import {
   useState,
   type CSSProperties,
   type ReactElement,
+  type ReactNode,
 } from "react";
 
 import type { BundleHost } from "@paged-media/plugin-api";
 
 import type { FunctionEntry } from "../../../sheet-host-model/src";
-import type { FindMatch } from "../engine";
 import { DELIMITED_MIMES, importBytes, XLSX_MIME } from "../import-xlsx";
 import { columnLabel, type WorkbookSession } from "../session";
-import { FormatSection } from "./format-section";
+import { useConfirm } from "./confirm";
+import { FormatSection, labelOf, NamesSection } from "./format-section";
+import { PROPERTIES_PANEL_ID } from "./properties-panel";
+
+const GRID_PANEL_ID = "media.paged.sheet.panel.grid";
 
 // ---------------------------------------------------------------- styles
 
@@ -61,13 +71,21 @@ const body: CSSProperties = {
   color: "var(--pg-fg)",
 };
 
+const note: CSSProperties = {
+  margin: "var(--space-1, 4px) 0 0",
+  font: "11px/1.5 var(--font-sans, sans-serif)",
+  color: "var(--pg-muted-fg)",
+};
+
 const input: CSSProperties = {
-  font: "12px var(--font-mono, monospace)",
+  font: "12px var(--font-sans, sans-serif)",
+  fontFamily: "var(--font-mono, monospace)",
   color: "var(--pg-fg)",
   background: "var(--pg-bg)",
   border: "1px solid var(--pg-border)",
   borderRadius: "var(--radius-sm, 4px)",
   padding: "4px 6px",
+  minWidth: 0,
 };
 
 const primaryButton: CSSProperties = {
@@ -79,8 +97,6 @@ const primaryButton: CSSProperties = {
   padding: "6px 12px",
   cursor: "pointer",
 };
-
-// ----------------------------------------------------------------- panel
 
 /** A quieter button for the structure verbs. */
 const secondaryButton: CSSProperties = {
@@ -96,9 +112,50 @@ const secondaryButton: CSSProperties = {
 const row: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
+  alignItems: "center",
   gap: "var(--space-1, 4px)",
   marginTop: "var(--space-1, 4px)",
 };
+
+const linkButton: CSSProperties = {
+  font: "inherit",
+  color: "var(--pg-primary)",
+  background: "none",
+  border: "none",
+  padding: 0,
+  cursor: "pointer",
+  textDecoration: "underline",
+};
+
+const sectionStyle: CSSProperties = {
+  borderTop: "1px solid var(--chrome-divider, var(--pg-border))",
+  padding: "var(--space-2, 8px) 0",
+};
+
+const summaryStyle: CSSProperties = {
+  font: "600 12px var(--font-sans, sans-serif)",
+  color: "var(--pg-fg)",
+  cursor: "pointer",
+};
+
+/** One collapsible group of the panel. */
+function Section(props: {
+  id: string;
+  title: string;
+  open?: boolean;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <details data-sheet-section={props.id} open={props.open} style={sectionStyle}>
+      <summary style={summaryStyle}>{props.title}</summary>
+      <div style={{ display: "flex", flexDirection: "column", marginTop: "var(--space-1, 4px)" }}>
+        {props.children}
+      </div>
+    </details>
+  );
+}
+
+// ----------------------------------------------------------------- panel
 
 export function makeWorkbookPanel(
   host: BundleHost,
@@ -114,6 +171,7 @@ export function makeWorkbookPanel(
     }, []);
 
     const st = session.state();
+    const { armed, confirm } = useConfirm();
 
     const onFile = useCallback(
       async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -146,24 +204,38 @@ export function makeWorkbookPanel(
       }
     }, []);
 
-    const onLower = useCallback(() => {
-      void session.lowerSelection();
+    // The Sheet properties panel carries number format, font, fill,
+    // alignment and iterative calculation; where the host renders it, the
+    // format section points there instead of repeating them.
+    const openProperties = host.supports("contribute.schemaPanel@1")
+      ? () => host.shell.openPanel(PROPERTIES_PANEL_ID)
+      : undefined;
+
+    const [placeMsg, setPlaceMsg] = useState<string | null>(null);
+    const onPlace = useCallback(() => {
+      setPlaceMsg(null);
+      void session.lowerSelection().then((id) => {
+        if (id === null) setPlaceMsg("The range could not be placed. Check that it is a valid range like A1:D20.");
+      });
     }, []);
 
     // Wave 4 — workbook structure + pagination. Every verb answers
     // {ok} / {ok:false, message}; the message shows verbatim (the engine's
     // own reason, e.g. what preserved content blocks a row insert).
     const [structMsg, setStructMsg] = useState<string | null>(null);
+    const [sheetMsg, setSheetMsg] = useState<string | null>(null);
     const [renameTo, setRenameTo] = useState("");
     const report = (r: { ok: true } | { ok: false; message: string }, done: string) =>
       setStructMsg(r.ok ? done : r.message);
+    const reportSheet = (r: { ok: true } | { ok: false; message: string }, done: string) =>
+      setSheetMsg(r.ok ? done : r.message);
     // Wave 6 — header rows repeated at the top of every threaded frame.
     const [headerRows, setHeaderRows] = useState(1);
     const onPaginate = useCallback(async () => {
       const r = await session.paginateSelection({
         repeatHeaderRows: Math.max(0, Math.floor(headerRows)),
       });
-      setStructMsg(r.ok ? "Paginated into the frame chain (live)." : r.message);
+      setPlaceMsg(r.ok ? "Paginated into the frame chain (live)." : r.message);
     }, [headerRows]);
 
     // Sort-range controls (thin glue — the engine owns the sort semantics;
@@ -181,42 +253,6 @@ export function makeWorkbookPanel(
       setSortMsg(res.ok ? "Sorted." : res.message);
     }, [sortKey, sortAsc, sortHeader]);
 
-    // Find & replace controls (sheet.plugin.find-replace.panel). Hits are a
-    // snapshot — a later edit/replace invalidates them, so actions clear it.
-    const [needle, setNeedle] = useState("");
-    const [replacement, setReplacement] = useState("");
-    const [matchCase, setMatchCase] = useState(false);
-    const [entireCell, setEntireCell] = useState(false);
-    const [inFormulas, setInFormulas] = useState(false);
-    const [hits, setHits] = useState<FindMatch[] | null>(null);
-    const [findMsg, setFindMsg] = useState<string | null>(null);
-    const onFind = useCallback(() => {
-      if (!needle) return;
-      const found = session.findAll(
-        needle,
-        { matchCase, entireCell, inFormulas },
-        "sheet",
-      );
-      setHits(found);
-      setFindMsg(`${found.length} hit${found.length === 1 ? "" : "s"}.`);
-    }, [needle, matchCase, entireCell, inFormulas]);
-    const onReplaceAll = useCallback(() => {
-      if (!needle) return;
-      const res = session.replaceAll(
-        needle,
-        replacement,
-        { matchCase, entireCell, inFormulas },
-        "sheet",
-      );
-      setHits(null); // stale after a replace
-      setFindMsg(
-        "error" in res
-          ? res.error
-          : `Replaced ${res.occurrences} occurrence${res.occurrences === 1 ? "" : "s"} in ${res.replacedCells} cell${res.replacedCells === 1 ? "" : "s"}` +
-              (res.skipped > 0 ? ` (${res.skipped} skipped).` : "."),
-      );
-    }, [needle, replacement, matchCase, entireCell, inFormulas]);
-
     // New cell style from the selected cell (S-04). Thin glue over
     // session.newCellStyleFromSelection — the engine owns the lowering, the
     // platform owns the style mint + the cell read; this only routes the name.
@@ -233,7 +269,7 @@ export function makeWorkbookPanel(
     const [chartMsg, setChartMsg] = useState<string | null>(null);
     const onAuthorChart = useCallback(() => {
       if (!chartValues.trim()) {
-        setChartMsg("enter a values range (e.g. B2:C8) first");
+        setChartMsg("Enter a values range (for example B2:C8) first.");
         return;
       }
       const res = session.authorChart(
@@ -245,7 +281,7 @@ export function makeWorkbookPanel(
       );
       setChartMsg(
         res.ok
-          ? `Chart #${res.index} authored — lower it below (page-side only; not saved into the xlsx).`
+          ? "Chart created. Place it on the page from the list below; it is not saved into the .xlsx."
           : res.message,
       );
     }, [chartValues, chartCats, chartKind, chartTitle, chartSeriesIn]);
@@ -255,14 +291,14 @@ export function makeWorkbookPanel(
     const [fnMsg, setFnMsg] = useState<string | null>(null);
     const onCopyFunction = useCallback(async (name: string) => {
       if (!host.supports("clipboard@1")) {
-        setFnMsg(`${name} — no clipboard door on this host; type it in the grid`);
+        setFnMsg(`Copying isn't available here; type ${name}( in a cell.`);
         return;
       }
       try {
         await host.clipboard.write({ text: `${name}()` });
-        setFnMsg(`${name}() copied — paste into a cell`);
+        setFnMsg(`${name}() copied; paste it into a cell.`);
       } catch (e) {
-        setFnMsg(`${name}: clipboard write failed (${String(e)})`);
+        setFnMsg(`Couldn't copy ${name}: ${String(e)}.`);
       }
     }, []);
     const onNewCellStyle = useCallback(async () => {
@@ -299,6 +335,9 @@ export function makeWorkbookPanel(
     // The chart-kind vocabulary comes from the ENGINE (Rust owns which kinds
     // exist), never a literal list here.
     const chartKinds = session.chartKinds();
+    const hasRange = !!st.selectedRange;
+    const deleteLabel = (key: string, label: string) =>
+      armed === key ? "Confirm delete" : label;
 
     return (
       <div
@@ -313,38 +352,42 @@ export function makeWorkbookPanel(
         {/* S-11 RESOLVED: the host file picker is the primary path; the
          *  panel's own `<input>` is the honest fallback when no picker is
          *  wired (headless / a host that predates the door). */}
-        {pickerSupported ? (
+        <div style={{ ...row, marginTop: 0, marginBottom: "var(--space-2, 8px)" }}>
+          {pickerSupported ? (
+            <button
+              data-sheet-pick
+              type="button"
+              onClick={() => void onPick()}
+              style={primaryButton}
+            >
+              Open .xlsx or .csv…
+            </button>
+          ) : (
+            <input
+              ref={fileRef}
+              data-sheet-file
+              type="file"
+              accept=".xlsx,.csv,.tsv"
+              aria-label="Open a workbook"
+              onChange={onFile}
+              style={{ ...body, maxWidth: "100%" }}
+            />
+          )}
           <button
-            data-sheet-pick
+            data-sheet-new
             type="button"
-            onClick={() => void onPick()}
-            style={{
-              ...primaryButton,
-              alignSelf: "flex-start",
-              marginBottom: "var(--space-2, 8px)",
+            data-armed={armed === "new" ? "" : undefined}
+            title={sheets.length > 0 ? "Replaces the open workbook; this can't be undone" : undefined}
+            onClick={() => {
+              const run = () => void session.newWorkbook();
+              if (sheets.length > 0) confirm("new", run);
+              else run();
             }}
+            style={secondaryButton}
           >
-            Choose .xlsx / .csv…
+            {armed === "new" ? "Confirm replace" : "New blank workbook"}
           </button>
-        ) : (
-          <input
-            ref={fileRef}
-            data-sheet-file
-            type="file"
-            accept=".xlsx,.csv,.tsv"
-            onChange={onFile}
-            style={{ ...body, marginBottom: "var(--space-2, 8px)" }}
-          />
-        )}
-
-        <button
-          data-sheet-new
-          type="button"
-          onClick={() => void session.newWorkbook()}
-          style={{ ...secondaryButton, alignSelf: "flex-start", marginBottom: "var(--space-2, 8px)" }}
-        >
-          New blank workbook
-        </button>
+        </div>
 
         {/* S-10: engine-boot failure (the wasm isn't built) — say so. */}
         {st.bootError && (
@@ -360,13 +403,19 @@ export function makeWorkbookPanel(
               borderRadius: "var(--radius-sm, 4px)",
             }}
           >
-            Engine unavailable — {st.bootError}.
+            The spreadsheet engine could not start: {st.bootError}.
           </div>
+        )}
+
+        {!st.bootError && sheets.length === 0 && (
+          <p data-sheet-empty style={{ ...note, marginTop: 0 }}>
+            Open a workbook or start a blank one to place a table on the page.
+          </p>
         )}
 
         {st.fileName && (
           <p style={{ ...body, margin: "0 0 var(--space-1, 4px)" }}>
-            Imported <span style={{ font: "12px var(--font-mono, monospace)" }}>{st.fileName}</span>.
+            Imported <span style={{ fontFamily: "var(--font-mono, monospace)" }}>{st.fileName}</span>.
           </p>
         )}
 
@@ -376,12 +425,13 @@ export function makeWorkbookPanel(
             <select
               data-sheet-select
               value={st.activeSheet ?? sheets[0].id}
+              aria-label="Active sheet"
               onChange={(e) => session.setActiveSheet(Number(e.target.value))}
               style={input}
             >
               {sheets.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({s.rows}×{s.cols})
+                  {s.name} ({s.rows} × {s.cols})
                 </option>
               ))}
             </select>
@@ -391,7 +441,7 @@ export function makeWorkbookPanel(
                 type="button"
                 data-sheet-add
                 style={secondaryButton}
-                onClick={() => report(session.addSheet(), "Sheet added.")}
+                onClick={() => reportSheet(session.addSheet(), "Sheet added.")}
               >
                 Add sheet
               </button>
@@ -401,6 +451,7 @@ export function makeWorkbookPanel(
                 value={renameTo}
                 onChange={(e) => setRenameTo(e.target.value)}
                 placeholder="New name"
+                aria-label="New sheet name"
                 style={{ ...input, width: 110, marginTop: 0 }}
               />
               <button
@@ -408,8 +459,9 @@ export function makeWorkbookPanel(
                 data-sheet-rename
                 style={secondaryButton}
                 disabled={renameTo.trim().length === 0}
+                title={renameTo.trim() ? undefined : "Type a new name first"}
                 onClick={() =>
-                  report(
+                  reportSheet(
                     session.renameSheet(st.activeSheet ?? 0, renameTo.trim()),
                     "Sheet renamed.",
                   )
@@ -420,349 +472,430 @@ export function makeWorkbookPanel(
               <button
                 type="button"
                 data-sheet-delete
+                data-armed={armed === "sheet" ? "" : undefined}
                 style={secondaryButton}
                 disabled={sheets.length <= 1}
+                title={sheets.length <= 1 ? "A workbook needs at least one sheet" : "Delete this sheet; this can't be undone"}
                 onClick={() =>
-                  report(session.deleteSheet(st.activeSheet ?? 0), "Sheet deleted.")
-                }
-              >
-                Delete sheet
-              </button>
-            </div>
-
-            <div style={kicker}>Rows and columns (at the grid selection)</div>
-            <div style={row}>
-              <button type="button" data-sheet-insert-rows style={secondaryButton}
-                onClick={() => report(session.structuralEdit("insertRows"), "Rows inserted.")}>
-                Insert rows
-              </button>
-              <button type="button" data-sheet-delete-rows style={secondaryButton}
-                onClick={() => report(session.structuralEdit("deleteRows"), "Rows deleted.")}>
-                Delete rows
-              </button>
-              <button type="button" data-sheet-insert-cols style={secondaryButton}
-                onClick={() => report(session.structuralEdit("insertCols"), "Columns inserted.")}>
-                Insert columns
-              </button>
-              <button type="button" data-sheet-delete-cols style={secondaryButton}
-                onClick={() => report(session.structuralEdit("deleteCols"), "Columns deleted.")}>
-                Delete columns
-              </button>
-            </div>
-            <label style={{ ...body, display: "flex", gap: 6, alignItems: "center", marginTop: "var(--space-1, 4px)" }}>
-              <input
-                data-sheet-iterative
-                type="checkbox"
-                checked={session.calcSettings()?.iterative ?? false}
-                onChange={(e) =>
-                  report(
-                    session.setIterative(e.target.checked),
-                    e.target.checked ? "Iterative calculation on." : "Iterative calculation off.",
+                  confirm("sheet", () =>
+                    reportSheet(session.deleteSheet(st.activeSheet ?? 0), "Sheet deleted."),
                   )
                 }
-              />
-              Iterative calculation (circular references converge)
-            </label>
-            {structMsg && (
-              <div data-sheet-struct-msg role="status" style={{ ...body, marginTop: 4 }}>
-                {structMsg}
+              >
+                {deleteLabel("sheet", "Delete sheet")}
+              </button>
+            </div>
+            {sheetMsg && (
+              <div data-sheet-sheet-msg role="status" style={{ ...body, marginTop: 4 }}>
+                {sheetMsg}
               </div>
             )}
 
-            <div style={kicker}>Range</div>
-            <input
-              data-sheet-range
-              type="text"
-              value={st.selectedRange ?? ""}
-              onChange={(e) => session.setRange(e.target.value)}
-              placeholder="A1:D20"
-              style={input}
-            />
+            <div style={{ height: "var(--space-2, 8px)" }} />
 
-            <div style={{ marginTop: "var(--space-3, 12px)" }}>
-              <button
-                type="button"
-                data-sheet-lower
-                onClick={onLower}
-                disabled={!st.selectedRange}
-                style={{
-                  ...primaryButton,
-                  opacity: st.selectedRange ? 1 : 0.5,
-                  cursor: st.selectedRange ? "pointer" : "not-allowed",
-                }}
-              >
-                Lower to frame
-              </button>
-              <button
-                type="button"
-                data-sheet-paginate
-                onClick={() => void onPaginate()}
-                disabled={!st.selectedRange}
-                style={{ ...secondaryButton, marginLeft: "var(--space-1, 4px)" }}
-                title="Select a text frame of a threaded chain first"
-              >
-                Paginate into threaded frames
-              </button>
-              <label
-                style={{ ...body, display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 6 }}
-                title="Rows repeated at the top of every frame of the chain"
-              >
-                Header rows
+            <Section id="place" title="Place on page" open>
+              <label style={{ ...body, display: "flex", flexDirection: "column", gap: 2 }}>
+                Range
                 <input
-                  data-sheet-paginate-header-rows
-                  type="number"
-                  min={0}
-                  value={headerRows}
-                  onChange={(e) => setHeaderRows(Number(e.target.value))}
-                  style={{ ...input, width: 44 }}
+                  data-sheet-range
+                  type="text"
+                  value={st.selectedRange ?? ""}
+                  onChange={(e) => session.setRange(e.target.value)}
+                  placeholder="A1:D20"
+                  style={input}
                 />
               </label>
-            </div>
+              <div style={{ ...row, marginTop: "var(--space-2, 8px)" }}>
+                <button
+                  type="button"
+                  data-sheet-lower
+                  onClick={onPlace}
+                  disabled={!hasRange}
+                  title={hasRange ? "Place the range on the page as a table" : "Enter a range first"}
+                  style={{
+                    ...primaryButton,
+                    opacity: hasRange ? 1 : 0.5,
+                    cursor: hasRange ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Place on page
+                </button>
+              </div>
+              <div style={row}>
+                <button
+                  type="button"
+                  data-sheet-paginate
+                  onClick={() => void onPaginate()}
+                  disabled={!hasRange}
+                  style={secondaryButton}
+                  title={hasRange ? "Select a text frame of a threaded chain first" : "Enter a range first"}
+                >
+                  Paginate into threaded frames
+                </button>
+                <label
+                  style={{ ...body, display: "inline-flex", alignItems: "center", gap: 4 }}
+                  title="Rows repeated at the top of every frame of the chain"
+                >
+                  Header rows
+                  <input
+                    data-sheet-paginate-header-rows
+                    type="number"
+                    min={0}
+                    value={headerRows}
+                    onChange={(e) => setHeaderRows(Number(e.target.value))}
+                    style={{ ...input, width: 52 }}
+                  />
+                </label>
+              </div>
+              {placeMsg && (
+                <div data-sheet-place-msg role="status" style={{ ...body, marginTop: 4 }}>
+                  {placeMsg}
+                </div>
+              )}
+            </Section>
 
-            <FormatSection
-              session={session}
-              styles={{ kicker, body, input, button: secondaryButton, row }}
-            />
+            <Section id="structure" title="Rows and columns">
+              <p style={{ ...note, marginTop: 0 }}>Acts on the rows or columns selected in the grid.</p>
+              <div style={row}>
+                <button type="button" data-sheet-insert-rows style={secondaryButton}
+                  onClick={() => report(session.structuralEdit("insertRows"), "Rows inserted.")}>
+                  Insert rows
+                </button>
+                <button type="button" data-sheet-delete-rows style={secondaryButton}
+                  data-armed={armed === "rows" ? "" : undefined}
+                  title="Delete the selected rows; this can't be undone"
+                  onClick={() => confirm("rows", () => report(session.structuralEdit("deleteRows"), "Rows deleted."))}>
+                  {deleteLabel("rows", "Delete rows")}
+                </button>
+                <button type="button" data-sheet-insert-cols style={secondaryButton}
+                  onClick={() => report(session.structuralEdit("insertCols"), "Columns inserted.")}>
+                  Insert columns
+                </button>
+                <button type="button" data-sheet-delete-cols style={secondaryButton}
+                  data-armed={armed === "cols" ? "" : undefined}
+                  title="Delete the selected columns; this can't be undone"
+                  onClick={() => confirm("cols", () => report(session.structuralEdit("deleteCols"), "Columns deleted."))}>
+                  {deleteLabel("cols", "Delete columns")}
+                </button>
+              </div>
+              {structMsg && (
+                <div data-sheet-struct-msg role="status" style={{ ...body, marginTop: 4 }}>
+                  {structMsg}
+                </div>
+              )}
+            </Section>
+
+            <Section id="format" title="Format and layout">
+              <FormatSection
+                session={session}
+                styles={{ kicker, body, input, button: secondaryButton, row }}
+                openProperties={openProperties}
+              />
+            </Section>
+
+            <Section id="names" title="Names">
+              <NamesSection
+                session={session}
+                styles={{ kicker, body, input, button: secondaryButton, row }}
+              />
+            </Section>
 
             {/* Sort range — thin controls over engine.sortRange (the
              *  values-only honest subset; a formula range refuses and the
              *  engine's message shows verbatim). */}
-            <div style={kicker}>Sort range</div>
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-1, 4px)",
-                alignItems: "center",
-              }}
-            >
-              <input
-                data-sheet-sort-key
-                type="number"
-                min={1}
-                value={sortKey}
-                onChange={(e) => setSortKey(Number(e.target.value))}
-                title="Key column (1 = first column of the range)"
-                style={{ ...input, width: 48 }}
-              />
-              <select
-                data-sheet-sort-dir
-                value={sortAsc ? "asc" : "desc"}
-                onChange={(e) => setSortAsc(e.target.value === "asc")}
-                style={input}
-              >
-                <option value="asc">Ascending</option>
-                <option value="desc">Descending</option>
-              </select>
-              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
-                <input
-                  data-sheet-sort-header
-                  type="checkbox"
-                  checked={sortHeader}
-                  onChange={(e) => setSortHeader(e.target.checked)}
-                />
-                Header
-              </label>
-            </div>
-            <div style={{ marginTop: "var(--space-1, 4px)" }}>
-              <button
-                type="button"
-                data-sheet-sort
-                onClick={onSort}
-                disabled={!st.selectedRange}
-                style={{
-                  ...primaryButton,
-                  opacity: st.selectedRange ? 1 : 0.5,
-                  cursor: st.selectedRange ? "pointer" : "not-allowed",
-                }}
-              >
-                Sort
-              </button>
-            </div>
-            {sortMsg && (
-              <p data-sheet-sort-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
-                {sortMsg}
-              </p>
-            )}
-
-            {/* Find & replace — thin glue over engine.findAll/replaceAll
-             *  (active-sheet scope; click a hit to select its cell). */}
-            <div style={kicker}>Find &amp; replace</div>
-            <input
-              data-sheet-find-needle
-              type="text"
-              value={needle}
-              onChange={(e) => setNeedle(e.target.value)}
-              placeholder="Find…"
-              style={input}
-            />
-            <input
-              data-sheet-find-replacement
-              type="text"
-              value={replacement}
-              onChange={(e) => setReplacement(e.target.value)}
-              placeholder="Replace with…"
-              style={{ ...input, marginTop: "var(--space-1, 4px)" }}
-            />
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-2, 8px)",
-                marginTop: "var(--space-1, 4px)",
-                flexWrap: "wrap",
-              }}
-            >
-              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
-                <input
-                  data-sheet-find-case
-                  type="checkbox"
-                  checked={matchCase}
-                  onChange={(e) => setMatchCase(e.target.checked)}
-                />
-                Match case
-              </label>
-              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
-                <input
-                  data-sheet-find-entire
-                  type="checkbox"
-                  checked={entireCell}
-                  onChange={(e) => setEntireCell(e.target.checked)}
-                />
-                Entire cell
-              </label>
-              <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
-                <input
-                  data-sheet-find-formulas
-                  type="checkbox"
-                  checked={inFormulas}
-                  onChange={(e) => setInFormulas(e.target.checked)}
-                />
-                In formulas
-              </label>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-1, 4px)",
-                marginTop: "var(--space-1, 4px)",
-              }}
-            >
-              <button
-                type="button"
-                data-sheet-find
-                onClick={onFind}
-                disabled={!needle}
-                style={{
-                  ...primaryButton,
-                  opacity: needle ? 1 : 0.5,
-                  cursor: needle ? "pointer" : "not-allowed",
-                }}
-              >
-                Find
-              </button>
-              <button
-                type="button"
-                data-sheet-replace-all
-                onClick={onReplaceAll}
-                disabled={!needle}
-                style={{
-                  ...primaryButton,
-                  opacity: needle ? 1 : 0.5,
-                  cursor: needle ? "pointer" : "not-allowed",
-                }}
-              >
-                Replace all
-              </button>
-            </div>
-            {findMsg && (
-              <p data-sheet-find-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
-                {findMsg}
-              </p>
-            )}
-            {hits && hits.length > 0 && (
-              <ul
-                data-sheet-find-hits
-                style={{
-                  listStyle: "none",
-                  margin: "var(--space-1, 4px) 0 0",
-                  padding: 0,
-                  maxHeight: 160,
-                  overflowY: "auto",
-                  border: "1px solid var(--pg-border)",
-                  borderRadius: "var(--radius-sm, 4px)",
-                }}
-              >
-                {hits.map((h, i) => (
-                  <li key={`${h.sheet}:${h.row}:${h.col}:${i}`}>
-                    <button
-                      type="button"
-                      data-sheet-find-hit={`${h.row}:${h.col}`}
-                      onClick={() => session.goToCell(h.sheet, h.row, h.col)}
-                      style={{
-                        ...body,
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        background: "none",
-                        border: "none",
-                        padding: "3px 6px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <span style={{ font: "11px var(--font-mono, monospace)" }}>
-                        {columnLabel(h.col)}
-                        {h.row + 1}
-                      </span>{" "}
-                      {h.excerpt}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <Section id="sort" title="Sort range">
+              <div style={{ ...row, marginTop: 0 }}>
+                <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
+                  Key column
+                  <input
+                    data-sheet-sort-key
+                    type="number"
+                    min={1}
+                    value={sortKey}
+                    onChange={(e) => setSortKey(Number(e.target.value))}
+                    title="1 = the first column of the range"
+                    style={{ ...input, width: 52 }}
+                  />
+                </label>
+                <select
+                  data-sheet-sort-dir
+                  value={sortAsc ? "asc" : "desc"}
+                  aria-label="Sort direction"
+                  onChange={(e) => setSortAsc(e.target.value === "asc")}
+                  style={input}
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+                <label style={{ ...body, display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    data-sheet-sort-header
+                    type="checkbox"
+                    checked={sortHeader}
+                    onChange={(e) => setSortHeader(e.target.checked)}
+                  />
+                  Has header row
+                </label>
+              </div>
+              <div style={row}>
+                <button
+                  type="button"
+                  data-sheet-sort
+                  onClick={onSort}
+                  disabled={!hasRange}
+                  title={hasRange ? undefined : "Enter a range first"}
+                  style={{
+                    ...primaryButton,
+                    opacity: hasRange ? 1 : 0.5,
+                    cursor: hasRange ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Sort
+                </button>
+              </div>
+              {sortMsg && (
+                <p data-sheet-sort-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                  {sortMsg}
+                </p>
+              )}
+            </Section>
 
             {/* New cell style from the selected cell (S-04): the style is
              *  minted + populated from the cell's appearance and applied
              *  back to the cell (the message reports whether the apply took). */}
-            <div style={kicker}>New cell style</div>
-            <input
-              data-sheet-cellstyle-name
-              type="text"
-              value={styleName}
-              onChange={(e) => setStyleName(e.target.value)}
-              placeholder="Style name"
-              style={input}
-            />
-            <div style={{ marginTop: "var(--space-1, 4px)" }}>
-              <button
-                type="button"
-                data-sheet-cellstyle-new
-                onClick={() => void onNewCellStyle()}
-                style={primaryButton}
-              >
-                New style from selected cell
-              </button>
-            </div>
-            {styleMsg && (
-              <p data-sheet-cellstyle-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
-                {styleMsg}
+            <Section id="cell-style" title="Cell styles">
+              <input
+                data-sheet-cellstyle-name
+                type="text"
+                value={styleName}
+                onChange={(e) => setStyleName(e.target.value)}
+                placeholder="Style name"
+                aria-label="Style name"
+                style={input}
+              />
+              <div style={row}>
+                <button
+                  type="button"
+                  data-sheet-cellstyle-new
+                  onClick={() => void onNewCellStyle()}
+                  style={secondaryButton}
+                >
+                  New style from selected cell
+                </button>
+              </div>
+              {styleMsg && (
+                <p data-sheet-cellstyle-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                  {styleMsg}
+                </p>
+              )}
+              <p data-sheet-cellstyle-note style={note}>
+                Takes the fill and borders of the selected cell in a placed table.
               </p>
-            )}
-            <p
-              data-sheet-cellstyle-note
-              style={{
-                margin: "var(--space-1, 4px) 0 0",
-                font: "10px/1.5 var(--font-sans, sans-serif)",
-                color: "var(--pg-muted-fg)",
-              }}
-            >
-              Captures fill + borders from the selected cell over a lowered
-              table and applies the new style to that cell.
-            </p>
+            </Section>
+
+            {/* CHART AUTHORING — the chart engine was import-only. Authored
+             *  charts render + place through the SAME generator as parsed
+             *  ones, and stay PAGE-side (never written back to the xlsx —
+             *  the publishing-first ruling, asserted in conformance).
+             *  The kind list is READ FROM THE ENGINE (session.chartKinds),
+             *  never hard-coded here: which kinds exist is a Rust decision,
+             *  so the panel cannot offer one the engine refuses. */}
+            <Section id="charts" title="Charts">
+              <div style={{ ...row, marginTop: 0 }}>
+                <select
+                  data-sheet-chart-kind
+                  value={chartKind}
+                  aria-label="Chart type"
+                  onChange={(e) => setChartKind(e.target.value)}
+                  style={input}
+                >
+                  {chartKinds.map((k) => (
+                    <option key={k} value={k}>
+                      {labelOf(k)}
+                    </option>
+                  ))}
+                </select>
+                {/* Transpose rows/columns: which axis of the values block is a
+                 *  series. Re-reads the same cells — never rewrites data. */}
+                <select
+                  data-sheet-chart-series-in
+                  value={chartSeriesIn}
+                  onChange={(e) => setChartSeriesIn(e.target.value)}
+                  title="Which axis of the values block is a series"
+                  aria-label="Series in"
+                  style={input}
+                >
+                  <option value="columns">Series in columns</option>
+                  <option value="rows">Series in rows</option>
+                </select>
+              </div>
+              <div style={row}>
+                <input
+                  data-sheet-chart-values
+                  type="text"
+                  value={chartValues}
+                  onChange={(e) => setChartValues(e.target.value)}
+                  placeholder="Values, e.g. B2:C8"
+                  aria-label="Values range"
+                  style={{ ...input, flex: "1 1 110px" }}
+                />
+                <input
+                  data-sheet-chart-cats
+                  type="text"
+                  value={chartCats}
+                  onChange={(e) => setChartCats(e.target.value)}
+                  placeholder="Labels (optional)"
+                  aria-label="Labels range"
+                  style={{ ...input, flex: "1 1 110px" }}
+                />
+              </div>
+              <div style={row}>
+                <input
+                  data-sheet-chart-title
+                  type="text"
+                  value={chartTitle}
+                  onChange={(e) => setChartTitle(e.target.value)}
+                  placeholder="Title (optional)"
+                  aria-label="Chart title"
+                  style={{ ...input, flex: "1 1 110px" }}
+                />
+                <button
+                  type="button"
+                  data-sheet-chart-author
+                  onClick={onAuthorChart}
+                  style={secondaryButton}
+                >
+                  Create chart
+                </button>
+              </div>
+              {chartMsg && (
+                <p data-sheet-chart-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
+                  {chartMsg}
+                </p>
+              )}
+              {(() => {
+                if (!inventories) return null;
+                const { charts } = inventories;
+                if (charts.length === 0) return null;
+                return (
+                  <div data-sheet-chart-list style={{ marginTop: "var(--space-2, 8px)" }}>
+                    {charts.map((c) => (
+                      <div
+                        key={c.index}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", ...body }}
+                      >
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {c.title || `${labelOf(c.kind)} chart`}
+                          <span style={{ color: "var(--pg-muted-fg)" }}>
+                            {" "}· {c.title ? `${labelOf(c.kind)}, ` : ""}
+                            {c.seriesCount} series
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          data-sheet-chart-lower={c.index}
+                          onClick={() => void session.lowerChart(c.index)}
+                          style={secondaryButton}
+                        >
+                          Place on page
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </Section>
+
+            {/* FUNCTION BROWSER — the 224-function library was reachable only
+             *  by typing into the grid formula bar. Searchable, grouped by
+             *  family, arg counts from the engine's own registry (never a
+             *  hand-kept list). Click copies `NAME(` for pasting into a cell
+             *  when the clipboard door is wired. */}
+            <Section id="functions" title="Functions">
+              <input
+                data-sheet-fn-filter
+                type="text"
+                value={fnFilter}
+                onChange={(e) => setFnFilter(e.target.value)}
+                placeholder="Filter functions"
+                aria-label="Filter functions"
+                style={input}
+              />
+              {fnMsg && (
+                <p role="status" style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>{fnMsg}</p>
+              )}
+              <div
+                data-sheet-fn-list
+                style={{ maxHeight: 180, overflowY: "auto", marginTop: "var(--space-1, 4px)" }}
+              >
+                {(() => {
+                  if (!st.engine) return null;
+                  // The registry, read ONCE per session (it is build-time
+                  // fixed) — a filter keystroke re-filters, never re-reads.
+                  const all = session.functionList();
+                  const q = fnFilter.trim().toUpperCase();
+                  const hitsFn = q
+                    ? all.filter(
+                        (f) =>
+                          f.name.includes(q) || f.family.toUpperCase().includes(q),
+                      )
+                    : all;
+                  const byFamily = new Map<string, FunctionEntry[]>();
+                  for (const f of hitsFn) {
+                    const list = byFamily.get(f.family) ?? [];
+                    list.push(f);
+                    byFamily.set(f.family, list);
+                  }
+                  return [...byFamily.entries()].map(([family, fns]) => (
+                    <div key={family}>
+                      <div
+                        style={{
+                          font: "600 11px var(--font-sans, sans-serif)",
+                          color: "var(--pg-muted-fg)",
+                          margin: "var(--space-1, 4px) 0 2px",
+                        }}
+                      >
+                        {labelOf(family)} ({fns.length})
+                      </div>
+                      {fns.map((f) => (
+                        <button
+                          key={f.name}
+                          type="button"
+                          data-sheet-fn={f.name}
+                          title={`${f.name}: ${f.minArgs}${
+                            f.maxArgs === null
+                              ? " or more"
+                              : f.maxArgs === f.minArgs
+                                ? ""
+                                : ` to ${f.maxArgs}`
+                          } argument${f.maxArgs === 1 && f.minArgs === 1 ? "" : "s"}. Click to copy.`}
+                          onClick={() => void onCopyFunction(f.name)}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            border: "none",
+                            background: "none",
+                            cursor: "pointer",
+                            padding: "1px 0",
+                            fontSize: 11,
+                            fontFamily: "var(--font-mono, monospace)",
+                            color: "var(--pg-fg)",
+                          }}
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  ));
+                })()}
+              </div>
+            </Section>
 
             {/* INSPECT — the three read-only inventories the engine has
-             *  carried all along (freeze panes, data validations, comments)
-             *  with, until now, no panel caller. Preserve-first honesty:
-             *  validations are preserved, never enforced; comments are
-             *  display-only. */}
+             *  carried all along (freeze panes, data validations, comments).
+             *  Preserve-first honesty: validations are preserved, never
+             *  enforced; comments are display-only. */}
             {(() => {
               if (!inventories) return null;
               const { freezes, validations, comments } = inventories;
@@ -774,239 +907,64 @@ export function makeWorkbookPanel(
                 return null;
               }
               return (
-                <div data-sheet-inspect>
-                  <div style={kicker}>Workbook inventory</div>
-                  {freezes.map((f, i) => (
-                    <p key={`f${i}`} data-sheet-freeze style={{ ...body, margin: 0 }}>
-                      {sheets[f.sheet]?.name ?? `Sheet ${f.sheet + 1}`}: frozen{" "}
-                      {f.rows} row{f.rows === 1 ? "" : "s"} · {f.cols} col
-                      {f.cols === 1 ? "" : "s"} (rendered; no toggle yet)
-                    </p>
-                  ))}
-                  {validations.map((v, i) => (
-                    <p key={`v${i}`} data-sheet-validation style={{ ...body, margin: 0 }}>
-                      {sheets[v.sheet]?.name ?? `Sheet ${v.sheet + 1}`}: {v.count}{" "}
-                      data validation{v.count === 1 ? "" : "s"} (
-                      {v.kinds.join(", ")}) — preserved, not enforced
-                    </p>
-                  ))}
-                  {comments.length > 0 && (
-                    <p data-sheet-comments style={{ ...body, margin: 0 }}>
-                      {comments.length} comment{comments.length === 1 ? "" : "s"}:{" "}
-                      {comments
-                        .slice(0, 3)
-                        .map((c) => `${c.author || "?"} @ r${c.row + 1}c${c.col + 1}`)
-                        .join(" · ")}
-                      {comments.length > 3 ? " · …" : ""} (read-only)
-                    </p>
-                  )}
-                </div>
+                <Section id="inventory" title="Workbook contents">
+                  <div data-sheet-inspect>
+                    {freezes.map((f, i) => (
+                      <p key={`f${i}`} data-sheet-freeze style={{ ...body, margin: 0 }}>
+                        {sheets[f.sheet]?.name ?? `Sheet ${f.sheet + 1}`}: frozen{" "}
+                        {f.rows} row{f.rows === 1 ? "" : "s"}, {f.cols} column
+                        {f.cols === 1 ? "" : "s"}
+                      </p>
+                    ))}
+                    {validations.map((v, i) => (
+                      <p key={`v${i}`} data-sheet-validation style={{ ...body, margin: 0 }}>
+                        {sheets[v.sheet]?.name ?? `Sheet ${v.sheet + 1}`}: {v.count}{" "}
+                        data validation{v.count === 1 ? "" : "s"} (
+                        {v.kinds.join(", ")}), kept but not enforced
+                      </p>
+                    ))}
+                    {comments.length > 0 && (
+                      <p data-sheet-comments style={{ ...body, margin: 0 }}>
+                        {comments.length} comment{comments.length === 1 ? "" : "s"} (read-only):{" "}
+                        {comments
+                          .slice(0, 3)
+                          .map((c) => `${c.author || "Unknown"} at ${columnLabel(c.col)}${c.row + 1}`)
+                          .join(" · ")}
+                        {comments.length > 3 ? " · …" : ""}
+                      </p>
+                    )}
+                  </div>
+                </Section>
               );
             })()}
 
-            {/* CHART AUTHORING — the chart engine was import-only. Authored
-             *  charts render + lower through the SAME generator as parsed
-             *  ones, and stay PAGE-side (never written back to the xlsx —
-             *  the publishing-first ruling, asserted in conformance).
-             *  The kind list is READ FROM THE ENGINE (session.chartKinds),
-             *  never hard-coded here: which kinds exist is a Rust decision,
-             *  so the panel cannot offer one the engine refuses. */}
-            <div style={kicker}>Author chart</div>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-              <select
-                data-sheet-chart-kind
-                value={chartKind}
-                onChange={(e) => setChartKind(e.target.value)}
-                style={input}
-              >
-                {chartKinds.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-              {/* Transpose rows/columns: which axis of the values block is a
-               *  series. Re-reads the same cells — never rewrites data. */}
-              <select
-                data-sheet-chart-series-in
-                value={chartSeriesIn}
-                onChange={(e) => setChartSeriesIn(e.target.value)}
-                title="Which axis of the values block is a series (transpose)"
-                style={input}
-              >
-                <option value="columns">series in columns</option>
-                <option value="rows">series in rows</option>
-              </select>
-              <input
-                data-sheet-chart-values
-                type="text"
-                value={chartValues}
-                onChange={(e) => setChartValues(e.target.value)}
-                placeholder="values e.g. B2:C8"
-                style={{ ...input, width: 110 }}
-              />
-              <input
-                data-sheet-chart-cats
-                type="text"
-                value={chartCats}
-                onChange={(e) => setChartCats(e.target.value)}
-                placeholder="labels (opt)"
-                style={{ ...input, width: 90 }}
-              />
-              <input
-                data-sheet-chart-title
-                type="text"
-                value={chartTitle}
-                onChange={(e) => setChartTitle(e.target.value)}
-                placeholder="title (opt)"
-                style={{ ...input, width: 110 }}
-              />
+            <p data-sheet-find-pointer style={{ ...note, marginTop: "var(--space-2, 8px)" }}>
+              Find and replace are in the{" "}
               <button
                 type="button"
-                data-sheet-chart-author
-                onClick={onAuthorChart}
-                style={primaryButton}
+                data-sheet-open-grid
+                onClick={() => {
+                  host.shell.openPanel(GRID_PANEL_ID);
+                  session.requestFind();
+                }}
+                style={linkButton}
               >
-                Author
+                Grid panel
               </button>
-            </div>
-            {chartMsg && (
-              <p data-sheet-chart-msg style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>
-                {chartMsg}
-              </p>
-            )}
-            {(() => {
-              if (!inventories) return null;
-              const { charts } = inventories;
-              if (charts.length === 0) return null;
-              return (
-                <div data-sheet-chart-list>
-                  {charts.map((c) => (
-                    <div
-                      key={c.index}
-                      style={{ display: "flex", alignItems: "center", gap: 6, ...body }}
-                    >
-                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        #{c.index} {c.kind}
-                        {c.title ? ` — ${c.title}` : ""} ({c.seriesCount} series)
-                      </span>
-                      <button
-                        type="button"
-                        data-sheet-chart-lower={c.index}
-                        onClick={() => void session.lowerChart(c.index)}
-                        style={{ font: "11px var(--font-sans, sans-serif)", cursor: "pointer" }}
-                      >
-                        Lower to frame
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-
-            {/* FUNCTION BROWSER — the 224-function library was reachable only
-             *  by typing into the grid formula bar. Searchable, grouped by
-             *  family, arg counts from the engine's own registry (never a
-             *  hand-kept list). Click copies `NAME(` for pasting into a cell
-             *  when the clipboard door is wired. */}
-            <div style={kicker}>Functions</div>
-            <input
-              data-sheet-fn-filter
-              type="text"
-              value={fnFilter}
-              onChange={(e) => setFnFilter(e.target.value)}
-              placeholder="Filter 224 functions…"
-              style={input}
-            />
-            {fnMsg && (
-              <p style={{ ...body, margin: "var(--space-1, 4px) 0 0" }}>{fnMsg}</p>
-            )}
-            <div
-              data-sheet-fn-list
-              style={{ maxHeight: 180, overflowY: "auto", marginTop: "var(--space-1, 4px)" }}
-            >
-              {(() => {
-                if (!st.engine) return null;
-                // The registry, read ONCE per session (it is build-time
-                // fixed) — a filter keystroke re-filters, never re-reads.
-                const all = session.functionList();
-                const q = fnFilter.trim().toUpperCase();
-                const hitsFn = q
-                  ? all.filter(
-                      (f) =>
-                        f.name.includes(q) || f.family.toUpperCase().includes(q),
-                    )
-                  : all;
-                const byFamily = new Map<string, FunctionEntry[]>();
-                for (const f of hitsFn) {
-                  const list = byFamily.get(f.family) ?? [];
-                  list.push(f);
-                  byFamily.set(f.family, list);
-                }
-                return [...byFamily.entries()].map(([family, fns]) => (
-                  <div key={family}>
-                    <div
-                      style={{
-                        font: "10px var(--font-sans, sans-serif)",
-                        color: "var(--pg-muted-fg)",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                        margin: "var(--space-1, 4px) 0 2px",
-                      }}
-                    >
-                      {family} ({fns.length})
-                    </div>
-                    {fns.map((f) => (
-                      <button
-                        key={f.name}
-                        type="button"
-                        data-sheet-fn={f.name}
-                        title={`${f.name} — ${f.minArgs}${
-                          f.maxArgs === null
-                            ? "+"
-                            : f.maxArgs === f.minArgs
-                              ? ""
-                              : `–${f.maxArgs}`
-                        } arg(s); click to copy`}
-                        onClick={() => void onCopyFunction(f.name)}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          textAlign: "left",
-                          border: "none",
-                          background: "none",
-                          cursor: "pointer",
-                          padding: "1px 0",
-                          font: "11px var(--font-mono, monospace)",
-                          color: "var(--pg-fg)",
-                        }}
-                      >
-                        {f.name}
-                      </button>
-                    ))}
-                  </div>
-                ));
-              })()}
-            </div>
+              .
+            </p>
           </>
         )}
 
         {/* S-08 / .paged container: be honest about where the workbook lives —
          *  inside the .paged document (travels with the file) when host.parts
          *  is wired, else this browser's local store, else in-memory. */}
-        <p
-          data-sheet-honesty
-          style={{
-            margin: "var(--space-3, 12px) 0 0",
-            font: "10px/1.5 var(--font-sans, sans-serif)",
-            color: "var(--pg-muted-fg)",
-          }}
-        >
+        <p data-sheet-honesty style={{ ...note, marginTop: "var(--space-2, 8px)" }}>
           {host.supports("storage.parts@1")
-            ? "Workbook is saved inside the document and travels with the .paged file. The frame binding persists with it."
+            ? "The workbook is saved inside the document and travels with the .paged file."
             : host.supports("storage.blob@1")
-              ? "Workbook is saved to this browser's local store and restored on reload. The frame binding persists with the document."
-              : "Workbook lives in memory — re-import after reload. The frame binding persists with the document."}
+              ? "The workbook is saved in this browser and restored on reload."
+              : "The workbook lives in memory only; open it again after a reload."}
         </p>
       </div>
     );
