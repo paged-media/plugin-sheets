@@ -141,8 +141,11 @@ the context is active, undo and redo run on a journal of cell inputs kept in the
 
 **Charts and colours.** Chart parts of the workbook are parsed on load, and a chart can be
 authored over a range in the Workbook panel. `lowerChartToFrame` (`src/lower-chart.ts`)
-asks for the `ChartGeometry` at 360 x 240 pt, writes one batch of `insertPath` and
-`insertTextFrame` operations, then pours each label's text. A colour reference in the
+asks for the `ChartGeometry` at 360 x 240 pt, measures every label with the host shaper,
+writes one batch of `insertPath` and `insertTextFrame` operations — each label frame sized to
+its text at the label's anchor, inside the chart (`labelBox`) — pours each label's text, sets
+it at the chart's size and justification (`labelStyleOps`), and groups every element the chart
+made. A refresh dissolves that group before it deletes the members. A colour reference in the
 document names a swatch, so the plugin creates swatches at ids derived from the colour
 (`Color/uPagedSheetChart<HEX>` and three more prefixes in `packages/sheet-host-model/src/palette.ts`).
 Every path that creates swatches inside a batch first reads the document's swatch list

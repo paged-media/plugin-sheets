@@ -159,7 +159,14 @@ export {
 
 export {
   chartGeometryToMutations,
+  estimateLabelMetrics,
+  labelBox,
+  labelJustification,
+  labelStyleOps,
+  LABEL_FIT_ALLOWANCE_PT,
+  LABEL_SLACK_PT,
   type ChartGeometry,
+  type LabelMetrics,
   type ChartLowerResult,
   type ChartPlacement,
   type ChartPrimitive,

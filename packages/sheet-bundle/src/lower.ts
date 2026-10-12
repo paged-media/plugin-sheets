@@ -283,6 +283,53 @@ export async function selectionAnchor(
   return { pageId: g.pageId, left: a * left + c * top + tx, top: b * left + d * top + ty };
 }
 
+/** The page-space box of the FIRST selected element (its content box
+ *  carried through its item transform — all four corners, so a rotated
+ *  element's box is its true extent). Null with nothing selected, or when
+ *  the element is on the pasteboard (no page). */
+export async function selectionBox(
+  host: BundleHost,
+): Promise<{ pageId: PageId; top: number; left: number; bottom: number; right: number } | null> {
+  let selected: ElementId[];
+  try {
+    selected = host.selection.get();
+  } catch {
+    return null;
+  }
+  const first = selected.find(
+    (id) => id.kind !== "storyRange" && id.kind !== "table" && id.kind !== "tableCell",
+  );
+  if (!first) return null;
+  let geom: Awaited<ReturnType<BundleHost["document"]["elementGeometry"]>>;
+  try {
+    geom = await host.document.elementGeometry([first]);
+  } catch {
+    return null;
+  }
+  const g = geom[0];
+  if (!g || !g.pageId) return null;
+  const [top, left, bottom, right] = g.bounds;
+  const [a, b, c, d, tx, ty] = g.itemTransform ?? [1, 0, 0, 1, 0, 0];
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const [x, y] of [
+    [left, top],
+    [right, top],
+    [right, bottom],
+    [left, bottom],
+  ]) {
+    xs.push(a * x + c * y + tx);
+    ys.push(b * x + d * y + ty);
+  }
+  return {
+    pageId: g.pageId,
+    top: Math.min(...ys),
+    left: Math.min(...xs),
+    bottom: Math.max(...ys),
+    right: Math.max(...xs),
+  };
+}
+
 /** A placement for `content` at the current selection, or the default one
  *  on the active page when nothing usable is selected. */
 export async function placementForContent(

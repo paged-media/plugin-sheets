@@ -24,11 +24,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  LABEL_FIT_ALLOWANCE_PT,
+  LABEL_SLACK_PT,
   chartGeometryToMutations,
+  estimateLabelMetrics,
+  labelBox,
+  labelJustification,
+  labelStyleOps,
   makeBinding,
   type Binding,
   type ChartGeometry,
   type ChartPlacement,
+  type TextPrim,
 } from "../src";
 
 const placement: ChartPlacement = {
@@ -257,6 +264,100 @@ describe("sheet_chart_lower_paged_draw: text two-phase", () => {
     expect(texts.map((t) => t.text)).toEqual(["Q1", "100"]);
     expect(texts[0].at).toEqual([70, 20]); // (50+20, 10+10)
     expect(texts[0].anchor).toBe("middle");
+  });
+});
+
+// The film's chart (Workbook ▸ Charts ▸ Place on page): every label frame was
+// a fixed 80 pt box, left-aligned at the label's anchor — the 10 pt title
+// "Amount by item" broke and oversat, the value-axis labels hung 20 pt left
+// of the page, the category labels ran together. A label frame is the
+// label's own extent now.
+describe("sheet_chart_lower_paged_draw: a label frame is sized to its text [sheet.chart.engine]", () => {
+  const prim = (over: Partial<TextPrim>): TextPrim => ({
+    kind: "text",
+    x: 100,
+    y: 50,
+    s: "Amount by item",
+    sizePt: 10,
+    anchor: "middle",
+    ...over,
+  });
+  const m = { advance: 66, ascender: 9.7, descender: -2.4 };
+
+  it("as wide as its text (plus the rounding slack), as tall as one line ending on the anchor", () => {
+    const [top, left, bottom, right] = labelBox(prim({}), m, 0, 0, 360);
+    expect(right - left).toBeCloseTo(66 + LABEL_SLACK_PT, 6);
+    // The descent ends on the anchor (plotters anchors a label's bottom).
+    expect(top).toBeCloseTo(50 - (9.7 + 2.4), 6);
+    expect(bottom - top).toBeCloseTo(9.7 + 2.4 + LABEL_FIT_ALLOWANCE_PT, 6);
+  });
+
+  it("sits at its anchor: start from it, middle about it, end at it", () => {
+    const w = 66 + LABEL_SLACK_PT;
+    expect(labelBox(prim({ anchor: "start" }), m, 0, 0, 360)[1]).toBeCloseTo(100, 6);
+    expect(labelBox(prim({ anchor: "middle" }), m, 0, 0, 360)[1]).toBeCloseTo(100 - w / 2, 6);
+    expect(labelBox(prim({ anchor: "end" }), m, 0, 0, 360)[3]).toBeCloseTo(100, 6);
+  });
+
+  it("never hangs outside the chart's box (the value labels used to start 20 pt off the page)", () => {
+    // An end-anchored label whose anchor is 4 pt in from the chart's left:
+    // a 30 pt label would start 26 pt LEFT of the chart. It is kept inside.
+    const [, l, , r] = labelBox(prim({ x: 4, anchor: "end" }), { ...m, advance: 28 }, 24, 0, 360);
+    expect(l).toBeCloseTo(24, 6);
+    expect(r - l).toBeCloseTo(28 + LABEL_SLACK_PT, 6);
+    // And on the right edge the same.
+    const [, l2, , r2] = labelBox(prim({ x: 355, anchor: "start" }), m, 24, 0, 360);
+    expect(r2).toBeCloseTo(24 + 360, 6);
+    expect(r2 - l2).toBeCloseTo(66 + LABEL_SLACK_PT, 6);
+  });
+
+  it("the translator uses the measured extent, and estimates without one", () => {
+    const geom: ChartGeometry = {
+      widthPt: 360,
+      heightPt: 240,
+      prims: [prim({ x: 180, y: 10 }), prim({ s: "Notebooks", x: 60, y: 230, sizePt: 8 })],
+    };
+    const { batch, texts } = chartGeometryToMutations(geom, placement, binding, undefined, [m, null]);
+    const frames = (batch as { args: { ops: { op: string; args: { bounds?: number[] } }[] } }).args.ops
+      .filter((o) => o.op === "insertTextFrame")
+      .map((o) => o.args.bounds!);
+    expect(frames[0][3] - frames[0][1]).toBeCloseTo(66 + LABEL_SLACK_PT, 6);
+    const est = estimateLabelMetrics("Notebooks", 8);
+    expect(est.advance).toBeCloseTo(9 * 0.55 * 8, 6);
+    expect(frames[1][3] - frames[1][1]).toBeCloseTo(est.advance + LABEL_SLACK_PT, 6);
+    // Each label's text record carries the box its frame was given.
+    expect(texts.map((t) => t.bounds)).toEqual(frames);
+  });
+
+  it("the label text is set at the chart's size and justified to its anchor", () => {
+    expect(labelJustification("start")).toBe("LeftAlign");
+    expect(labelJustification("middle")).toBe("CenterAlign");
+    expect(labelJustification("end")).toBe("RightAlign");
+    const ops = labelStyleOps("$h:l3", {
+      text: "Notebooks",
+      at: [0, 0],
+      sizePt: 8,
+      anchor: "end",
+      bounds: [0, 0, 10, 40],
+    });
+    expect(ops).toEqual([
+      {
+        op: "setElementProperty",
+        args: {
+          elementId: { kind: "storyRange", id: { story_id: "$h:l3", start: 0, end: 9 } },
+          path: "characterFontSize",
+          value: { type: "length", value: 8 },
+        },
+      },
+      {
+        op: "setElementProperty",
+        args: {
+          elementId: { kind: "storyRange", id: { story_id: "$h:l3", start: 0, end: 9 } },
+          path: "paragraphJustification",
+          value: { type: "text", value: "RightAlign" },
+        },
+      },
+    ]);
   });
 });
 

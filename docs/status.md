@@ -54,8 +54,11 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
   their formatting in every frame, and re-paginates when a frame is resized, refreshing its own
   tables rather than adding new ones.
 - **Charts.** Ten kinds, read from the workbook or authored over a range, placed as vector paths
-  and labelled text frames in one document write, and replaced in one write when their data
-  changes.
+  and labelled text frames in one document write, grouped as one object, and replaced in one
+  write when their data changes. Each label frame is sized to its text (measured with the
+  document's font metrics), set at the chart's size and justified to its anchor, inside the
+  chart. A chart placed while something is selected lands beside it (below, else to its right),
+  never on top of it.
 - **Host panels in the sheet context.** The host's Swatches panel shows and edits the workbook
   chart colours; the Character and Paragraph panels show the selected cells' type, read-only.
 - **Datasets.** A panel lists the datasets the host offers and fills a new workbook from one.
