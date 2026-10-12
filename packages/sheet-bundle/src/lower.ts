@@ -84,9 +84,14 @@ import {
   cellCharacterStyles,
   cellsNeedingRestyle,
   cellTextSwatchOps,
+  ENGINE_DEFAULT_SIZE_PT,
+  MAX_HEIGHT_PT,
+  tableFrameHeightPt,
   type LoweredContent,
+  type LoweredStyle,
   type Page,
   type Placement,
+  type TableFit,
 } from "../../sheet-host-model/src";
 
 import type { FrameBox, SheetEngine } from "./engine";
@@ -123,6 +128,28 @@ import { readKnownSwatchIds } from "./swatch-mints";
  */
 export const DEFAULT_CELL_POINT_SIZE = 12;
 
+/** The face and size a lowered cell is poured at — the key its metrics are
+ *  measured under. Both fallbacks are the rule {@link measureColumnWidths}
+ *  states: `""` for the family (the engine's default-face resolution) and
+ *  {@link DEFAULT_CELL_POINT_SIZE} for the size. */
+function faceOf(style: LoweredStyle | null): { family: string; style: string | null; sizePt: number } {
+  return {
+    family: style?.fontName ?? "",
+    style: style?.bold || style?.italic ? "Bold" : null,
+    sizePt: style?.fontSizePt ?? DEFAULT_CELL_POINT_SIZE,
+  };
+}
+
+const faceKey = (f: { family: string; style: string | null; sizePt: number }): string =>
+  `${f.family}|${f.style ?? ""}|${f.sizePt}`;
+
+/** What one column measurement pass learns: the widths, and the vertical
+ *  metrics the engine's layout of the table will use ({@link TableFit}). */
+export interface MeasuredColumns {
+  widths: number[];
+  fit: TableFit;
+}
+
 /** Per-column width (pt) from the document's font metrics (S-13). For
  *  each column, measure the widest formatted cell text via the host
  *  shaper and add a small inset; fall back to the IR's char-based width
@@ -134,16 +161,23 @@ export const DEFAULT_CELL_POINT_SIZE = 12;
  *  use, or the width is a measurement of a different document. Both
  *  fallbacks below are that rule: `""` for the family (the engine's own
  *  default-face resolution, which is what a bare run gets) and
- *  {@link DEFAULT_CELL_POINT_SIZE} for the size. */
-async function measureColumnWidths(
+ *  {@link DEFAULT_CELL_POINT_SIZE} for the size.
+ *
+ *  The SAME calls answer the table's height: every measurement carries the
+ *  face's ascender, which is what the engine sets a one-line cell's first
+ *  baseline — and the blank line it leaves above a placed table — on
+ *  ({@link TableFit}, `placement.ts`). No call is added for it. */
+export async function measureColumns(
   host: BundleHost,
   content: LoweredContent,
-): Promise<number[]> {
+): Promise<MeasuredColumns> {
   const styleOf = (key: number | undefined) =>
     key == null ? null : (content.styles ?? []).find((s) => s.key === key) ?? null;
   const CELL_INSET_PT = 4; // left+right padding inside a cell
+  /** Ascender (pt) per measured face key. */
+  const ascenders = new Map<string, number>();
 
-  return Promise.all(
+  const widths = await Promise.all(
     content.cols.map(async (col) => {
       let widest = "";
       let style: ReturnType<typeof styleOf> = null;
@@ -156,16 +190,57 @@ async function measureColumnWidths(
         }
       }
       if (widest.length === 0) return col.widthPt;
-      const metrics = await host.text.measureString(
-        style?.fontName ?? "",
-        style?.bold || style?.italic ? "Bold" : null,
-        widest,
-        style?.fontSizePt ?? DEFAULT_CELL_POINT_SIZE,
-      );
+      const face = faceOf(style);
+      const metrics = await host.text.measureString(face.family, face.style, widest, face.sizePt);
+      if (Number.isFinite(metrics.ascender) && metrics.ascender > 0) {
+        ascenders.set(faceKey(face), metrics.ascender);
+      }
       const measured = metrics.advance + CELL_INSET_PT;
       return measured > 0 ? measured : col.widthPt;
     }),
   );
+
+  // A face nobody measured is scaled from the measured ones — by the
+  // TALLEST ascender per point, so an unmeasured cell is never assumed
+  // shorter than a measured one — and, with nothing measured at all, from
+  // the engine's own metric-less estimate (an ascender of 0.8 em).
+  let perPt = 0;
+  for (const [key, asc] of ascenders) {
+    const size = Number(key.slice(key.lastIndexOf("|") + 1));
+    if (size > 0) perPt = Math.max(perPt, asc / size);
+  }
+  if (perPt === 0) perPt = 0.8;
+  const ascenderOf = (face: { family: string; style: string | null; sizePt: number }) =>
+    ascenders.get(faceKey(face)) ?? perPt * face.sizePt;
+  const fit: TableFit = {
+    defaultAscenderPt: ascenderOf({ family: "", style: null, sizePt: ENGINE_DEFAULT_SIZE_PT }),
+    cellAscenderPt: (r, c) => {
+      const cell = content.rows[r]?.cells.find((x) => x.col === c);
+      return ascenderOf(faceOf(cell ? styleOf(cell.styleKey) : null));
+    },
+  };
+  return { widths, fit };
+}
+
+/** The column widths alone ({@link measureColumns}). */
+async function measureColumnWidths(
+  host: BundleHost,
+  content: LoweredContent,
+): Promise<number[]> {
+  return (await measureColumns(host, content)).widths;
+}
+
+/** `placement` with its height replaced by the height of the native table
+ *  the engine lays out for `content` (clamped like every default placement);
+ *  its page, top, left and width stand. */
+export function fittedPlacement(
+  placement: Placement,
+  content: LoweredContent,
+  fit: TableFit,
+): Placement {
+  const [top, left, , right] = placement.bounds;
+  const height = Math.min(tableFrameHeightPt(content, fit), MAX_HEIGHT_PT);
+  return { pageId: placement.pageId, bounds: [top, left, top + height, right] };
 }
 
 /** The active page id (meta first, else the first page). Mirrors
@@ -481,6 +556,13 @@ export interface LowerLaneOptions {
   /** Where the frame lands (Wave 4: the session places at the current
    *  selection); default `defaultPlacement` on the active page. */
   placement?: Placement;
+  /** Size the frame's HEIGHT to the native table the engine lays out
+   *  ({@link fittedPlacement}) rather than taking `placement`'s. Default:
+   *  true when no `placement` is given (a fresh default placement); a
+   *  caller that passes one says whether its height is a box to keep (a
+   *  re-placement where the frame stood) or only an estimate (a fresh
+   *  placement at the selection). */
+  fitHeight?: boolean;
   /** The workbook content version recorded in the binding (default 0). */
   contentVersion?: number;
   /** The page lowering of the range when the caller already has it (the
@@ -556,7 +638,7 @@ export async function lowerSelectionToFrame(
   const sheetInfo = engine.listSheets().find((s) => s.id === sheet);
   const sheetName = sheetInfo ? sheetInfo.name : String(sheet);
 
-  const placement = opts?.placement ?? defaultPlacement(pageId, content);
+  let placement = opts?.placement ?? defaultPlacement(pageId, content);
   // The session's workbook revision (Wave 4) — a refresh rewrites it.
   const contentVersion = opts?.contentVersion ?? 0;
   const binding = makeBinding(sheetName, range, contentVersion);
@@ -566,8 +648,14 @@ export async function lowerSelectionToFrame(
   }
 
   // Sized by font metrics (S-13) — the content alone decides the widths,
-  // so they are measured BEFORE anything is written.
-  const columnWidths = await measureColumnWidths(host, content);
+  // so they are measured BEFORE anything is written. The same measurements
+  // size the frame's height to the table the engine will lay out: a frame
+  // as tall as the workbook's rows cannot hold them (the engine starts the
+  // table one line down, and grows a row to its tallest cell).
+  const { widths: columnWidths, fit } = await measureColumns(host, content);
+  if (opts?.fitHeight ?? !opts?.placement) {
+    placement = fittedPlacement(placement, content, fit);
+  }
 
   if (tableHandlesLikely(host)) {
     const one = await placeInOneCall(host, content, pageId, placement, columnWidths, {

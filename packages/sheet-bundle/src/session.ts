@@ -2627,6 +2627,9 @@ export function createWorkbookSession(
         state.selectedRange,
         {
           placement: placement ?? undefined,
+          // The placement's height is the workbook's rows; the lowering
+          // sizes it to the table the engine lays out.
+          fitHeight: true,
           contentVersion: revision,
           content,
           // S-04 — record the resolved native table so "new style from cell"

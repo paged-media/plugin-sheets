@@ -41,8 +41,10 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
   fonts and conditional formatting, numbers aligned right and centred cells centred, Excel's
   bottom alignment where a row is tall enough to show it, merged cells, column widths measured
   with the document's font metrics, and conditional-format data bars drawn under the table. The
-  frame lands at the current selection. Placing a range is two document writes; the content is
-  one undo step.
+  frame lands at the current selection, as tall as the table the engine lays out (its rows grown
+  to their tallest cell, plus the blank line the engine leaves above a table placed in a fresh
+  frame), so every row shows. Placing a range is two document writes; the content is one undo
+  step.
 - **Placed tables follow the workbook.** After an edit the table is refreshed in place: only
   changed cells are re-poured, rows and columns reshaped, data bars redrawn, the binding's
   content version stamped, all in one document write and one undo step. A table placed in an

@@ -24,9 +24,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_INSET_PT,
+  FIT_ALLOWANCE_PT,
   MAX_HEIGHT_PT,
   MAX_WIDTH_PT,
   defaultPlacement,
+  tableFrameHeightPt,
+  tableLeadInPt,
+  tableRowHeightsPt,
   totalHeightPt,
   totalWidthPt,
   type LoweredContent,
@@ -78,5 +82,74 @@ describe("sheet_plugin_lower_mutations: defaultPlacement", () => {
       DEFAULT_INSET_PT,
       DEFAULT_INSET_PT,
     ]);
+  });
+});
+
+/** A region whose every row holds one cell of text (`texts[r]`). */
+function textRegion(rowH: number[], texts: string[]): LoweredContent {
+  return {
+    cols: [{ index: 0, widthPt: 80 }],
+    rows: rowH.map((heightPt, index) => ({
+      index,
+      heightPt,
+      cells: [{ col: 0, text: texts[index] ?? "", align: "general" as const }],
+    })),
+    rules: { h: [], v: [] },
+    merges: [],
+  };
+}
+
+// SHEET-1 (found filming the editor): a 7-row price list placed in a frame
+// as tall as its 7 × 15 pt workbook rows came out overset. The engine lays
+// a placed table out one line down the frame and grows a row to its tallest
+// cell; the frame has to be sized to THAT. The numbers below are the real
+// engine's (lower-fit.spec.ts pins the same against it).
+describe("sheet_plugin_lower_mutations: a native table's frame height [sheet.lower.page]", () => {
+  it("adds the engine's lead-in line: the ascender plus 0.4 of the 12 pt default", () => {
+    // The engine's metric-less estimate (ascender 0.8 em): measured 14.41.
+    expect(tableLeadInPt({ defaultAscenderPt: 9.6 })).toBeCloseTo(14.4, 6);
+    // Inter (ascender 0.96875 em = 11.625 pt at 12): measured 16.43.
+    expect(tableLeadInPt({ defaultAscenderPt: 11.625 })).toBeCloseTo(16.425, 6);
+  });
+
+  it("the price list's 105 pt of rows needs the lead-in on top — 121.4 pt under Inter", () => {
+    const c = textRegion([15, 15, 15, 15, 15, 15, 15], ["Item", "Notebooks", "Pencils", "Erasers", "Rulers", "Markers", "Total"]);
+    const fit = { defaultAscenderPt: 11.625, cellAscenderPt: () => 11.625 };
+    const h = tableFrameHeightPt(c, fit);
+    // The engine needs 121.44 pt (bisected against the real engine with
+    // Inter); the IR alone said 105 and the last rows were overset.
+    expect(totalHeightPt(c)).toBe(105);
+    expect(h).toBeGreaterThanOrEqual(121.44);
+    expect(h).toBeLessThanOrEqual(121.44 + 1);
+    expect(h).toBeCloseTo(105 + 16.425 + FIT_ALLOWANCE_PT, 6);
+  });
+
+  it("a row grows to its tallest cell's first baseline, never shrinks below the workbook's", () => {
+    const c = textRegion([15, 15, 30], ["small", "big", "tall row"]);
+    const fit = {
+      defaultAscenderPt: 9.6,
+      cellAscenderPt: (r: number) => (r === 1 ? 21 : 9.6),
+    };
+    expect(tableRowHeightsPt(c, fit)).toEqual([15, 21, 30]);
+  });
+
+  it("an empty cell asks for nothing", () => {
+    const c = textRegion([15], [""]);
+    const fit = { defaultAscenderPt: 9.6, cellAscenderPt: () => 40 };
+    expect(tableRowHeightsPt(c, fit)).toEqual([15]);
+  });
+
+  it("an empty region needs no frame", () => {
+    expect(tableFrameHeightPt(region([], []), { defaultAscenderPt: 9.6 })).toBe(0);
+  });
+
+  it("defaultPlacement sizes to the fit when given one, clamped like any placement", () => {
+    const c = textRegion([15, 15], ["a", "b"]);
+    const fit = { defaultAscenderPt: 9.6 };
+    const [top, , bottom] = defaultPlacement("Page/u1", c, fit).bounds;
+    expect(bottom - top).toBeCloseTo(30 + 14.4 + FIT_ALLOWANCE_PT, 6);
+    const tall = textRegion(Array.from({ length: 100 }, () => 15), []);
+    const [t2, , b2] = defaultPlacement("Page/u1", tall, fit).bounds;
+    expect(b2 - t2).toBe(MAX_HEIGHT_PT);
   });
 });

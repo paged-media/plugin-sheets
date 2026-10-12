@@ -53,10 +53,16 @@ export {
 export {
   defaultPlacement,
   DEFAULT_INSET_PT,
+  ENGINE_DEFAULT_SIZE_PT,
+  FIT_ALLOWANCE_PT,
   MAX_HEIGHT_PT,
   MAX_WIDTH_PT,
+  tableFrameHeightPt,
+  tableLeadInPt,
+  tableRowHeightsPt,
   type Bounds,
   type Placement,
+  type TableFit,
 } from "./placement";
 
 export {
