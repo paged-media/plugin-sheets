@@ -568,12 +568,35 @@ describe("sheet_chart_lower_paged_draw: bundle one-batch flow", () => {
     // Wave 9 — the label text rides the SAME batch, poured through the
     // label frame's C-15 handle: one mutate, no story resolution.
     expect(mutations).toHaveLength(1);
-    const bind = ops.findIndex((o) => o.op === "bindCreated");
+    const bind = ops.findIndex(
+      (o) => o.op === "bindCreated" && (o.args as { handle: string }).handle === "l0",
+    );
     expect(ops[bind - 1].op).toBe("insertTextFrame");
     const pour = ops.find((o) => o.op === "insertText") as {
       args: { text: string; storyId: string };
     };
     expect(pour.args).toMatchObject({ text: "Q1", storyId: "$h:l0" });
+    // The label is SET at the chart's size and justified to its anchor
+    // (it kept the document's 12 pt, left-aligned, before).
+    const styled = ops.filter(
+      (o) =>
+        o.op === "setElementProperty" &&
+        (o.args as { elementId: { kind: string } }).elementId.kind === "storyRange",
+    ) as { args: { path: string; elementId: { id: { story_id: string } } } }[];
+    expect(styled.map((o) => o.args.path).sort()).toEqual([
+      "characterFontSize",
+      "paragraphJustification",
+    ]);
+    expect(styled.every((o) => o.args.elementId.id.story_id === "$h:l0")).toBe(true);
+    // Every element the chart made is in ONE group: the rect (bound as p0)
+    // and the label (l0) — one object to select, move and delete.
+    const group = ops.find((o) => o.op === "createGroup") as {
+      args: { memberIds: { kind: string; id: string }[] };
+    };
+    expect(group.args.memberIds).toEqual([
+      { kind: "polygon", id: "$h:p0" },
+      { kind: "textFrame", id: "$h:l0" },
+    ]);
     // The created element is selected.
     expect(selections).toEqual([[CREATED]]);
   });

@@ -40,7 +40,12 @@ compact_str = { version = "0.8", features = ["serde"] }
 smallvec = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+# YAML for the build-time registry codegen (sheet-core / sheet-fn build.rs)
+# and the test-only coverage gate — never in the shipped wasm. serde_norway
+# is the maintained serde_yaml fork: serde_yaml is archived and its
+# unsafe-libyaml is flagged unmaintained (RUSTSEC-2024-0449); serde_norway
+# rides the maintained unsafe-libyaml-norway, with the same API.
+serde_norway = "0.9"
 # Chart layout engine (sheet-chart, spec §8.4). default-features = false keeps
 # ONLY plotters-core: the ChartBuilder/coordinate engine + the DrawingBackend
 # trait + the series helpers — NO bitmap/svg backend, NO font rasterizer

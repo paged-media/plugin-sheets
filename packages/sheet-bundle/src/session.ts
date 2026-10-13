@@ -72,7 +72,6 @@ import {
   placementForContent,
   refreshLoweredTable,
   replaceLoweredTable,
-  selectionAnchor,
   storyOfFrame,
   tableUnderFrame,
   subscribeChainReflow,
@@ -81,6 +80,7 @@ import {
 } from "./lower";
 import {
   CHART_SIZE_PT,
+  chartPlacementBesideSelection,
   lowerChartToFrame,
   type PlacedChart,
 } from "./lower-chart";
@@ -2627,6 +2627,9 @@ export function createWorkbookSession(
         state.selectedRange,
         {
           placement: placement ?? undefined,
+          // The placement's height is the workbook's rows; the lowering
+          // sizes it to the table the engine lays out.
+          fitHeight: true,
           contentVersion: revision,
           content,
           // S-04 — record the resolved native table so "new style from cell"
@@ -2833,11 +2836,11 @@ export function createWorkbookSession(
         host.log.warn("lowerChart: no workbook");
         return false;
       }
-      const at = await selectionAnchor(host);
+      // Beside what is selected — never on top of it (the film's chart
+      // landed over the table placed a moment before).
+      const beside = await chartPlacementBesideSelection(host);
       return lowerChartToFrame(host, state.engine, chartIndex, {
-        placement: at
-          ? { pageId: at.pageId, bounds: [at.top, at.left, at.top, at.left] }
-          : undefined,
+        placement: beside ?? undefined,
         contentVersion: revision,
         onLowered: (placed) => {
           placedCharts.push(placed);

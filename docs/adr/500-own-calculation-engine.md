@@ -36,7 +36,9 @@ a dependency, and no reference implementation's source is in the tree.
 - The third-party crates the shipping crates depend on are `zip` and `quick-xml` (container and XML in `sheet-xlsx`),
   `plotters` and `plotters-backend` (chart layout), `ryu`, `serde`, `compact_str`, `smallvec`, `rustc-hash`, `thiserror`,
   the `wasm-bindgen` glue in `sheet-js`, and the optional `rust_decimal` ([ADR 501](501-f64-numbers.md)). `sheet-core`
-  and `sheet-fn` also use `serde_yaml` in their build scripts to read the registry (`sheet-core/Cargo.toml:19-21`,
+  and `sheet-fn` also use a YAML crate in their build scripts to read the registry — `serde_yaml` when this was
+  recorded, its maintained fork `serde_norway` since `serde_yaml`'s `unsafe-libyaml` was flagged unmaintained
+  (`sheet-core/Cargo.toml:19-21`,
   `sheet-fn/Cargo.toml:40-42`). `Cargo.lock` holds 117 packages, 11 of them this workspace's own crates.
 - Each of the 224 rows in `registry/functions/*.yaml` carries a `provenance` field: 180
   cite ECMA-376 and the other 44 cite public Microsoft documentation.

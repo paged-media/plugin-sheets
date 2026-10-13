@@ -179,10 +179,107 @@ export interface ChartTextLabel {
   text: string;
   /** Page-local anchor point `[x, y]` (the text's baseline anchor). */
   at: [number, number];
-  /** Font size in pt. */
+  /** Font size in pt — what the poured text must be SET at
+   *  ({@link labelStyleOps}); the frame is sized for it. */
   sizePt: number;
   /** The text alignment at the anchor. */
   anchor: TextAnchor;
+  /** The page-local frame box `[top, left, bottom, right]` the label's
+   *  `insertTextFrame` was given. */
+  bounds: [number, number, number, number];
+}
+
+/** One label's measured extent at its own size: what the driver reads off
+ *  the host shaper (`host.text.measureStrings`) so the label's frame is
+ *  sized to its text in the face the engine lays it out in. */
+export interface LabelMetrics {
+  /** Advance width of the label string (pt). */
+  advance: number;
+  /** Face ascender (pt, positive). */
+  ascender: number;
+  /** Face descender (pt, negative below the baseline). */
+  descender: number;
+}
+
+/** Width slack (pt) on a label frame. A label is measured with the engine's
+ *  own shaper, so this is not a guess at the face — it keeps a string that
+ *  measures exactly the frame's width from breaking on rounding. The text is
+ *  justified to its anchor ({@link labelStyleOps}), so the slack never moves
+ *  where it reads. */
+export const LABEL_SLACK_PT = 2;
+
+/** Height allowance (pt) on a label frame: the engine places a line on a
+ *  1/64 pt grid, and a frame cut exactly to the line can lose it. */
+export const LABEL_FIT_ALLOWANCE_PT = 0.5;
+
+/** The ESTIMATE a label falls back to when the host cannot measure it —
+ *  the chart engine's own (sheet-chart `ADVANCE_EM`, 0.55 em per char) and
+ *  an ascent/descent of 0.8 / 0.2 em. */
+export function estimateLabelMetrics(text: string, sizePt: number): LabelMetrics {
+  return {
+    advance: [...text].length * 0.55 * sizePt,
+    ascender: 0.8 * sizePt,
+    descender: -0.2 * sizePt,
+  };
+}
+
+/** The paragraph justification that keeps a label's text at its anchor. */
+export function labelJustification(anchor: TextAnchor): string {
+  return anchor === "middle" ? "CenterAlign" : anchor === "end" ? "RightAlign" : "LeftAlign";
+}
+
+/** The ops that SET a poured label at the chart's size and justify it to its
+ *  anchor, over the label's whole text in `storyId` (a real story id, or a
+ *  `$h:` handle bound to the label's frame — core resolves a frame handle in
+ *  a `story_id` position to the frame's story). Without them the text kept
+ *  the document's 12 pt in a box sized for 8 pt. */
+export function labelStyleOps(storyId: string, label: ChartTextLabel): Mutation[] {
+  const range: ElementId = {
+    kind: "storyRange",
+    id: { story_id: storyId, start: 0, end: label.text.length },
+  };
+  return [
+    {
+      op: "setElementProperty",
+      args: { elementId: range, path: "characterFontSize", value: { type: "length", value: label.sizePt } },
+    },
+    {
+      op: "setElementProperty",
+      args: {
+        elementId: range,
+        path: "paragraphJustification",
+        value: { type: "text", value: labelJustification(label.anchor) },
+      },
+    },
+  ];
+}
+
+/** A label's page-local frame box. The chart engine anchors a label at the
+ *  BOTTOM of its text (plotters `VPos::Bottom`) and at its start, middle or
+ *  end horizontally; the frame is the text's own extent at that anchor —
+ *  as wide as the text (plus {@link LABEL_SLACK_PT}), as tall as one line,
+ *  its descent ending on the anchor — kept inside the chart's box
+ *  `[ox, ox + widthPt]`. PURE. */
+export function labelBox(
+  prim: TextPrim,
+  metrics: LabelMetrics,
+  ox: number,
+  oy: number,
+  widthPt: number,
+): [number, number, number, number] {
+  const w = Math.max(metrics.advance, 0) + LABEL_SLACK_PT;
+  const lineH = Math.max(metrics.ascender - metrics.descender, prim.sizePt);
+  const h = lineH + LABEL_FIT_ALLOWANCE_PT;
+  const ax = ox + prim.x;
+  const bottom = oy + prim.y;
+  let left = prim.anchor === "middle" ? ax - w / 2 : prim.anchor === "end" ? ax - w : ax;
+  // Inside the chart: a label never hangs past the chart's own box (the
+  // value-axis labels used to start 20 pt LEFT of it, off the page).
+  if (w <= widthPt) {
+    left = Math.min(Math.max(left, ox), ox + widthPt - w);
+  }
+  const top = bottom - lineH;
+  return [top, left, top + h, left + w];
 }
 
 /** What the chart translator yields: the phase-1 vector batch + the phase-2
@@ -408,6 +505,7 @@ export function chartGeometryToMutations(
   placement: ChartPlacement,
   binding: Binding,
   knownSwatchIds?: KnownSwatchIds,
+  labelMetrics?: readonly (LabelMetrics | null | undefined)[],
 ): ChartLowerResult {
   const { pageId, bounds } = placement;
   const [top, left] = bounds;
@@ -476,33 +574,29 @@ export function chartGeometryToMutations(
         break;
       }
       case "text": {
-        // A small 1-line text box anchored at the label point. Width is a
-        // generous fixed box (the host wraps/justifies); height ≈ the line.
-        const ax = left + prim.x;
-        const ay = top + prim.y;
-        const h = prim.sizePt * 1.6;
-        // Anchor the box around the label point per its alignment so the
-        // text reads where the geometry placed it.
-        const w = 80;
-        const boxLeft =
-          prim.anchor === "middle"
-            ? ax - w / 2
-            : prim.anchor === "end"
-              ? ax - w
-              : ax;
-        const boxTop = ay - h;
+        // A one-line text box SIZED TO THE LABEL: as wide as its text at
+        // the chart's size (measured by the driver; estimated without
+        // one), as tall as one line, at the label's anchor and inside the
+        // chart. It used to be a fixed 80 pt box, left-aligned at the
+        // anchor whatever the anchor said — a title wider than 80 pt broke
+        // and oversat, value-axis labels hung off the page, category labels
+        // ran into each other.
+        const metrics =
+          labelMetrics?.[texts.length] ?? estimateLabelMetrics(prim.s, prim.sizePt);
+        const bounds = labelBox(prim, metrics, left, top, geom.widthPt);
         ops.push({
           op: "insertTextFrame",
-          args: { pageId, bounds: [boxTop, boxLeft, boxTop + h, boxLeft + w] },
+          args: { pageId, bounds },
         });
         // A text frame carries no fill/stroke style; it may still be the
         // FIRST created element (a text-only chart) and thus the binding host.
         afterCreate("textFrame", []);
         texts.push({
           text: prim.s,
-          at: [ax, ay],
+          at: [left + prim.x, top + prim.y],
           sizePt: prim.sizePt,
           anchor: prim.anchor,
+          bounds,
         });
         break;
       }

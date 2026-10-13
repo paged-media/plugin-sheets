@@ -119,6 +119,7 @@ export {
   refreshLoweredTable,
   resolveChain,
   selectionAnchor,
+  selectionBox,
   storyOfFrame,
   subscribeChainReflow,
   CHAIN_REFLOW_DEBOUNCE_MS,
@@ -127,7 +128,11 @@ export {
   type ChainTable,
 } from "./lower";
 // The chart → paged.draw vector lower (M2 charts track, spec §8.4).
-export { lowerChartToFrame } from "./lower-chart";
+export {
+  chartPlacementBesideSelection,
+  chartRemovalOps,
+  lowerChartToFrame,
+} from "./lower-chart";
 export { importXlsx } from "./import-xlsx";
 export {
   a1Bounds,

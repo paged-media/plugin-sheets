@@ -53,10 +53,17 @@ export {
 export {
   defaultPlacement,
   DEFAULT_INSET_PT,
+  ENGINE_DEFAULT_SIZE_PT,
+  FIT_ALLOWANCE_PT,
   MAX_HEIGHT_PT,
   MAX_WIDTH_PT,
+  tableFrameHeightPt,
+  tableLeadInPt,
+  tableRowHeightsPt,
+  TABLE_LEAD_IN_LINE,
   type Bounds,
   type Placement,
+  type TableFit,
 } from "./placement";
 
 export {
@@ -153,7 +160,14 @@ export {
 
 export {
   chartGeometryToMutations,
+  estimateLabelMetrics,
+  labelBox,
+  labelJustification,
+  labelStyleOps,
+  LABEL_FIT_ALLOWANCE_PT,
+  LABEL_SLACK_PT,
   type ChartGeometry,
+  type LabelMetrics,
   type ChartLowerResult,
   type ChartPlacement,
   type ChartPrimitive,

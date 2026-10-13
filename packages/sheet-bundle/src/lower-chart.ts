@@ -41,12 +41,17 @@ import type {
 } from "@paged-media/plugin-api";
 import {
   chartGeometryToMutations,
+  labelStyleOps,
   makeBinding,
+  type ChartGeometry,
   type ChartPlacement,
+  type ChartTextLabel,
+  type LabelMetrics,
+  type TextPrim,
 } from "../../sheet-host-model/src";
 
 import type { SheetEngine } from "./engine";
-import { storyIdsSnapshot } from "./lower";
+import { selectionBox, storyIdsSnapshot } from "./lower";
 import { doors66, noteMinted, readTreeIds } from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
 
@@ -77,9 +82,13 @@ export interface PlacedChart {
   chartIndex: number;
   pageId: PageId;
   bounds: [number, number, number, number];
-  /** Every element the lowering created (paths + label frames). Empty when
-   *  the host has no scene-tree read — such a chart cannot be refreshed. */
+  /** Every element the lowering created (paths + label frames) — the
+   *  group's MEMBERS, never the group itself. Empty when the host has no
+   *  scene-tree read — such a chart cannot be refreshed. */
   elementIds: ElementId[];
+  /** The group the chart's elements were placed in (one object to select,
+   *  move and delete), or null when the host placed it ungrouped. */
+  groupId?: string | null;
   contentVersion: number;
   /** The geometry it was drawn from (JSON) — a refresh re-lowers only when
    *  the chart's geometry actually changed. */
@@ -102,25 +111,106 @@ export interface ChartLowerOptions {
   replaces?: PlacedChart;
 }
 
-/** Remove a placed chart's elements (one undoable batch of deleteFrame —
- *  the door resolves paths and text frames alike). False when there is
- *  nothing recorded to remove or the host refused. */
+/** The ops that remove a placed chart: its group dissolved (core has no
+ *  delete for a group, and deleting the members alone leaves an EMPTY group
+ *  behind — measured), then every element deleted (`deleteFrame` resolves
+ *  paths and text frames alike). `withGroup: false` skips the dissolve, for a
+ *  chart whose group the user has already taken apart. */
+export function chartRemovalOps(placed: PlacedChart, withGroup = true): Mutation[] {
+  return [
+    ...(withGroup && placed.groupId
+      ? [{ op: "dissolveGroup" as const, args: { groupId: placed.groupId } }]
+      : []),
+    ...placed.elementIds.map((id) => ({
+      op: "deleteFrame" as const,
+      args: { frameId: id.id as string },
+    })),
+  ];
+}
+
+/** Remove a placed chart's elements (one undoable batch). False when there
+ *  is nothing recorded to remove or the host refused. A chart whose group
+ *  is gone (the user ungrouped it) is removed element by element. */
 export async function removePlacedChart(
   host: BundleHost,
   placed: PlacedChart,
 ): Promise<boolean> {
   if (placed.elementIds.length === 0) return false;
-  const r = await host.document.mutate({
-    op: "batch",
-    args: {
-      ops: placed.elementIds.map((id) => ({
-        op: "deleteFrame" as const,
-        args: { frameId: id.id as string },
-      })),
-    },
-  });
+  let r = await host.document.mutate({ op: "batch", args: { ops: chartRemovalOps(placed) } });
+  if (!r.applied && placed.groupId) {
+    r = await host.document.mutate({
+      op: "batch",
+      args: { ops: chartRemovalOps(placed, false) },
+    });
+  }
   if (!r.applied) host.log.warn("chart refresh: removing the old chart was rejected", r);
   return r.applied;
+}
+
+/** The within-batch handle the chart's group is named by. */
+const CHART_GROUP_HANDLE = "chart";
+
+/** Gap (pt) between a placed chart and the selection it is placed beside. */
+export const CHART_GAP_PT = 12;
+
+/** Where a chart lands when something is selected: BESIDE it, never on it —
+ *  below it when the chart fits the page there, else to its right, else
+ *  below it regardless (a chart hanging past the page edge is visible and
+ *  can be moved; one lying over the table it charts was the film's bug). The
+ *  bounds carry the top-left only; the size is the chart's. Null with
+ *  nothing usable selected (the caller's default placement applies). */
+export async function chartPlacementBesideSelection(
+  host: BundleHost,
+): Promise<{ pageId: PageId; bounds: [number, number, number, number] } | null> {
+  const box = await selectionBox(host);
+  if (!box) return null;
+  const [w, h] = CHART_SIZE_PT;
+  let size: [number, number] = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  try {
+    const pages = await host.document.collection<{ selfId: string; sizePt?: [number, number] }>("pages");
+    size = pages.find((p) => p.selfId === box.pageId)?.sizePt ?? size;
+  } catch {
+    /* no page size: any spot "fits" — below the selection */
+  }
+  const fits = (top: number, left: number) => top + h <= size[1] && left + w <= size[0];
+  const below = { top: box.bottom + CHART_GAP_PT, left: box.left };
+  const right = { top: box.top, left: box.right + CHART_GAP_PT };
+  const at = fits(below.top, below.left) ? below : fits(right.top, right.left) ? right : below;
+  return { pageId: box.pageId, bounds: [at.top, at.left, at.top, at.left] };
+}
+
+/** Every label of `geom`, measured at its own size with the host's shaper —
+ *  ONE call per distinct size (`measureStrings`), in the face an unstyled
+ *  run is laid out in (`""`, the engine's default face, which is what the
+ *  labels are poured as). A label the host cannot measure is `null`: the
+ *  translator then sizes it from the chart engine's own estimate. */
+async function measureLabels(
+  host: BundleHost,
+  geom: ChartGeometry,
+): Promise<(LabelMetrics | null)[]> {
+  const labels = geom.prims.filter((p): p is TextPrim => p.kind === "text");
+  const out: (LabelMetrics | null)[] = labels.map(() => null);
+  const bySize = new Map<number, number[]>();
+  labels.forEach((l, i) => bySize.set(l.sizePt, [...(bySize.get(l.sizePt) ?? []), i]));
+  for (const [size, at] of bySize) {
+    try {
+      const measured = await host.text.measureStrings(
+        "",
+        null,
+        at.map((i) => labels[i].s),
+        size,
+      );
+      at.forEach((i, k) => {
+        const m = measured[k];
+        if (m && Number.isFinite(m.advance) && m.advance > 0) {
+          out[i] = { advance: m.advance, ascender: m.ascender, descender: m.descender };
+        }
+      });
+    } catch (err) {
+      host.log.debug("lowerChart: label measurement failed — estimated sizes", err);
+    }
+  }
+  return out;
 }
 
 export async function lowerChartToFrame(
@@ -178,6 +268,7 @@ export async function lowerChartToFrame(
     placement,
     binding,
     await readKnownSwatchIds(host),
+    await measureLabels(host, geom),
   );
   if (
     batch.op === "batch" &&
@@ -187,25 +278,46 @@ export async function lowerChartToFrame(
     return false;
   }
 
-  // ONE batch: every vector path, the label frames, the binding — and each
-  // label's text, poured through the frame's C-15 handle (`bindCreated`
-  // right after its insertTextFrame, the pours at the end so no `$created`
-  // the style/binding ops name moves). One mutate and one undo step for the
-  // whole chart; no story resolution at all.
+  // ONE batch: every vector path, the label frames, the binding, the GROUP
+  // that makes them one object — and each label's text, poured through the
+  // frame's C-15 handle, set at the chart's size and justified to its anchor
+  // (`bindCreated` right after each create, the group and the pours at the
+  // end so no `$created` the style/binding ops name moves). One mutate and
+  // one undo step for the whole chart; no story resolution at all.
   const ops = (batch as { args: { ops: Mutation[] } }).args.ops;
-  const withLabels: Mutation[] = [];
+  const withHandles: Mutation[] = [];
   const pours: Mutation[] = [];
+  const members: ElementId[] = [];
   let label = 0;
+  let path = 0;
   for (const op of ops) {
-    withLabels.push(op);
+    withHandles.push(op);
+    if (op.op === "insertPath") {
+      const handle = `p${path}`;
+      path += 1;
+      withHandles.push({ op: "bindCreated", args: { handle } });
+      members.push({ kind: "polygon", id: `$h:${handle}` });
+      continue;
+    }
     if (op.op !== "insertTextFrame") continue;
     const handle = `l${label}`;
-    const text = texts[label]?.text ?? "";
+    const text: ChartTextLabel | undefined = texts[label];
     label += 1;
-    if (text.length === 0) continue;
-    withLabels.push({ op: "bindCreated", args: { handle } });
-    pours.push({ op: "insertText", args: { storyId: `$h:${handle}`, offset: 0, text } });
+    withHandles.push({ op: "bindCreated", args: { handle } });
+    members.push({ kind: "textFrame", id: `$h:${handle}` });
+    if (!text || text.text.length === 0) continue;
+    pours.push(
+      { op: "insertText", args: { storyId: `$h:${handle}`, offset: 0, text: text.text } },
+      ...labelStyleOps(`$h:${handle}`, text),
+    );
   }
+  const group: Mutation[] =
+    members.length >= 2
+      ? [
+          { op: "createGroup", args: { memberIds: members } },
+          { op: "bindCreated", args: { handle: CHART_GROUP_HANDLE } },
+        ]
+      : [];
 
   // Wave 4: a refresh REPLACES the chart, so it needs every element the
   // batch made. The 66 `minted` list names them; a host that does not send
@@ -213,16 +325,19 @@ export async function lowerChartToFrame(
   const doors = doors66(host);
   const treeBefore =
     opts?.onLowered && doors.minted !== true ? await readTreeIds(host) : null;
-  const removals = (opts?.replaces?.elementIds ?? []).map((id) => ({
-    op: "deleteFrame" as const,
-    args: { frameId: id.id as string },
-  }));
+  const removals = opts?.replaces ? chartRemovalOps(opts.replaces) : [];
+  const place = [...withHandles, ...group, ...pours];
   let outcome = await host.document.mutate({
     op: "batch",
-    args: { ops: [...removals, ...withLabels, ...pours] },
+    args: { ops: [...removals, ...place] },
   });
+  if (!outcome.applied && opts?.replaces) {
+    // The old chart may not be as it was placed (the user ungrouped it, or
+    // deleted a piece): take away what is left of it, then place.
+    await removePlacedChart(host, opts.replaces);
+    outcome = await host.document.mutate({ op: "batch", args: { ops: place } });
+  }
   if (!outcome.applied) {
-    if (opts?.replaces) await removePlacedChart(host, opts.replaces);
     // A host without in-batch handles: the plain batch, then the labels.
     host.log.debug("lowerChart: one-batch chart refused — two-phase", outcome);
     const storiesBefore = await storyIdsSnapshot(host);
@@ -235,22 +350,24 @@ export async function lowerChartToFrame(
   }
   const minted = noteMinted(host, outcome);
   if (opts?.onLowered) {
-    let elementIds: ElementId[] = [];
+    let made: ElementId[] = [];
     if (minted) {
-      elementIds = minted.map((m) => m.element);
+      made = minted.map((m) => m.element);
     } else {
       const before = treeBefore ?? null;
       const treeAfter = before ? await readTreeIds(host) : null;
-      elementIds =
+      made =
         before && treeAfter
           ? [...treeAfter].filter(([k]) => !before.has(k)).map(([, id]) => id)
           : [];
     }
+    const groupId = made.find((id) => id.kind === "group")?.id ?? null;
     opts.onLowered({
       chartIndex,
       pageId,
       bounds: placement.bounds,
-      elementIds,
+      elementIds: made.filter((id) => id.kind !== "group"),
+      groupId: typeof groupId === "string" ? groupId : null,
       contentVersion,
       geometryKey: JSON.stringify(geom),
     });
@@ -275,7 +392,7 @@ export async function lowerChartToFrame(
 async function pourLabels(
   host: BundleHost,
   storiesBefore: ReadonlySet<string>,
-  texts: readonly { text: string }[],
+  texts: readonly ChartTextLabel[],
 ): Promise<void> {
   const fresh = await newStoryIdsInMintOrder(host, storiesBefore);
   if (fresh.length !== texts.length) {
@@ -286,9 +403,16 @@ async function pourLabels(
   }
   for (const [i, label] of texts.entries()) {
     if (label.text.length === 0) continue;
+    // The text, set at the chart's size and justified to its anchor — one
+    // mutate per label, as before.
     const pour = await host.document.mutate({
-      op: "insertText",
-      args: { storyId: fresh[i], offset: 0, text: label.text },
+      op: "batch",
+      args: {
+        ops: [
+          { op: "insertText", args: { storyId: fresh[i], offset: 0, text: label.text } },
+          ...labelStyleOps(fresh[i], label),
+        ],
+      },
     });
     if (!pour.applied) {
       host.log.debug("lowerChart: a label insertText was rejected", pour);

@@ -100,7 +100,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
         let text = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("sheet-fn build.rs: read {path:?}: {e}"));
-        let parsed: Vec<FnRow> = serde_yaml::from_str(&text)
+        let parsed: Vec<FnRow> = serde_norway::from_str(&text)
             .unwrap_or_else(|e| panic!("sheet-fn build.rs: parse {path:?}: {e}"));
         rows.extend(parsed);
     }
