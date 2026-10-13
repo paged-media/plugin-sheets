@@ -31,6 +31,7 @@ import {
   tableFrameHeightPt,
   tableLeadInPt,
   tableRowHeightsPt,
+  TABLE_LEAD_IN_LINE,
   totalHeightPt,
   totalWidthPt,
   type LoweredContent,
@@ -107,9 +108,13 @@ function textRegion(rowH: number[], texts: string[]): LoweredContent {
 describe("sheet_plugin_lower_mutations: a native table's frame height [sheet.lower.page]", () => {
   it("adds the engine's lead-in line: the ascender plus 0.4 of the 12 pt default", () => {
     // The engine's metric-less estimate (ascender 0.8 em): measured 14.41.
-    expect(tableLeadInPt({ defaultAscenderPt: 9.6 })).toBeCloseTo(14.4, 6);
+    expect(tableLeadInPt({ defaultAscenderPt: 9.6 }, true)).toBeCloseTo(14.4, 6);
     // Inter (ascender 0.96875 em = 11.625 pt at 12): measured 16.43.
-    expect(tableLeadInPt({ defaultAscenderPt: 11.625 })).toBeCloseTo(16.425, 6);
+    expect(tableLeadInPt({ defaultAscenderPt: 11.625 }, true)).toBeCloseTo(16.425, 6);
+  });
+
+  it("an engine that places the table in the story's first paragraph adds no lead-in", () => {
+    expect(tableLeadInPt({ defaultAscenderPt: 11.625 }, false)).toBe(0);
   });
 
   it("the price list's 105 pt of rows needs the lead-in on top — 121.4 pt under Inter", () => {
@@ -117,11 +122,15 @@ describe("sheet_plugin_lower_mutations: a native table's frame height [sheet.low
     const fit = { defaultAscenderPt: 11.625, cellAscenderPt: () => 11.625 };
     const h = tableFrameHeightPt(c, fit);
     // The engine needs 121.44 pt (bisected against the real engine with
-    // Inter); the IR alone said 105 and the last rows were overset.
+    // Inter, which leaves the lead-in line); the IR alone said 105 and the
+    // last rows were overset.
     expect(totalHeightPt(c)).toBe(105);
-    expect(h).toBeGreaterThanOrEqual(121.44);
-    expect(h).toBeLessThanOrEqual(121.44 + 1);
-    expect(h).toBeCloseTo(105 + 16.425 + FIT_ALLOWANCE_PT, 6);
+    const leadIn = TABLE_LEAD_IN_LINE ? 16.425 : 0;
+    expect(h).toBeCloseTo(105 + leadIn + FIT_ALLOWANCE_PT, 6);
+    if (TABLE_LEAD_IN_LINE) {
+      expect(h).toBeGreaterThanOrEqual(121.44);
+      expect(h).toBeLessThanOrEqual(121.44 + 1);
+    }
   });
 
   it("a row grows to its tallest cell's first baseline, never shrinks below the workbook's", () => {
@@ -147,7 +156,7 @@ describe("sheet_plugin_lower_mutations: a native table's frame height [sheet.low
     const c = textRegion([15, 15], ["a", "b"]);
     const fit = { defaultAscenderPt: 9.6 };
     const [top, , bottom] = defaultPlacement("Page/u1", c, fit).bounds;
-    expect(bottom - top).toBeCloseTo(30 + 14.4 + FIT_ALLOWANCE_PT, 6);
+    expect(bottom - top).toBeCloseTo(30 + tableLeadInPt(fit) + FIT_ALLOWANCE_PT, 6);
     const tall = textRegion(Array.from({ length: 100 }, () => 15), []);
     const [t2, , b2] = defaultPlacement("Page/u1", tall, fit).bounds;
     expect(b2 - t2).toBe(MAX_HEIGHT_PT);

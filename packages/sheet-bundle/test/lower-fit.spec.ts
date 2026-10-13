@@ -24,7 +24,9 @@
 // ("1 overset story" in Publication health). The engine lays the table out
 // one line BELOW the top of the frame — `insertTable` appends the table on a
 // fresh paragraph after the story's empty first one — so a frame as tall as
-// the rows cannot hold them.
+// the rows cannot hold them. (paged-media/core#58 removes that line; the
+// bundle follows with ONE switch, `TABLE_LEAD_IN_LINE` in placement.ts, and
+// the "one point shorter" checks below fail until it is flipped.)
 //
 // Real engine: skipped without the wasm artifact, FAILS under
 // REQUIRE_REAL_ENGINE=1 (the engine-real.spec.ts dual gate).

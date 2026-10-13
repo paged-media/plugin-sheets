@@ -60,6 +60,7 @@ export {
   tableFrameHeightPt,
   tableLeadInPt,
   tableRowHeightsPt,
+  TABLE_LEAD_IN_LINE,
   type Bounds,
   type Placement,
   type TableFit,

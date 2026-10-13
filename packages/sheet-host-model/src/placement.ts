@@ -96,10 +96,21 @@ export function defaultPlacement(
 //      the size it is poured at (cells carry no insets).
 //
 // Both are the ENGINE's layout rules, read here so the frame can be placed
-// at the right size in the one placement batch. When core stops leaving the
-// blank paragraph (the table placed in the story's first paragraph), the
-// lead-in goes away and `lower-fit.spec.ts` — which pins the frame to within
-// a point of what the engine needs — says so.
+// at the right size in the one placement batch. The lead-in is ONE switch,
+// `TABLE_LEAD_IN_LINE` below: when core stops leaving the blank paragraph
+// (paged-media/core#58 places a table inserted into an empty story in that
+// story's first paragraph), flip it. `lower-fit.spec.ts` pins the frame to
+// within a point of what the engine needs, so it fails on whichever engine
+// the switch does not match.
+
+/** Does the engine leave a blank line above a table placed in a FRESH frame?
+ *  True for every engine up to and including the one this bundle pins:
+ *  `insertTable` appends the table after the new story's empty paragraph
+ *  (core `paged-mutate` `apply/path_topology.rs` `apply_insert_table`).
+ *  paged-media/core#58 ("tables in empty stories") makes the table take that
+ *  paragraph instead — set this to `false` in the release that pins a core
+ *  carrying it. Nothing else changes. */
+export const TABLE_LEAD_IN_LINE = true;
 
 /** The engine's default point size — the size the blank lead-in line and
  *  every un-sized cell are laid out at (`PipelineOptions::default_point_size`). */
@@ -123,9 +134,11 @@ export interface TableFit {
 }
 
 /** The blank line the engine lays out above a table placed in a fresh
- *  frame (see the section note): `ascender + 0.4 × 12 pt`. */
-export function tableLeadInPt(fit: TableFit): number {
-  return fit.defaultAscenderPt + 0.4 * ENGINE_DEFAULT_SIZE_PT;
+ *  frame (see the section note): `ascender + 0.4 × 12 pt` — or nothing, on
+ *  an engine that places the table in the story's first paragraph
+ *  ({@link TABLE_LEAD_IN_LINE}; `leadInLine` overrides it for tests). */
+export function tableLeadInPt(fit: TableFit, leadInLine: boolean = TABLE_LEAD_IN_LINE): number {
+  return leadInLine ? fit.defaultAscenderPt + 0.4 * ENGINE_DEFAULT_SIZE_PT : 0;
 }
 
 /** The height of each lowered row as the engine lays it out: never less
