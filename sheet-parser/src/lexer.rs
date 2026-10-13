@@ -192,9 +192,9 @@ impl Lexer<'_> {
             }
             b'#' => self.one(TokKind::Hash),
             b'\'' => self.lex_quoted_sheet(),
-            b'0'..=b'9' => Ok(self.lex_number()),
+            b'0'..=b'9' => self.lex_number(),
             b'.' if self.bytes.get(self.pos + 1).is_some_and(u8::is_ascii_digit) => {
-                Ok(self.lex_number())
+                self.lex_number()
             }
             b'(' => self.one(TokKind::LParen),
             b')' => self.one(TokKind::RParen),
@@ -363,7 +363,9 @@ impl Lexer<'_> {
     }
 
     /// A numeric literal, incl. a fractional part and scientific exponent.
-    fn lex_number(&mut self) -> TokKind {
+    /// One past f64's range is an error, as in Excel: as infinity it would
+    /// print as `inf`, which no formula can spell.
+    fn lex_number(&mut self) -> Result<TokKind, ParseError> {
         let start = self.pos;
         while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.pos += 1;
@@ -393,7 +395,10 @@ impl Lexer<'_> {
         }
         // The grammar above only emits valid f64 syntax.
         let n: f64 = self.src[start..self.pos].parse().unwrap();
-        TokKind::Number(n)
+        if !n.is_finite() {
+            return Err(ParseError::new("number is too large", start..self.pos));
+        }
+        Ok(TokKind::Number(n))
     }
 
     /// Either a sheet-qualified ref prefix (`Sheet1!`), a bare A1 cell, or a

@@ -109,6 +109,23 @@ fn lex_numbers_scientific() {
     assert_eq!(roundtrip("2e3"), "2000");
 }
 
+/// A literal past f64's range is an error, as in Excel, not infinity: an
+/// infinite literal printed as "inf", which no formula can spell (found
+/// by the parse_formula fuzz target, "2E+1443").
+#[test]
+fn lex_number_out_of_range_is_parse_error() {
+    for s in ["2E+1443", "1E309", "=1+9E999"] {
+        let src = s.trim_start_matches('=');
+        let err = parse(src, &Ctx::new()).unwrap_err();
+        assert!(err.message.contains("too large"), "{s}: {}", err.message);
+    }
+    // The largest finite literal still parses and round-trips.
+    let max = "1.7976931348623157E+308";
+    assert_eq!(p(&pr(&p(max))), p(max));
+    // Underflow is a plain zero.
+    assert_eq!(roundtrip("1E-400"), "0");
+}
+
 #[test]
 fn lex_strings_escapes() {
     let f = p("\"a\"\"b\"");
