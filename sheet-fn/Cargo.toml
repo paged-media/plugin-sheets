@@ -39,4 +39,4 @@ rust_decimal = { version = "1", default-features = false, features = [
 
 [build-dependencies]
 serde.workspace = true
-serde_yaml.workspace = true
+serde_norway.workspace = true
