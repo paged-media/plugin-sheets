@@ -97,20 +97,18 @@ export function defaultPlacement(
 //
 // Both are the ENGINE's layout rules, read here so the frame can be placed
 // at the right size in the one placement batch. The lead-in is ONE switch,
-// `TABLE_LEAD_IN_LINE` below: when core stops leaving the blank paragraph
-// (paged-media/core#58 places a table inserted into an empty story in that
-// story's first paragraph), flip it. `lower-fit.spec.ts` pins the frame to
+// `TABLE_LEAD_IN_LINE` below, off since core v0.71.8 stopped leaving the
+// blank paragraph (paged-media/core#58 places a table inserted into an empty
+// story in that story's first paragraph). `lower-fit.spec.ts` pins the frame to
 // within a point of what the engine needs, so it fails on whichever engine
 // the switch does not match.
 
 /** Does the engine leave a blank line above a table placed in a FRESH frame?
- *  True for every engine up to and including the one this bundle pins:
- *  `insertTable` appends the table after the new story's empty paragraph
- *  (core `paged-mutate` `apply/path_topology.rs` `apply_insert_table`).
- *  paged-media/core#58 ("tables in empty stories") makes the table take that
- *  paragraph instead — set this to `false` in the release that pins a core
- *  carrying it. Nothing else changes. */
-export const TABLE_LEAD_IN_LINE = true;
+ *  No, since core v0.71.8 (paged-media/core#58, "tables in empty stories"):
+ *  the table takes the new story's empty first paragraph. Engines up to
+ *  v0.71.7 appended it after that paragraph (`apply_insert_table`), one line
+ *  lower; an editor still pinning one of those gets frames one line short. */
+export const TABLE_LEAD_IN_LINE = false;
 
 /** The engine's default point size — the size the blank lead-in line and
  *  every un-sized cell are laid out at (`PipelineOptions::default_point_size`). */
