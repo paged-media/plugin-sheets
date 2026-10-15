@@ -48,8 +48,12 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
 - **Placed tables follow the workbook.** After an edit the table is refreshed in place: only
   changed cells are re-poured, rows and columns reshaped, data bars redrawn, the binding's
   content version stamped, all in one document write and one undo step. A table placed in an
-  earlier session is found again on restore and refreshes the same way; one whose page no longer
-  shows the saved workbook is replaced.
+  earlier session is found again on restore and refreshes the same way, in place: what each
+  table shows is kept in the document (`placements/<hash>.json`, written by the save hook), so
+  the table keeps its id and whatever the host formatted. It is replaced when no such record
+  was kept, or when the host changed its rows or columns (a header or footer band, an inserted
+  row): the host reports a table's row count but not where its bands sit, so the workbook's rows
+  cannot be told apart from the host's, and a band does not survive the refresh.
 - **Pagination.** A command threads a range over linked frames, repeats the header rows with
   their formatting in every frame, and re-paginates when a frame is resized, refreshing its own
   tables rather than adding new ones.
