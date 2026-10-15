@@ -61,8 +61,10 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
   and labelled text frames in one document write, grouped as one object, and replaced in one
   write when their data changes. Each label frame is sized to its text (measured with the
   document's font metrics), set at the chart's size and justified to its anchor, inside the
-  chart. A chart placed while something is selected lands beside it (below, else to its right),
-  never on top of it.
+  chart. A new chart lands inside the page's margins: beside what is selected (below it, else
+  above, else to its right or left), never on top of it, and in the margin box's top-left
+  corner with nothing selected. It is shrunk proportionally only when the margin box cannot
+  hold 360 × 240 pt.
 - **Host panels in the sheet context.** The host's Swatches panel shows and edits the workbook
   chart colours; the Character and Paragraph panels show the selected cells' type, read-only.
 - **Datasets.** A panel lists the datasets the host offers and fills a new workbook from one.

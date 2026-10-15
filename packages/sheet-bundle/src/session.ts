@@ -83,8 +83,8 @@ import {
   type LoweredTableInfo,
 } from "./lower";
 import {
-  CHART_SIZE_PT,
-  chartPlacementBesideSelection,
+  chartPlacement,
+  chartSizeOf,
   lowerChartToFrame,
   type PlacedChart,
 } from "./lower-chart";
@@ -2219,7 +2219,7 @@ export function createWorkbookSession(
         let key: string;
         try {
           key = JSON.stringify(
-            engine.getChartGeometry(placed.chartIndex, ...CHART_SIZE_PT),
+            engine.getChartGeometry(placed.chartIndex, ...chartSizeOf(placed.bounds)),
           );
         } catch {
           charts.push(placed);
@@ -2933,10 +2933,11 @@ export function createWorkbookSession(
         return false;
       }
       // Beside what is selected — never on top of it (the film's chart
-      // landed over the table placed a moment before).
-      const beside = await chartPlacementBesideSelection(host);
+      // landed over the table placed a moment before) — and on the page,
+      // inside its margins.
+      const placement = await chartPlacement(host);
       return lowerChartToFrame(host, state.engine, chartIndex, {
-        placement: beside ?? undefined,
+        placement: placement ?? undefined,
         contentVersion: revision,
         onLowered: (placed) => {
           placedCharts.push(placed);

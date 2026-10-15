@@ -129,7 +129,8 @@ export {
 } from "./lower";
 // The chart → paged.draw vector lower (M2 charts track, spec §8.4).
 export {
-  chartPlacementBesideSelection,
+  chartBoxOnPage,
+  chartPlacement,
   chartRemovalOps,
   lowerChartToFrame,
 } from "./lower-chart";

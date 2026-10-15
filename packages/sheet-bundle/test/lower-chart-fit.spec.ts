@@ -164,6 +164,59 @@ describe.skipIf(!ENGINE_BUILT)("a placed chart is one sized, legible object", ()
     }
   });
 
+  it("placed from a selection low on the page, it lands on the page inside the margins [sheet.chart.engine]", async () => {
+    const session = createWorkbookSession(host);
+    s = session;
+    await session.import(corpus("09-chart.xlsx"), "09-chart.xlsx");
+    const [page] = await host.document.collection<{
+      selfId: string;
+      sizePt: [number, number];
+      marginTopPt?: number;
+      marginLeftPt?: number;
+      marginBottomPt?: number;
+      marginRightPt?: number;
+    }>("pages");
+    const [w, hgt] = page.sizePt;
+    const area: Box = [
+      page.marginTopPt ?? 0,
+      page.marginLeftPt ?? 0,
+      hgt - (page.marginBottomPt ?? 0),
+      w - (page.marginRightPt ?? 0),
+    ];
+    // A frame near the foot of the page, selected: no room below it.
+    const sel: Box = [hgt - 90, area[1], hgt - 50, area[1] + 220];
+    const made = await host.document.mutate({
+      op: "insertTextFrame",
+      args: { pageId: page.selfId, bounds: sel },
+    } as never);
+    if (!made.applied || !made.createdId) throw new Error(`no frame: ${JSON.stringify(made)}`);
+    await host.selection.set([made.createdId]);
+    const before = nodes(await host.document.tree());
+    const [chart] = session.listCharts();
+    expect(await session.lowerChart(chart.index)).toBe(true);
+    await settle();
+    const added = [...nodes(await host.document.tree()).values()].filter(
+      (n) => !before.has(key(n.id)) && n.id.kind !== "group",
+    );
+    expect(added.length).toBeGreaterThan(5);
+    // The chart's art (its labels may hang a little past the plot frame).
+    const art = (await host.document.elementGeometry(added.map((n) => n.id))).filter(
+      (g) => g.id.kind !== "textFrame",
+    );
+    const box: Box = [
+      Math.min(...art.map((g) => g.bounds[0])),
+      Math.min(...art.map((g) => g.bounds[1])),
+      Math.max(...art.map((g) => g.bounds[2])),
+      Math.max(...art.map((g) => g.bounds[3])),
+    ];
+    for (const g of art) expect(g.pageId, `${key(g.id)} is on the page`).toBe(page.selfId);
+    expect(box[0], "the chart starts inside the top margin").toBeGreaterThanOrEqual(area[0] - 0.5);
+    expect(box[1], "…and the left one").toBeGreaterThanOrEqual(area[1] - 0.5);
+    expect(box[2], "it ends above the bottom margin").toBeLessThanOrEqual(area[2] + 0.5);
+    expect(box[3], "…and inside the right one").toBeLessThanOrEqual(area[3] + 0.5);
+    expect(overlaps(box, sel), "the chart lies over the selection").toBe(false);
+  });
+
   it("every label is sized to its text, set at the chart's size, inside the chart and on the page [sheet.chart.engine]", async () => {
     const { added } = await placeTableThenChart();
     const members = added.filter((n) => n.id.kind !== "group");
