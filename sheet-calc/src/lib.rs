@@ -380,6 +380,7 @@ impl Engine {
         self.dirty.forget(cref);
         if let Some(ws) = self.model.sheet_mut(sheet) {
             ws.array_formulas.remove(&(row, col));
+            ws.dynamic_arrays.remove(&(row, col));
         }
 
         match input {
@@ -1004,6 +1005,7 @@ impl Engine {
         // Shift legacy array-formula anchors with their cells (an anchor
         // whose row/column is deleted goes with it).
         let old_arrays = std::mem::take(&mut ws.array_formulas);
+        let old_dynamic = std::mem::take(&mut ws.dynamic_arrays);
         for ((row, col), area) in old_arrays {
             let coord = if axis == EditAxis::Row { row } else { col };
             if let Some(nc) = shift_coord(coord, kind, at, n) {
@@ -1013,6 +1015,9 @@ impl Engine {
                     (row, nc)
                 };
                 ws.array_formulas.insert(key, area);
+                if old_dynamic.contains(&(row, col)) {
+                    ws.dynamic_arrays.insert(key);
+                }
             }
         }
 

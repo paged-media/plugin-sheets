@@ -66,6 +66,9 @@ pub struct ParsedCell {
     /// `<f t="array" ref="…">`: the legacy array formula's area as
     /// `(rows, cols)` from this (anchor) cell.
     pub array_area: Option<(u32, u32)>,
+    /// `cm=`: the 1-based cell-metadata block (`metadata.xml`) the cell
+    /// points at — on an array formula, the dynamic-array marker.
+    pub cm: Option<u32>,
 }
 
 /// Everything a worksheet part yields.
@@ -341,6 +344,7 @@ struct CellAccum {
     f_shared_si: Option<u32>,
     f_is_shared_master: bool,
     array_area: Option<(u32, u32)>,
+    cm: Option<u32>,
 }
 
 impl CellAccum {
@@ -352,6 +356,7 @@ impl CellAccum {
         let style_index = attr(e, b"s")?
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(0);
+        let cm = attr(e, b"cm")?.and_then(|s| s.parse::<u32>().ok());
         Ok(CellAccum {
             row,
             col,
@@ -363,6 +368,7 @@ impl CellAccum {
             f_shared_si: None,
             f_is_shared_master: false,
             array_area: None,
+            cm,
         })
     }
 }
@@ -409,6 +415,7 @@ fn push_cell(
         col: acc.col,
         value,
         array_area: acc.array_area.filter(|_| formula.is_some()),
+        cm: acc.cm,
         formula,
         style_index: acc.style_index,
     });

@@ -114,3 +114,24 @@
   tests:
     rust: ["sheet-conformance/tests/xlsx_roundtrip.rs::sheet_xlsx_writer_valid_strict"]
     corpus: ["corpus/xlsx-corpus/03-styles.xlsx"]
+
+- id: sheet.xlsx.writer.spill-error-cache
+  title: A cached #SPILL! is written as #VALUE!, as Excel caches it
+  status: implemented
+  ruling: "Excel accepts only the legacy error codes in a cell's <v> and refuses to open a worksheet caching #SPILL!; it caches a blocked spill as #VALUE! (the detail rides a rich value Paged does not write). The anchor recomputes #SPILL! on load."
+  provenance: ["Excel 16 output (corpus/xlsx-dynamic, cell S1)", "Excel 16 refusing a workbook whose <v> holds #SPILL!"]
+  tests:
+    rust: ["sheet-conformance/tests/spill_roundtrip.rs::spill_anchors_are_written_as_excel_dynamic_arrays"]
+
+- id: sheet.xlsx.writer.root-namespaces
+  title: A re-encoded worksheet keeps its root element's namespace declarations
+  tier: round-trips
+  status: implemented
+  # The captured children re-emitted verbatim use the prefixes the root
+  # declares (Excel's <sheetFormatPr x14ac:dyDescent=…>). The re-encode used
+  # to write a fixed root, leaving the prefix undeclared: Excel refused to
+  # open any Excel workbook Paged had edited.
+  provenance: ["XML Namespaces 1.0", "Excel 16 refusing the undeclared prefix"]
+  tests:
+    rust: ["sheet-conformance/tests/spill_roundtrip.rs::a_re_encoded_excel_worksheet_keeps_its_namespace_declarations"]
+    corpus: ["corpus/xlsx-dynamic/dynamic-arrays.excel.xlsx"]

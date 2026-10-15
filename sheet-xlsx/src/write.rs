@@ -62,6 +62,25 @@ use std::io::Write;
 /// The `calcChain.xml` part name (always dropped).
 const CALC_CHAIN_PART: &str = "xl/calcChain.xml";
 
+/// The dynamic-array formulas of a save: `anchors` maps each anchor
+/// `(sheet, row, col)` to its area `(rows, cols)`; `cm` is the cell-metadata
+/// value that marks a formula dynamic (`None` when the package has no such
+/// record — the anchors are then written as plain array formulas).
+pub struct DynamicArrays<'a> {
+    pub cm: Option<u32>,
+    pub anchors: &'a BTreeMap<(SheetId, u32, u32), (u32, u32)>,
+}
+
+/// How one formula cell is stored.
+#[derive(Clone, Copy)]
+enum ArrayForm {
+    /// A plain `<f>`.
+    None,
+    /// `<f t="array" ref=…>` over `(rows, cols)`, with `cm=` when the
+    /// formula is a dynamic array.
+    Array { area: (u32, u32), cm: Option<u32> },
+}
+
 /// Serialize the document to XLSX bytes.
 ///
 /// `bindings` maps each worksheet's part name + SheetId so dirty sheets can
@@ -74,6 +93,7 @@ pub fn save(
     bindings: &[SheetBinding],
     formula_texts: &BTreeMap<(SheetId, u32, u32), String>,
     overrides: &BTreeMap<String, Vec<u8>>,
+    dynamic: &DynamicArrays<'_>,
 ) -> Result<Vec<u8>, XlsxError> {
     let drop_calc_chain = container.part(CALC_CHAIN_PART).is_some();
 
@@ -143,7 +163,13 @@ pub fn save(
                                     "dirty worksheet {name} has no binding"
                                 ))
                             })?;
-                            Cow::Owned(encode_worksheet(model, binding, formula_texts)?)
+                            Cow::Owned(encode_worksheet(
+                                model,
+                                binding,
+                                raw,
+                                formula_texts,
+                                dynamic,
+                            )?)
                         } else {
                             Cow::Borrowed(raw)
                         }
@@ -234,7 +260,9 @@ fn strip_calc_chain_rel(raw: &[u8]) -> Result<Vec<u8>, XlsxError> {
 fn encode_worksheet(
     model: &SheetModel,
     binding: &SheetBinding,
+    original: &[u8],
     formula_texts: &BTreeMap<(SheetId, u32, u32), String>,
+    dynamic: &DynamicArrays<'_>,
 ) -> Result<Vec<u8>, XlsxError> {
     let ws = model
         .sheet(binding.sheet_id)
@@ -244,9 +272,18 @@ fn encode_worksheet(
     let mut s = String::new();
     s.push_str(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#);
     s.push('\n');
-    s.push_str(
-        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
-    );
+    // The part's own root attributes: the captured subtrees re-emitted below
+    // use the prefixes it declares (Excel's `<sheetFormatPr
+    // x14ac:dyDescent=…>`), and a worksheet with an undeclared prefix is not
+    // XML — Excel refuses to open the workbook.
+    let mut root = root_attrs(original)?;
+    if !root.iter().any(|(k, _)| k == "xmlns") {
+        root.insert(0, ("xmlns".into(), NS_MAIN.into()));
+    }
+    if !root.iter().any(|(k, _)| k == "xmlns:r") {
+        root.push(("xmlns:r".into(), NS_REL.into()));
+    }
+    s.push_str(&crate::splice::render_tag("worksheet", &root, false));
 
     // Captured children that sit before <sheetData>, in schema order around
     // the modelled ones (ECMA-376 §18.3.1.99): `sheetPr` precedes
@@ -316,8 +353,19 @@ fn encode_worksheet(
             None => s.push_str(&format!(r#"<row r="{r1}"{hidden}>"#)),
         }
         for (c, cell) in cells {
-            let area = ws.array_formulas.get(&(r, *c)).copied();
-            encode_cell(&mut s, sid, r, *c, cell, formula_texts, area);
+            // A dynamic array (Excel's spilled formula) first, then a legacy
+            // CSE array; anything else is a plain formula.
+            let form = match dynamic.anchors.get(&(sid, r, *c)) {
+                Some(&area) => ArrayForm::Array {
+                    area,
+                    cm: dynamic.cm,
+                },
+                None => match ws.array_formulas.get(&(r, *c)) {
+                    Some(&area) => ArrayForm::Array { area, cm: None },
+                    None => ArrayForm::None,
+                },
+            };
+            encode_cell(&mut s, sid, r, *c, cell, formula_texts, form);
         }
         s.push_str("</row>");
     }
@@ -353,6 +401,38 @@ fn encode_worksheet(
 
     s.push_str("</worksheet>");
     Ok(s.into_bytes())
+}
+
+/// The SpreadsheetML main namespace.
+const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+/// The relationships namespace (`r:id`).
+const NS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/// The attributes of a part's root element (namespace declarations
+/// included), values unescaped.
+fn root_attrs(xml: &[u8]) -> Result<Vec<(String, String)>, XlsxError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
+                let mut out = Vec::new();
+                for a in e.attributes() {
+                    let a = a?;
+                    out.push((
+                        String::from_utf8_lossy(a.key.as_ref()).into_owned(),
+                        a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                            .map_err(XlsxError::Xml)?
+                            .into_owned(),
+                    ));
+                }
+                return Ok(out);
+            }
+            quick_xml::events::Event::Eof => return Ok(Vec::new()),
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 /// The `<worksheet>` children that sit between `<sheetData>` and
@@ -392,7 +472,7 @@ fn encode_cell(
     col: u32,
     cell: &sheet_core::Cell,
     formula_texts: &BTreeMap<(SheetId, u32, u32), String>,
-    array_area: Option<(u32, u32)>,
+    form: ArrayForm,
 ) {
     let r = format!("{}{}", col_to_a1(col), row + 1);
     // Style index: StyleId(0) is default — omit s= for it.
@@ -414,7 +494,7 @@ fn encode_cell(
         ),
         CellValue::Error(e) => (
             r#" t="e""#.to_owned(),
-            format!("<v>{}</v>", xml_text(e.as_str())),
+            format!("<v>{}</v>", xml_text(stored_error(*e))),
         ),
         CellValue::Text(t) => {
             // Formula cells with text results use t="str"; literal text uses
@@ -430,17 +510,33 @@ fn encode_cell(
         }
     };
 
-    let formula_xml = match (formula, array_area) {
-        // A legacy array formula keeps its type and area (`t="array"`).
-        (Some(f), Some((rows, cols))) => {
-            let end = format!(
-                "{}{}",
-                col_to_a1(col + cols.saturating_sub(1)),
-                row + rows.max(1)
-            );
-            format!(r#"<f t="array" ref="{r}:{end}">{}</f>"#, xml_text(f))
+    let mut cm_attr = String::new();
+    let formula_xml = match (formula, form) {
+        // An array formula keeps its type and area (`t="array"`); a dynamic
+        // one (a spill) also points at the dynamic-array cell metadata.
+        (
+            Some(f),
+            ArrayForm::Array {
+                area: (rows, cols),
+                cm,
+            },
+        ) => {
+            let (rows, cols) = (rows.max(1), cols.max(1));
+            let area = if (rows, cols) == (1, 1) {
+                r.clone()
+            } else {
+                format!(
+                    "{r}:{}{}",
+                    col_to_a1(col.saturating_add(cols - 1)),
+                    row.saturating_add(rows)
+                )
+            };
+            if let Some(cm) = cm {
+                cm_attr = format!(r#" cm="{cm}""#);
+            }
+            format!(r#"<f t="array" ref="{area}">{}</f>"#, xml_text(f))
         }
-        (Some(f), None) => format!("<f>{}</f>", xml_text(f)),
+        (Some(f), ArrayForm::None) => format!("<f>{}</f>", xml_text(f)),
         (None, _) => String::new(),
     };
 
@@ -449,8 +545,19 @@ fn encode_cell(
         s.push_str(&format!(r#"<c r="{r}"{style_attr}{type_attr}/>"#));
     } else {
         s.push_str(&format!(
-            r#"<c r="{r}"{style_attr}{type_attr}>{formula_xml}{inner}</c>"#
+            r#"<c r="{r}"{style_attr}{type_attr}{cm_attr}>{formula_xml}{inner}</c>"#
         ));
+    }
+}
+
+/// The `<v>` of an error cell. Excel accepts only the legacy error codes
+/// there and refuses to open a worksheet that caches `#SPILL!`; it caches a
+/// blocked spill as `#VALUE!` itself (the real error rides a rich value Paged
+/// does not write). The anchor's formula recomputes `#SPILL!` on load.
+fn stored_error(e: sheet_core::value::CellError) -> &'static str {
+    match e {
+        sheet_core::value::CellError::Spill => "#VALUE!",
+        e => e.as_str(),
     }
 }
 

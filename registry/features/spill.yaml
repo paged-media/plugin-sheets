@@ -46,3 +46,39 @@
   provenance: ["spec §6.4, §6.2 recalc"]
   tests:
     rust: ["sheet-conformance/tests/spill.rs::sheet_calc_spill_blocked_recalc"]
+
+- id: sheet.calc.spill.xlsx-dynamic-array
+  title: A spill is saved the way Excel saves a dynamic array and reloads as a live spill
+  status: implemented
+  # The anchor is an array formula over the spill area whose cell names the
+  # XLDAPR cell metadata (`<c cm="1"><f t="array" ref="A8:A31">`, plus
+  # xl/metadata.xml); the other cells of the area are plain cached values.
+  # On load those cached values are blanked and the engine re-spills, so the
+  # spill is live (its size follows its inputs). Before this row the anchor
+  # was saved as a plain <f> next to its cached values, and every reloaded
+  # anchor read #SPILL!. A dynamic array whose root does not spill in the
+  # engine (`H1:H6*2`) keeps its saved area and is written back dynamic;
+  # a legacy CSE array (no cm) stays CSE.
+  note: "verified against Excel 16: Excel's own file loads and re-saves; Excel opens and keeps our dynamic arrays"
+  provenance: ["ECMA-376 Part 1 (cell metadata, array formulas)", "[MS-XLSX] dynamicArrayProperties", "Excel 16 output (corpus/xlsx-dynamic)"]
+  tests:
+    rust:
+      - "sheet-conformance/tests/spill_roundtrip.rs::typed_spills_survive_save_and_reload"
+      - "sheet-conformance/tests/spill_roundtrip.rs::a_lowered_spill_range_is_identical_after_save_and_reload"
+      - "sheet-conformance/tests/spill_roundtrip.rs::spill_anchors_are_written_as_excel_dynamic_arrays"
+      - "sheet-conformance/tests/spill_roundtrip.rs::excels_own_dynamic_arrays_load_and_round_trip"
+      - "sheet-conformance/tests/spill_roundtrip.rs::a_metadata_part_without_the_dynamic_type_gains_it"
+      - "sheet-conformance/tests/spill_roundtrip.rs::a_legacy_cse_array_stays_a_cse_array"
+    corpus: ["corpus/xlsx-dynamic/dynamic-arrays.excel.xlsx"]
+
+- id: sheet.calc.spill.unmarked-cache
+  title: A spill saved without dynamic-array metadata reads its own cached values back as its spill
+  status: implemented
+  # Files written before sheet.calc.spill.xlsx-dynamic-array (or by a writer
+  # that never stores dynamic arrays) hold the anchor as a plain <f> and the
+  # spilled cells as plain values, which block the spill on load. Excel reads
+  # such a file as a legacy formula next to literal values — the same numbers.
+  ruling: "A blocked spill whose blocking cells hold exactly what it spills there reads them as its cached spill; any other blocker still yields #SPILL!."
+  provenance: ["Excel 16 reading a pre-fix workbook (legacy formula, literal values, no #SPILL!)"]
+  tests:
+    rust: ["sheet-conformance/tests/spill_roundtrip.rs::spills_saved_without_array_metadata_read_back_as_spills"]

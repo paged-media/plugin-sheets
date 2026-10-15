@@ -452,6 +452,153 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+/// Turn the dynamic arrays the file marks (`Worksheet::dynamic_arrays`) whose
+/// formula spills on its own into plain spilling formulas: off the fixed-area
+/// array path, so the engine's spill ledger owns their area. Returns them
+/// (their cached area was already blanked with the other array areas).
+fn live_dynamic_arrays(model: &mut SheetModel) -> BTreeSet<CellRef> {
+    let mut live = BTreeSet::new();
+    for (si, ws) in model.sheets.iter().enumerate() {
+        for &(r, c) in &ws.dynamic_arrays {
+            let spills = ws
+                .cell(r, c)
+                .and_then(|cell| cell.formula)
+                .and_then(|fid| model.formula(fid))
+                .is_some_and(|f| sheet_calc::eval::expr_spills(&f.root));
+            if spills {
+                live.insert(cell_ref(si as SheetId, r, c));
+            }
+        }
+    }
+    for a in &live {
+        if let Some(ws) = model.sheet_mut(a.sheet) {
+            ws.array_formulas.remove(&(a.row, a.col));
+            ws.dynamic_arrays.remove(&(a.row, a.col));
+        }
+    }
+    live
+}
+
+/// A file written before spills were stored as dynamic arrays (or by a writer
+/// that never stores them) holds each spilling formula as a plain `<f>` and
+/// its spilled cells as plain values — which then block the spill on load.
+/// Excel reads such a file as a legacy formula next to literal values (the
+/// same numbers). Here a blocked spill whose blocking cells hold EXACTLY what
+/// it spills there reads those cells as its cached spill: they are cleared
+/// (style kept) and the spill materializes. A cell holding anything else
+/// still blocks. Anchors the file marks dynamic (`file_spills`) were already
+/// given their area and are left alone. Repeats while it frees a spill, so a
+/// spill fed by another (`SUM(A1#)`) settles too.
+fn read_unmarked_spill_caches(engine: &mut Engine, file_spills: &BTreeSet<CellRef>, now: f64) {
+    for _ in 0..8 {
+        let mut cached: Vec<(SheetId, u32, u32, sheet_calc::SetInput)> = Vec::new();
+        let model = engine.model();
+        for anchor in engine.spills().blocked_sorted() {
+            if file_spills.contains(&anchor) {
+                continue;
+            }
+            let Some(ws) = model.sheet(anchor.sheet) else {
+                continue;
+            };
+            if ws.array_formulas.contains_key(&(anchor.row, anchor.col)) {
+                continue;
+            }
+            let Some(f) = ws
+                .cell(anchor.row, anchor.col)
+                .and_then(|c| c.formula)
+                .and_then(|fid| model.formula(fid))
+            else {
+                continue;
+            };
+            let ctx = sheet_calc::eval::ctx_for(model, anchor, now, 0);
+            let sheet_fn::FnResult::Array(grid) =
+                sheet_calc::eval::eval_expr_rich(model, &f.root, &ctx, engine.spills())
+            else {
+                continue;
+            };
+            let mut cells = Vec::new();
+            let matches = grid.into_iter().enumerate().all(|(dr, row)| {
+                row.into_iter().enumerate().all(|(dc, want)| {
+                    if (dr, dc) == (0, 0) {
+                        return true;
+                    }
+                    let (r, c) = (anchor.row + dr as u32, anchor.col + dc as u32);
+                    match ws.cell(r, c) {
+                        None => true,
+                        Some(cell) if cell.formula.is_none() && cell.value == CellValue::Empty => {
+                            true
+                        }
+                        Some(cell) if cell.formula.is_none() => {
+                            // A spilled blank shows (and was saved) as 0.
+                            let want = match want {
+                                CellValue::Empty => CellValue::Number(0.0),
+                                v => v,
+                            };
+                            cells.push((r, c));
+                            cell.value == want
+                        }
+                        Some(_) => false,
+                    }
+                })
+            });
+            if matches {
+                cached.extend(cells.into_iter().map(|(r, c)| {
+                    (
+                        anchor.sheet,
+                        r,
+                        c,
+                        sheet_calc::SetInput::Value(CellValue::Empty),
+                    )
+                }));
+            }
+        }
+        if cached.is_empty() {
+            return;
+        }
+        engine.set_cells(cached);
+    }
+}
+
+/// The area every spilling formula fills now — `(1, 1)` for a blocked or
+/// one-cell spill — keyed by its anchor: what the writer stores as dynamic
+/// arrays. Fixed-area array formulas are the model's own and not listed.
+fn spill_areas(engine: &Engine) -> std::collections::BTreeMap<(SheetId, u32, u32), (u32, u32)> {
+    let model = engine.model();
+    let mut out = std::collections::BTreeMap::new();
+    for (si, ws) in model.sheets.iter().enumerate() {
+        let si = si as SheetId;
+        for (&(r, c), cell) in ws.iter_cells() {
+            if ws.array_formulas.contains_key(&(r, c)) {
+                continue;
+            }
+            let spills = cell
+                .formula
+                .and_then(|fid| model.formula(fid))
+                .is_some_and(|f| sheet_calc::eval::expr_spills(&f.root));
+            if !spills {
+                continue;
+            }
+            let area = engine
+                .spills()
+                .region_of(cell_ref(si, r, c))
+                .map(|rect| (rect.row1 - rect.row0 + 1, rect.col1 - rect.col0 + 1))
+                .unwrap_or((1, 1));
+            out.insert((si, r, c), area);
+        }
+    }
+    out
+}
+
+fn cell_ref(sheet: SheetId, row: u32, col: u32) -> CellRef {
+    CellRef {
+        sheet,
+        row,
+        col,
+        row_abs: false,
+        col_abs: false,
+    }
+}
+
 /// The cached snapshots of referenced external workbooks as read-only
 /// shadow sheets named `[n]Sheet` (sheet_core::SheetModel::external_sheets):
 /// a formula over another workbook (`VLOOKUP(x,[1]Sheet1!$D$1:$I$9,2)`)
@@ -593,7 +740,8 @@ impl SheetSession {
 
         // A legacy array formula fills its area: the other cells of the area
         // carry the file's cached values, which would block the fill — they
-        // become blank (style kept) and the engine writes them.
+        // become blank (style kept) and the engine writes them. The same goes
+        // for Excel's dynamic arrays (the cached spill of `t="array"` + `cm`).
         for ws in &mut model.sheets {
             let areas: Vec<((u32, u32), (u32, u32))> =
                 ws.array_formulas.iter().map(|(k, v)| (*k, *v)).collect();
@@ -616,6 +764,12 @@ impl SheetSession {
             }
         }
 
+        // A dynamic array whose formula spills on its own (`SEQUENCE`,
+        // `FILTER`, …) is a live spill, not a fixed area: its size follows
+        // its inputs and a blocker makes it `#SPILL!`. One whose root does not
+        // spill here (`H1:H6*2`) keeps its saved area.
+        let file_spills = live_dynamic_arrays(&mut model);
+
         // Workbook names whose target is a plain reference become RANGE
         // names (Wave 6) — they loaded as raw text and every formula using
         // one read `#NAME?`.
@@ -623,6 +777,7 @@ impl SheetSession {
 
         let mut engine = Engine::new(model, config);
         engine.recalc_all();
+        read_unmarked_spill_caches(&mut engine, &file_spills, config.now_serial);
 
         Ok(SheetSession {
             engine: Some(engine),
@@ -684,9 +839,13 @@ impl SheetSession {
             self.doc.mark_sheet_dirty(sheet);
         }
 
+        // Every spilling formula is written as Excel writes a dynamic array:
+        // an array formula over its spill area, flagged dynamic. Without the
+        // flag the area's cached values would reload as cells blocking it.
+        let spills = spill_areas(engine);
         let bytes = self
             .doc
-            .save_model(model)
+            .save_model_with_spills(model, &spills)
             .map_err(|e| SessionError(e.to_string()))?;
 
         // The edits are now persisted in the bytes — clear the pending set so
