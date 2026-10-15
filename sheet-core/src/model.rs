@@ -192,12 +192,14 @@ pub struct Worksheet {
     /// anchor `(row, col)` -> the area's `(rows, cols)`. The anchor's formula
     /// is evaluated element-wise and fills exactly that area (additive).
     pub array_formulas: BTreeMap<(u32, u32), (u32, u32)>,
-    /// The anchors in [`array_formulas`](Self::array_formulas) that the
-    /// workbook stores as DYNAMIC-array formulas (`<c cm=…>` naming the
-    /// `XLDAPR` cell metadata) rather than legacy CSE ones. They fill their
-    /// saved area the same way, and are written back as dynamic arrays so
-    /// Excel keeps spilling them (additive). A formula whose own root spills
-    /// is not here: it spills through the engine's ledger instead.
+    /// The anchors the workbook stores as DYNAMIC-array formulas (`<c cm=…>`
+    /// naming the `XLDAPR` cell metadata) rather than legacy CSE ones
+    /// (additive). The XLSX reader also lists them in
+    /// [`array_formulas`](Self::array_formulas) with their saved area; a
+    /// session that spills them takes them out of it, and the engine then
+    /// evaluates such an anchor as an array and spills its natural size,
+    /// whatever its root (`H1:H6*2`). They are written back as dynamic
+    /// arrays.
     pub dynamic_arrays: std::collections::BTreeSet<(u32, u32)>,
 }
 

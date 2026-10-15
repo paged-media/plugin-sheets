@@ -452,28 +452,38 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
-/// Turn the dynamic arrays the file marks (`Worksheet::dynamic_arrays`) whose
-/// formula spills on its own into plain spilling formulas: off the fixed-area
-/// array path, so the engine's spill ledger owns their area. Returns them
-/// (their cached area was already blanked with the other array areas).
+/// Take the parsed dynamic arrays the file marks (`Worksheet::dynamic_arrays`)
+/// off the fixed-area array path, so they spill: their size follows their
+/// inputs and a blocker makes them `#SPILL!`. One whose formula spills by
+/// itself (`SEQUENCE`, `FILTER`, …) becomes a plain spilling formula; one that
+/// does not (`H1:H6*2`) keeps its mark, which makes the engine evaluate it as
+/// an array. Returns them all (their cached area was already blanked with
+/// the other array areas). An unparsed formula keeps its saved area.
 fn live_dynamic_arrays(model: &mut SheetModel) -> BTreeSet<CellRef> {
     let mut live = BTreeSet::new();
+    let mut plain = BTreeSet::new();
     for (si, ws) in model.sheets.iter().enumerate() {
         for &(r, c) in &ws.dynamic_arrays {
-            let spills = ws
+            let Some(f) = ws
                 .cell(r, c)
                 .and_then(|cell| cell.formula)
                 .and_then(|fid| model.formula(fid))
-                .is_some_and(|f| sheet_calc::eval::expr_spills(&f.root));
-            if spills {
-                live.insert(cell_ref(si as SheetId, r, c));
+            else {
+                continue;
+            };
+            let a = cell_ref(si as SheetId, r, c);
+            live.insert(a);
+            if sheet_calc::eval::expr_spills(&f.root) {
+                plain.insert(a);
             }
         }
     }
     for a in &live {
         if let Some(ws) = model.sheet_mut(a.sheet) {
             ws.array_formulas.remove(&(a.row, a.col));
-            ws.dynamic_arrays.remove(&(a.row, a.col));
+            if plain.contains(a) {
+                ws.dynamic_arrays.remove(&(a.row, a.col));
+            }
         }
     }
     live
@@ -571,10 +581,11 @@ fn spill_areas(engine: &Engine) -> std::collections::BTreeMap<(SheetId, u32, u32
             if ws.array_formulas.contains_key(&(r, c)) {
                 continue;
             }
-            let spills = cell
-                .formula
-                .and_then(|fid| model.formula(fid))
-                .is_some_and(|f| sheet_calc::eval::expr_spills(&f.root));
+            let spills = ws.dynamic_arrays.contains(&(r, c))
+                || cell
+                    .formula
+                    .and_then(|fid| model.formula(fid))
+                    .is_some_and(|f| sheet_calc::eval::expr_spills(&f.root));
             if !spills {
                 continue;
             }
@@ -764,10 +775,8 @@ impl SheetSession {
             }
         }
 
-        // A dynamic array whose formula spills on its own (`SEQUENCE`,
-        // `FILTER`, …) is a live spill, not a fixed area: its size follows
-        // its inputs and a blocker makes it `#SPILL!`. One whose root does not
-        // spill here (`H1:H6*2`) keeps its saved area.
+        // Excel's dynamic arrays are live spills, not fixed areas: their size
+        // follows their inputs and a blocker makes them `#SPILL!`.
         let file_spills = live_dynamic_arrays(&mut model);
 
         // Workbook names whose target is a plain reference become RANGE

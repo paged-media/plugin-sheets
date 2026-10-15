@@ -88,3 +88,20 @@ is declared frozen for `sheet-js` (`sheet-calc/src/lib.rs:44`). Limits of the co
   — the rule this scheduler was written under; the tests that rely on determinism
 - [ADR 317](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/317-registry-driven-dispatch.md)
   — the registry whose `returns_array` and `volatility` columns drive spill and reseeding
+
+## Amendment — 2026-10-15
+
+The decision stands. Two spill rules changed to what Excel 16 answers (recorded in
+`corpus/xlsx-dynamic/spill-ref.excel.xlsx`):
+
+- **The spill-range operator.** `X#` names the area of a live spill (or of a legacy array
+  formula); over any other formula cell it names that cell; over an empty cell or a constant it
+  names nothing and is `#REF!` in every use, with `ISREF` FALSE (`spill_ref_target` in
+  `sheet-calc/src/eval.rs`). An empty anchor used to read as 0. A bare `=X#` is a spilling root.
+- **Dynamic arrays read from a workbook spill whatever their root.** A formula Excel stores as a
+  dynamic array (`Worksheet::dynamic_arrays`) is evaluated as an array and spills its natural
+  size, so `H1:H6*2` from a workbook spills. A formula typed in Paged still spills only when its
+  root is a `returns_array` call, an array literal, a call or a spill reference.
+
+Tests: `sheet-conformance/tests/spill_ref.rs`, `sheet-conformance/tests/spill.rs`.
+

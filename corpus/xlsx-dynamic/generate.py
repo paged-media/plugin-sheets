@@ -2,25 +2,32 @@
 # Dynamic-array fixture: what Excel itself writes for a spilled formula.
 #
 #   python3 corpus/xlsx-dynamic/generate.py
-#       writes dynamic-arrays.xlsx — the INPUT: every formula a dynamic-array
-#       formula (cm="1" + the XLDAPR metadata part), no cached values,
-#       fullCalcOnLoad. stdlib only, byte-stable.
+#       writes the INPUTS dynamic-arrays.xlsx and spill-ref.xlsx: every
+#       formula a dynamic-array formula (cm="1" + the XLDAPR metadata part)
+#       unless noted, no cached values, fullCalcOnLoad. stdlib only,
+#       byte-stable.
 #
-#   PAGED_ORACLE_BUILD=<dir> sheet-conformance/oracle/excel/drive.sh dynamic-arrays
-#       (maintainer, macOS + Excel 16, with the input copied into <dir>)
-#       lets Excel compute and save it as <dir>/dynamic-arrays.excel.xlsx.
+#   PAGED_ORACLE_BUILD=<dir> sheet-conformance/oracle/excel/drive.sh dynamic-arrays spill-ref
+#       (maintainer, macOS + Excel 16, with the inputs copied into <dir>)
+#       lets Excel compute and save each as <dir>/<name>.excel.xlsx.
 #
-#   python3 corpus/xlsx-dynamic/generate.py --scrub <dir>/dynamic-arrays.excel.xlsx
-#       copies Excel's save here as dynamic-arrays.excel.xlsx with the two
+#   python3 corpus/xlsx-dynamic/generate.py --scrub <dir>/<name>.excel.xlsx
+#       copies Excel's save here under the same name with the two
 #       machine-specific values blanked (docProps/core.xml lastModifiedBy and
 #       the workbook's x15ac:absPath). Every other part stays byte-for-byte
 #       what Excel wrote.
 #
-# The cells: the three SEQUENCE anchors of a 24-row day-book, a 4-row
+# dynamic-arrays: the three SEQUENCE anchors of a 24-row day-book, a 4-row
 # SEQUENCE, SORT / UNIQUE / FILTER / TRANSPOSE over a small source block,
 # two dynamic arrays whose root is not a function call (H1:H6*2, H1:H3), a
 # blocked spill (S2 holds a value), a one-cell array, the spill-range
 # operator (SUM(A8#)) and a 2-D SEQUENCE.
+#
+# spill-ref: the spill-range operator X# over every kind of cell X — empty
+# (L1), a constant (A1), a plain formula (B1), a one-cell spill (C1), a
+# blocked spill (D1), live spills (E1, F1) and a legacy CSE array (K1) —
+# through SUM, ROWS, COLUMNS, INDEX, LET, +0 and ISREF (column O, labelled
+# in column N), and bare (=X#, row 2 of columns Q, U, Y, AC, AG, AK, AO, AS).
 
 import os
 import re
@@ -72,7 +79,7 @@ def col_num(letters):
     return n
 
 
-def sheet_xml():
+def sheet_xml(build):
     cells = {}
 
     def put(addr, xml):
@@ -90,6 +97,19 @@ def sheet_xml():
     def dyn(addr, f):
         put(addr, f'<c r="{addr}" cm="1"><f t="array" ref="{addr}">{escape(f)}</f></c>')
 
+    build(put, num, text, dyn)
+
+    rows = {}
+    for (r, _), xml in sorted(cells.items()):
+        rows.setdefault(r, []).append(xml)
+    data = "".join(f'<row r="{r}">{"".join(x)}</row>' for r, x in sorted(rows.items()))
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<worksheet xmlns="{NS}" xmlns:r="{RNS}"><sheetData>{data}</sheetData></worksheet>\n'
+    )
+
+
+def dynamic_arrays(put, num, text, dyn):
     for i, (g, h) in enumerate(zip("bacabd", [5, 2, 8, 1, 9, 4]), start=1):
         text(f"G{i}", g)
         num(f"H{i}", h)
@@ -110,14 +130,40 @@ def sheet_xml():
     dyn("Y1", "_xlfn.SEQUENCE(2,3)")
     put("U3", '<c r="U3"><f>SUM(H1:H6)</f></c>')
 
-    rows = {}
-    for (r, _), xml in sorted(cells.items()):
-        rows.setdefault(r, []).append(xml)
-    data = "".join(f'<row r="{r}">{"".join(x)}</row>' for r, x in sorted(rows.items()))
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f'<worksheet xmlns="{NS}" xmlns:r="{RNS}"><sheetData>{data}</sheetData></worksheet>\n'
-    )
+
+def spill_ref(put, num, text, dyn):
+    anchor = "_xlfn.ANCHORARRAY"
+    num("A1", 5)
+    put("B1", '<c r="B1"><f>1+1</f></c>')
+    dyn("C1", "_xlfn.SEQUENCE(1)")
+    dyn("D1", "_xlfn.SEQUENCE(3)")
+    text("D2", "x")
+    dyn("E1", "_xlfn.SEQUENCE(4)")
+    dyn("F1", "_xlfn.SEQUENCE(2,3)")
+    for r, v in enumerate([1, 2, 3], start=1):
+        num(f"J{r}", v)
+    put("K1", '<c r="K1"><f t="array" ref="K1:K3">J1:J3*10</f></c>')
+    row = 1
+    for src in ["L1", "A1", "B1", "C1", "D1", "E1", "F1", "K1"]:
+        a = f"{anchor}({src})"
+        for label, f in [
+            (f"SUM({src}#)", f"SUM({a})"),
+            (f"ROWS({src}#)", f"ROWS({a})"),
+            (f"COLUMNS({src}#)", f"COLUMNS({a})"),
+            (f"INDEX({src}#,1)", f"INDEX({a},1)"),
+            (f"LET(x,{src}#,SUM(x))", f"_xlfn.LET(_xlpm.x,{a},SUM(_xlpm.x))"),
+            (f"{src}#+0", f"{a}+0"),
+            (f"ISREF({src}#)", f"ISREF({a})"),
+        ]:
+            text(f"N{row}", label)
+            dyn(f"O{row}", f)
+            row += 1
+    for src, col in zip(
+        ["L1", "A1", "B1", "C1", "D1", "E1", "F1", "K1"],
+        ["Q", "U", "Y", "AC", "AG", "AK", "AO", "AS"],
+    ):
+        text(f"{col}1", f"={src}#")
+        dyn(f"{col}2", f"{anchor}({src})")
 
 
 def write_zip(path, members):
@@ -129,23 +175,24 @@ def write_zip(path, members):
 
 
 def generate():
-    out = os.path.join(HERE, "dynamic-arrays.xlsx")
-    write_zip(
-        out,
-        [
-            ("[Content_Types].xml", CT),
-            ("_rels/.rels", ROOT_RELS),
-            ("xl/workbook.xml", WB),
-            ("xl/_rels/workbook.xml.rels", WB_RELS),
-            ("xl/worksheets/sheet1.xml", sheet_xml()),
-            ("xl/metadata.xml", METADATA),
-        ],
-    )
-    print("wrote", out)
+    for name, build in [("dynamic-arrays", dynamic_arrays), ("spill-ref", spill_ref)]:
+        out = os.path.join(HERE, f"{name}.xlsx")
+        write_zip(
+            out,
+            [
+                ("[Content_Types].xml", CT),
+                ("_rels/.rels", ROOT_RELS),
+                ("xl/workbook.xml", WB),
+                ("xl/_rels/workbook.xml.rels", WB_RELS),
+                ("xl/worksheets/sheet1.xml", sheet_xml(build)),
+                ("xl/metadata.xml", METADATA),
+            ],
+        )
+        print("wrote", out)
 
 
 def scrub(src):
-    out = os.path.join(HERE, "dynamic-arrays.excel.xlsx")
+    out = os.path.join(HERE, os.path.basename(src))
     members = []
     with zipfile.ZipFile(src) as z:
         for info in z.infolist():
