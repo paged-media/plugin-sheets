@@ -63,7 +63,11 @@ and what changed against it, is in [`design/analysis-2026-10-04.md`](design/anal
   chart colours; the Character and Paragraph panels show the selected cells' type, read-only.
 - **Datasets.** A panel lists the datasets the host offers and fills a new workbook from one.
 - **Export.** An `.xlsx` exporter. Parts the session did not touch are written back with their
-  original bytes, including pivot caches, macros and other parts never interpreted.
+  original bytes, including pivot caches, macros and other parts never interpreted. A spilled
+  formula is stored the way Excel stores a dynamic array (an array formula over its spill range,
+  flagged by the `XLDAPR` cell metadata) and reloads as a live spill; Excel's own dynamic arrays
+  load the same way. A workbook saved before that (each anchor a plain formula next to its
+  spilled values) reads those values back as the spill when they match.
 
 - **Object model (ADR 323; on the `om/object-model` branch, needs plugin-api 0.2.43).** Seven
   kinds under `plugin:media.paged.sheet/…`: `workbook/main`, `sheet/<name>`,

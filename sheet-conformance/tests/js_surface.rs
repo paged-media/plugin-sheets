@@ -1062,8 +1062,12 @@ fn sheet_js_save_xlsx_future_function_prefixes() {
         sheet.contains("<f>_xlfn.XLOOKUP(10,A1:A2,A1:A2)</f>"),
         "{sheet}"
     );
+    // LET may return an array, so it is stored as a dynamic array (here
+    // over its own cell, the result being one value).
     assert!(
-        sheet.contains("<f>_xlfn.LET(_xlpm.x,A1,_xlpm.x*2)</f>"),
+        sheet.contains(
+            r#"<c r="E2" cm="1"><f t="array" ref="E2">_xlfn.LET(_xlpm.x,A1,_xlpm.x*2)</f>"#
+        ),
         "{sheet}"
     );
     assert!(

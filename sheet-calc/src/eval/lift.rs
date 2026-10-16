@@ -52,8 +52,8 @@ use sheet_fn::{Arg, EvalCtx, FnResult};
 
 use super::{
     binary_values, build_args, deref_name, eval, eval_array_literal, eval_func_rich,
-    name_range_target, plan_args, resolve_structured_ref, spill_rect_to_range, spill_ref_range,
-    unary_value, with_name_depth, ArgPlan,
+    name_range_target, plan_args, resolve_structured_ref, spill_ref_target, unary_value,
+    with_name_depth, ArgPlan,
 };
 use crate::argview;
 use crate::spill::SpillState;
@@ -171,9 +171,9 @@ pub fn eval_array(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillSta
             Ok(r) => range_block(model, r),
             Err(err) => FnResult::Scalar(CellValue::Error(err)),
         },
-        Expr::SpillRef(inner) => match spill_ref_range(spills, inner) {
-            Some(rect) => range_block(model, spill_rect_to_range(rect)),
-            None => FnResult::Scalar(eval(model, e, ctx, spills)),
+        Expr::SpillRef(inner) => match spill_ref_target(model, spills, inner) {
+            Some(r) => range_block(model, r),
+            None => FnResult::Scalar(CellValue::Error(CellError::Ref)),
         },
         Expr::Name(nid) => match name_range_target(model, *nid) {
             Some(r) => range_block(model, r),

@@ -380,6 +380,7 @@ impl Engine {
         self.dirty.forget(cref);
         if let Some(ws) = self.model.sheet_mut(sheet) {
             ws.array_formulas.remove(&(row, col));
+            ws.dynamic_arrays.remove(&(row, col));
         }
 
         match input {
@@ -719,6 +720,10 @@ impl Engine {
         if let Some((rows, cols)) = self.array_area(cref) {
             return rows * cols > 1;
         }
+        // A dynamic array from a workbook spills whatever its root is.
+        if ws.dynamic_arrays.contains(&(cref.row, cref.col)) {
+            return true;
+        }
         self.model
             .formula(fid)
             .map(|f| eval::expr_spills(&f.root))
@@ -770,6 +775,11 @@ impl Engine {
         if let Some((rows, cols)) = self.array_area(cref) {
             let r = eval::eval_array(&self.model, &f.root, &ctx, &self.spills);
             return shown_result(FnResult::Array(fit_to_area(r, rows, cols)));
+        }
+        // A dynamic array (`H1:H6*2` stored with the dynamic-array marker)
+        // evaluates as an array and spills its natural size, as in Excel.
+        if ws.dynamic_arrays.contains(&(cref.row, cref.col)) {
+            return shown_result(eval::eval_array(&self.model, &f.root, &ctx, &self.spills));
         }
         shown_result(eval::eval_expr_rich(
             &self.model,
@@ -1013,6 +1023,18 @@ impl Engine {
                     (row, nc)
                 };
                 ws.array_formulas.insert(key, area);
+            }
+        }
+        // …and the dynamic-array marks with them.
+        let old_dynamic = std::mem::take(&mut ws.dynamic_arrays);
+        for (row, col) in old_dynamic {
+            let coord = if axis == EditAxis::Row { row } else { col };
+            if let Some(nc) = shift_coord(coord, kind, at, n) {
+                ws.dynamic_arrays.insert(if axis == EditAxis::Row {
+                    (nc, col)
+                } else {
+                    (row, nc)
+                });
             }
         }
 

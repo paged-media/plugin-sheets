@@ -88,3 +88,28 @@ Comments that the code contradicts:
 - [ADR 506](506-workbook-in-a-container-part.md) — where the workbook bytes are stored
 - [ADR 017](https://github.com/paged-media/plugin-sdk/blob/main/docs/adr/017-importer-exporter-door-shape.md)
   — the importer and exporter doors that carry the bytes
+
+## Amendment — 2026-10-15
+
+The decision stands. Three things a re-encoded worksheet writes changed.
+
+- **Spilled formulas are written as Excel writes a dynamic array.** The anchor is
+  `<c cm="N"><f t="array" ref="…">` over its current spill area, `N` naming the `XLDAPR`
+  record of `xl/metadata.xml`; the rest of the area stays plain cached values. The writer
+  takes the areas from the engine's spill ledger (`XlsxDocument::save_model_with_spills`).
+  Before, the anchor was a plain `<f>` and the reloaded cached values blocked the spill: every
+  anchor read `#SPILL!`. The metadata part is written only when a re-encoded sheet needs it:
+  added whole when the package has none, otherwise one record is appended and every index
+  already in use keeps its meaning. A zero-edit save still writes nothing new.
+- **The worksheet root keeps the attributes it was read with**, namespace declarations
+  included. The captured children use them (Excel's `x14ac:dyDescent`); the fixed root the
+  writer used to emit left them undeclared, and Excel would not open the result.
+- **A cached `#SPILL!` is written as `#VALUE!`**, as Excel caches it; Excel refuses a
+  worksheet whose `<v>` holds `#SPILL!`. The anchor recomputes `#SPILL!` on load.
+
+`cm` is the one per-cell attribute a re-encode now regenerates; the others named under
+Consequences are still dropped. Evidence: `sheet-xlsx/src/parts/metadata.rs`,
+`sheet-xlsx/src/write.rs` (`ArrayForm`, `root_attrs`, `stored_error`),
+`sheet-js/src/core.rs` (`spill_areas`, `live_dynamic_arrays`, `read_unmarked_spill_caches`),
+`sheet-conformance/tests/spill_roundtrip.rs` and the Excel-saved
+`corpus/xlsx-dynamic/dynamic-arrays.excel.xlsx`.

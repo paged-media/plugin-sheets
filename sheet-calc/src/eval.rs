@@ -101,6 +101,8 @@ pub fn eval_expr_rich(
         Expr::Func(fid, args) => eval_func_rich(model, *fid, args, ctx, spills),
         Expr::Array(rows) => eval_array_literal(model, rows, ctx, spills),
         Expr::Call(callee, args) => lambda::eval_call(model, callee, args, ctx, spills),
+        // A bare `=A1#` is the area itself, which spills.
+        Expr::SpillRef(_) => lift::eval_array(model, expr, ctx, spills),
         // Not a spilling root — fall back to the scalar evaluation.
         other => FnResult::Scalar(eval(model, other, ctx, spills)),
     }
@@ -116,6 +118,8 @@ pub fn expr_spills(expr: &Expr) -> bool {
         Expr::Array(_) => true,
         // A lambda call may return a block (`LAMBDA(n, SEQUENCE(n))(3)`).
         Expr::Call(_, _) => true,
+        // A bare spill reference `=A1#` spills the area it names.
+        Expr::SpillRef(_) => true,
         _ => false,
     }
 }
@@ -153,25 +157,19 @@ fn eval(model: &SheetModel, e: &Expr, ctx: &EvalCtx, spills: &SpillState) -> Cel
     }
 }
 
-/// A `SpillRef` in scalar position: it denotes the anchor's whole spill region,
-/// which is a RANGE, not a scalar. Excel yields `#VALUE!` for a spill-range
-/// reference used where a single value is expected, EXCEPT that the bare anchor
-/// READ is the anchor's stored value. We resolve the inner expression's anchor
-/// cell: if it is a live spill anchor whose region is more than 1×1, scalar use
-/// is `#VALUE!`; a 1×1 (or non-anchor) read yields the cell's value.
+/// A `SpillRef` in scalar position. It names an AREA ([`spill_ref_target`]):
+/// a multi-cell area where one value is expected is `#VALUE!`, a one-cell
+/// area reads that cell, and a cell that names no area is `#REF!`.
 fn eval_spill_ref_scalar(
     model: &SheetModel,
     inner: &Expr,
     _ctx: &EvalCtx,
     spills: &SpillState,
 ) -> CellValue {
-    let Some(anchor) = spill_anchor_of(inner) else {
-        return CellValue::Error(CellError::Ref);
-    };
-    match spills.region_of(anchor) {
-        Some(rect) if !rect.is_single() => CellValue::Error(CellError::Value),
-        // A 1×1 spill (or no live region) reads the anchor cell's value.
-        _ => argview::cell_value(model, anchor),
+    match spill_ref_target(model, spills, inner) {
+        None => CellValue::Error(CellError::Ref),
+        Some(r) if r.rows() > 1 || r.cols() > 1 => CellValue::Error(CellError::Value),
+        Some(r) => argview::cell_value(model, r.start),
     }
 }
 
@@ -707,15 +705,15 @@ fn plan_args<'m>(
                 }
                 None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
             },
-            // A spill reference `A1#` materializes the WHOLE live spill region
-            // as a range argument (`sheet.calc.spill.ref-operator`). With no
-            // live region the anchor read degrades to its scalar value.
-            Expr::SpillRef(inner) => match spill_ref_range(spills, inner) {
-                Some(rect) => {
-                    bufs.push(materialize(model, spill_rect_to_range(rect)));
+            // A spill reference `A1#` materializes the area it names as a range
+            // argument (`sheet.calc.spill.ref-operator`); one that names no
+            // area is the scalar `#REF!`.
+            Expr::SpillRef(inner) => match spill_ref_target(model, spills, inner) {
+                Some(r) => {
+                    bufs.push(materialize(model, r));
                     plans.push(ArgPlan::BufAt(bufs.len() - 1));
                 }
-                None => plans.push(ArgPlan::Scalar(eval(model, arg, ctx, spills))),
+                None => plans.push(ArgPlan::Scalar(CellValue::Error(CellError::Ref))),
             },
             // A structured (table) reference materializes its resolved area as a
             // range argument (spec §6.4): `SUM(Table1[Amount])` resolves the
@@ -931,11 +929,35 @@ fn eval_func_rich(
     sheet_fn::dispatch_rich(fid, &built, ctx)
 }
 
-/// The live spill region a `SpillRef`'s inner anchor owns, if any (only a bare
-/// cell ref is a valid anchor in T1).
-fn spill_ref_range(spills: &SpillState, inner: &Expr) -> Option<crate::spill::SpillRect> {
+/// The area a spill reference `X#` names, as Excel answers it
+/// (`sheet.calc.spill.ref-operator`, recorded from Excel 16 in
+/// `corpus/xlsx-dynamic/spill-ref.excel.xlsx`):
+///
+/// - a live spill (or a legacy array formula's area) — that whole area;
+/// - any other FORMULA cell — a plain formula, a one-cell spill, a blocked
+///   spill — that one cell (`ROWS(X#)` is 1, a blocked spill's `#SPILL!`
+///   reads through);
+/// - an empty cell or a constant — no area (`None`): `#REF!` wherever it is
+///   used, and `ISREF` is FALSE.
+///
+/// Only a bare cell reference is a valid anchor (T1).
+pub(crate) fn spill_ref_target(
+    model: &SheetModel,
+    spills: &SpillState,
+    inner: &Expr,
+) -> Option<RangeRef> {
     let anchor = spill_anchor_of(inner)?;
-    spills.region_of(anchor)
+    if let Some(rect) = spills.region_of(anchor) {
+        return Some(spill_rect_to_range(rect));
+    }
+    let is_formula = model
+        .sheet(anchor.sheet)
+        .and_then(|ws| ws.cell(anchor.row, anchor.col))
+        .is_some_and(|c| c.formula.is_some());
+    is_formula.then_some(RangeRef {
+        start: anchor,
+        end: anchor,
+    })
 }
 
 /// A [`crate::spill::SpillRect`] as a [`RangeRef`] for argument materialization.
@@ -1074,7 +1096,7 @@ fn eval_as_ref(
             with_name_depth(None, || eval_as_ref(model, &inner, ctx, spills))
         }),
         Expr::StructuredRef(s) => resolve_structured_ref(model, s, ctx).ok(),
-        Expr::SpillRef(inner) => spill_ref_range(spills, inner).map(spill_rect_to_range),
+        Expr::SpillRef(inner) => spill_ref_target(model, spills, inner),
         // `a:b` between two references is the bounding box of both
         // (`$AC$15:INDEX($AC$15:$AC$114,n)` — a dynamic range in a name).
         Expr::Binary(BinOp::Range, a, b) => {

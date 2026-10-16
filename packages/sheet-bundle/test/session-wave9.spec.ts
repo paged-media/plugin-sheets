@@ -292,6 +292,36 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
     expect(tables[0].get("1:0")).toBe("unseen");
     expect(tables[0].get("2:1")).toBe("21");
   });
+
+  it("a later session over an unchanged spilled workbook leaves the placed table alone [sheet.calc.spill]", async () => {
+    // A day-book typed in the session: SEQUENCE anchors that spill, placed
+    // on the page, persisted. Reopening must find the page current — the
+    // workbook's own save and load keep the spill — and write nothing. (The
+    // spill used to reload as #SPILL!, and the reopen replaced the table.)
+    const a = createWorkbookSession(host);
+    sessions.push(a);
+    await a.import(await authorWorkbook(1, 1, () => "Day-book"), "book.xlsx");
+    a.editCell(0, 1, 0, "=SEQUENCE(4)");
+    a.editCell(0, 1, 1, "=SEQUENCE(4,1,1840,7)");
+    a.setRange("A2:B5");
+    expect(await a.lowerSelection()).not.toBeNull();
+    await settle();
+    await a.flushPersist();
+    a.dispose();
+    const placed = await exportedTableCells(h);
+    expect(placed).toHaveLength(1);
+    expect([placed[0].get("3:0"), placed[0].get("3:1")]).toEqual(["4", "1861"]);
+
+    const t = new Tally();
+    const b = createWorkbookSession(countingHost(host, t).host);
+    sessions.push(b);
+    expect(await b.restore()).toBe(true);
+    await b.refreshPlacements();
+    await settle();
+    expect(b.cellInputAt(1, 0)).toBe("=SEQUENCE(4)");
+    expect(t.work.mutations, "the reopen wrote to the document").toEqual([]);
+    expect(await exportedTableCells(h)).toEqual(placed);
+  });
 });
 
 /** `row:col` → the paragraph style each table cell's text sits in, read off

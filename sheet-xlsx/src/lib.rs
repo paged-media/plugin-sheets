@@ -201,6 +201,29 @@ pub struct XlsxDocument {
     /// The styles part name, when the package has one (Wave 6: style
     /// authoring splices it, or creates it).
     styles_part: Option<String>,
+    /// The cell-metadata part (`xl/metadata.xml`), when the package has one.
+    metadata_part: Option<String>,
+    /// The `cm=` value that marks a dynamic-array formula, once the metadata
+    /// part has (or was given) such a record.
+    dynamic_cm: Option<u32>,
+}
+
+/// Every dynamic-array anchor a save writes, with its area: the consumer's
+/// spills plus the array formulas the workbook marks dynamic (whose root does
+/// not spill, so they keep their saved area).
+fn dynamic_array_anchors(
+    model: &SheetModel,
+    spills: &BTreeMap<(SheetId, u32, u32), (u32, u32)>,
+) -> BTreeMap<(SheetId, u32, u32), (u32, u32)> {
+    let mut out = spills.clone();
+    for (sid, ws) in model.sheets.iter().enumerate() {
+        for key in &ws.dynamic_arrays {
+            if let Some(area) = ws.array_formulas.get(key) {
+                out.insert((sid as SheetId, key.0, key.1), *area);
+            }
+        }
+    }
+    out
 }
 
 /// A name→id resolver over the workbook's sheet list, for chart `c:f` refs.
@@ -258,6 +281,17 @@ impl XlsxDocument {
         let styles_part = wb_rels
             .by_type(REL_STYLES)
             .map(|r| resolve_target(&wb_base, &r.target));
+        // The cell metadata: which `cm=` values mark a dynamic-array formula.
+        // A part that does not parse marks none (it still round-trips).
+        let metadata_part = wb_rels
+            .by_type(parts::metadata::REL_SHEET_METADATA)
+            .map(|r| resolve_target(&wb_base, &r.target))
+            .filter(|name| container.part(name).is_some());
+        let dynamic_meta = metadata_part
+            .as_ref()
+            .and_then(|name| container.part(name))
+            .and_then(|p| parts::metadata::parse(p.bytes()).ok())
+            .unwrap_or_default();
 
         let shared_strings = match &shared_part {
             Some(name) => match container.part(name) {
@@ -383,9 +417,15 @@ impl XlsxDocument {
             // formula_texts (NOT a model FormulaId — the consumer parses it).
             let mut cells = BTreeMap::new();
             let mut array_formulas = BTreeMap::new();
+            let mut dynamic_arrays = std::collections::BTreeSet::new();
             for pc in parsed_ws.cells {
                 if let Some(area) = pc.array_area {
                     array_formulas.insert((pc.row, pc.col), area);
+                    // An array formula whose cell metadata marks it dynamic
+                    // is Excel's spilled formula, not a CSE one.
+                    if pc.cm.is_some_and(|cm| dynamic_meta.dynamic.contains(&cm)) {
+                        dynamic_arrays.insert((pc.row, pc.col));
+                    }
                 }
                 let style = xf_to_style
                     .get(pc.style_index as usize)
@@ -407,6 +447,7 @@ impl XlsxDocument {
             let ws = model.sheet_mut(sid).expect("just added");
             ws.cells = cells;
             ws.array_formulas = array_formulas;
+            ws.dynamic_arrays = dynamic_arrays;
 
             // Structured tables (ListObjects, spec §6.4 / ECMA-376 §18.5): a
             // worksheet references its table parts through its OWN `.rels`
@@ -623,6 +664,8 @@ impl XlsxDocument {
             wb_rels_part,
             loaded_calc,
             styles_part,
+            metadata_part,
+            dynamic_cm: dynamic_meta.writable,
         })
     }
 
@@ -639,6 +682,43 @@ impl XlsxDocument {
     /// `model` must be this document's model (the one `open` parsed, edited
     /// in place); the container, bindings and formula texts come from `self`.
     pub fn save_model(&self, model: &SheetModel) -> Result<Vec<u8>, XlsxError> {
+        let anchors = dynamic_array_anchors(model, &BTreeMap::new());
+        self.save_with(model, &anchors)
+    }
+
+    /// [`save_model`](Self::save_model) for a consumer whose engine SPILLS:
+    /// `spills` maps every spilling formula's anchor `(sheet, row, col)` to
+    /// the area it currently fills, `(rows, cols)` — `(1, 1)` for a blocked
+    /// or one-cell spill. A re-encoded sheet writes each such anchor the way
+    /// Excel writes a dynamic array — an array formula over the area whose
+    /// `cm=` names the dynamic-array cell metadata — and the other cells of
+    /// the area as plain cached values. Without that marker the reloaded
+    /// cached values would be ordinary cells in the spill's way (`#SPILL!`).
+    ///
+    /// The first such save of a package without the marker adds it: the
+    /// metadata part (with its relationship and content type), or one record
+    /// spliced into the existing part. A save that re-encodes no sheet with
+    /// a dynamic array changes nothing (the zero-edit round trip stays
+    /// byte-identical).
+    pub fn save_model_with_spills(
+        &mut self,
+        model: &SheetModel,
+        spills: &BTreeMap<(SheetId, u32, u32), (u32, u32)>,
+    ) -> Result<Vec<u8>, XlsxError> {
+        let anchors = dynamic_array_anchors(model, spills);
+        if self.dynamic_cm.is_none() && anchors.keys().any(|&(s, _, _)| self.sheet_dirty(s)) {
+            // A metadata part that cannot take the record leaves the anchors
+            // as plain array formulas (they still reload filled, not blocked).
+            let _ = self.add_dynamic_array_metadata();
+        }
+        self.save_with(model, &anchors)
+    }
+
+    fn save_with(
+        &self,
+        model: &SheetModel,
+        anchors: &BTreeMap<(SheetId, u32, u32), (u32, u32)>,
+    ) -> Result<Vec<u8>, XlsxError> {
         // Wave 4: a changed `<calcPr>` (iterative calculation toggled) is the
         // one workbook-part edit decided at save time; it rides as a byte
         // splice of that element, the rest of the part stays verbatim.
@@ -652,7 +732,60 @@ impl XlsxDocument {
             &self.bindings,
             &self.formula_texts,
             &overrides,
+            &write::DynamicArrays {
+                cm: self.dynamic_cm,
+                anchors,
+            },
         )
+    }
+
+    /// Whether `sheet`'s part re-encodes on the next save.
+    fn sheet_dirty(&self, sheet: SheetId) -> bool {
+        self.bindings
+            .iter()
+            .find(|b| b.sheet_id == sheet)
+            .and_then(|b| self.container.part(&b.part_name))
+            .is_some_and(|p| matches!(p, PartEntry::Modeled { dirty: true, .. }))
+    }
+
+    /// Give the package a dynamic-array cell-metadata record and remember its
+    /// `cm=` value: splice one into the metadata part, or add the part.
+    fn add_dynamic_array_metadata(&mut self) -> Result<(), XlsxError> {
+        if let Some(name) = self.metadata_part.clone() {
+            let bytes = self
+                .part_bytes(&name)
+                .ok_or_else(|| XlsxError::Structure(format!("missing {name}")))?;
+            let (out, cm) = parts::metadata::with_dynamic_array_record(&bytes)?;
+            if out != bytes {
+                self.set_part_bytes(&name, out);
+            }
+            self.dynamic_cm = Some(cm);
+            return Ok(());
+        }
+        let wb_dir = rels::part_dir(&self.workbook_part);
+        let mut n = 1;
+        let (part, target) = loop {
+            let target = if n == 1 {
+                "metadata.xml".to_string()
+            } else {
+                format!("metadata{n}.xml")
+            };
+            let part = resolve_target(&wb_dir, &target);
+            if self.container.part(&part).is_none() {
+                break (part, target);
+            }
+            n += 1;
+        };
+        self.add_workbook_rel(parts::metadata::REL_TYPE_SHEET_METADATA, &target)?;
+        self.add_override(&part, parts::metadata::CT_SHEET_METADATA)?;
+        self.container.parts.push(PartEntry::Opaque {
+            name: part.clone(),
+            bytes: parts::metadata::NEW_PART.as_bytes().to_vec(),
+        });
+        self.container.dirty = true;
+        self.metadata_part = Some(part);
+        self.dynamic_cm = Some(1);
+        Ok(())
     }
 
     /// Mark a worksheet's content as modified, so its part re-encodes from

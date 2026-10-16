@@ -55,7 +55,7 @@
 //! / lex the `#` postfix (parser track). The eval + spill engine are ours.
 
 use sheet_calc::{Engine, EngineConfig, SetInput};
-use sheet_core::ast::{Expr, Formula, LitValue, OrderedF64};
+use sheet_core::ast::{BinOp, Expr, Formula, LitValue, OrderedF64};
 use sheet_core::{CellError, CellRef, CellValue, FuncId, SheetModel};
 
 // ---- harness ---------------------------------------------------------------
@@ -180,10 +180,25 @@ fn sheet_calc_spill_ref_operator() {
     set_formula(&mut e, 0, 1, Expr::Func(func("SUM"), vec![a1_spill]));
     assert_eq!(value_at(&e, 0, 1), CellValue::Number(6.0));
 
-    // A SpillRef in SCALAR position (the anchor of a multi-cell region) is
-    // #VALUE! (documented): C1 = A1# directly (no enclosing range function).
+    // A bare `=A1#` is the region itself, and spills it (Excel 16: `=E1#`
+    // over a 4-row spill spills 4 rows — corpus/xlsx-dynamic/spill-ref).
     set_formula(&mut e, 0, 2, Expr::SpillRef(Box::new(Expr::Ref(cr(0, 0)))));
-    assert_eq!(value_at(&e, 0, 2), CellValue::Error(CellError::Value));
+    assert_eq!(value_at(&e, 0, 2), CellValue::Number(1.0));
+    assert_eq!(value_at(&e, 2, 2), CellValue::Number(3.0));
+
+    // In SCALAR position (an operand; a typed operator root does not spill)
+    // the multi-cell region is #VALUE!.
+    set_formula(
+        &mut e,
+        0,
+        3,
+        Expr::Binary(
+            BinOp::Add,
+            Box::new(Expr::SpillRef(Box::new(Expr::Ref(cr(0, 0))))),
+            Box::new(num_lit(0.0)),
+        ),
+    );
+    assert_eq!(value_at(&e, 0, 3), CellValue::Error(CellError::Value));
 }
 
 // ---- cse-parse (array literal through the same machinery) -------------------
