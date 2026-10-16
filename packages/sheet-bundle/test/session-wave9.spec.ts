@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createWorkbookSession, storyOfFrame, type WorkbookSession } from "../src";
+import { tableUnderFrame } from "../src/lower";
 import { countingHost, Tally } from "./perf/counting-host";
 
 import {
@@ -293,6 +294,88 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
     expect(tables[0].get("2:1")).toBe("21");
   });
 
+  /** The placed table's story and table ids: its frame's binding names
+   *  them, or (a one-batch placement) the table under the frame does. */
+  async function placedTableIds(): Promise<{ storyId: string; tableId: string }> {
+    for (const id of await treeIds(host)) {
+      if (!id.startsWith("textFrame:")) continue;
+      const frameId = id.slice("textFrame:".length);
+      const rec = parseBinding(
+        await host.document.getMetadata({ kind: "textFrame", id: frameId } as never),
+      )?.data.table;
+      if (!rec) continue;
+      if (rec.storyId && rec.tableId) return { storyId: rec.storyId, tableId: rec.tableId };
+      const found = await tableUnderFrame(host, frameId, rec.widths);
+      if (found) return found;
+    }
+    throw new Error("no placed table");
+  }
+
+  it("a stale table a later session finds is refreshed IN PLACE: same table, host formatting kept [sheet.plugin.persistence]", async () => {
+    const a = await firstSession();
+    const { storyId, tableId } = await placedTableIds();
+    // The host formats the placed table: a taller row.
+    const fmt = await host.document.mutate({
+      op: "setRowHeight",
+      args: { storyId, tableId, row: 2, height: 40 },
+    } as never);
+    expect(fmt.applied).toBe(true);
+    // Edited and persisted, never refreshed onto the page; the document
+    // saved (the save hook keeps what the table shows).
+    a.editCell(0, 1, 0, "unseen");
+    await a.flushPersist();
+    await a.flushPlacementRecords();
+    a.dispose();
+    const before = await exportedTables(h);
+    expect(before).toHaveLength(1);
+    expect(before[0].rowHeights[2]).toBe(40);
+
+    const b = createWorkbookSession(host);
+    sessions.push(b);
+    expect(await b.restore()).toBe(true);
+    await b.refreshPlacements();
+    await settle();
+    const after = await exportedTables(h);
+    expect(after).toHaveLength(1);
+    expect(after[0].self, "the same table, not a replacement").toBe(before[0].self);
+    expect(after[0].rowHeights[2], "the host's row height survives").toBe(40);
+    expect((await placedTableIds()).tableId).toBe(tableId);
+    const cells = (await exportedTableCells(h))[0];
+    expect(cells.get("1:0")).toBe("unseen");
+    expect(cells.get("2:1")).toBe("21");
+  });
+
+  it("a table whose rows the host changed is replaced, never written into [sheet.plugin.persistence]", async () => {
+    // The host cannot report where a band sits (only the table's row count),
+    // so a refresh by position would pour the workbook into the band.
+    const a = await firstSession();
+    const { storyId, tableId } = await placedTableIds();
+    const band = await host.document.mutate({
+      op: "batch",
+      args: {
+        ops: [
+          { op: "insertHeaderRow", args: { storyId, tableId } },
+          { op: "insertText", args: { storyId, offset: 0, text: "HEAD", cell: { tableId, row: 0, col: 0 } } },
+        ],
+      },
+    } as never);
+    expect(band.applied).toBe(true);
+    a.editCell(0, 0, 0, "first");
+    await a.refreshPlacements();
+    await settle();
+    const tables = await exportedTableCells(h);
+    expect(tables).toHaveLength(1);
+    // The workbook as it lowers ("01" is the number 1); nothing of the band.
+    expect(Object.fromEntries(tables[0])).toEqual({
+      "0:0": "first",
+      "0:1": "1",
+      "1:0": "10",
+      "1:1": "11",
+      "2:0": "20",
+      "2:1": "21",
+    });
+  });
+
   it("a later session over an unchanged spilled workbook leaves the placed table alone [sheet.calc.spill]", async () => {
     // A day-book typed in the session: SEQUENCE anchors that spill, placed
     // on the page, persisted. Reopening must find the page current — the
@@ -323,6 +406,23 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
     expect(await exportedTableCells(h)).toEqual(placed);
   });
 });
+
+/** Every table of the exported document: its `Self` id and row heights. */
+async function exportedTables(h: HeadlessHost): Promise<{ self: string; rowHeights: number[] }[]> {
+  const out: { self: string; rowHeights: number[] }[] = [];
+  for (const [name, xml] of await exportedIdmlParts(h)) {
+    if (!name.startsWith("Stories/")) continue;
+    for (const t of xml.matchAll(/<Table\b([^>]*)>([\s\S]*?)<\/Table>/g)) {
+      out.push({
+        self: /\bSelf="([^"]*)"/.exec(t[1])?.[1] ?? "",
+        rowHeights: [...t[2].matchAll(/<Row\b([^>]*?)\/?>/g)].map((r) =>
+          Number(/\bSingleRowHeight="([^"]*)"/.exec(r[1])?.[1] ?? NaN),
+        ),
+      });
+    }
+  }
+  return out;
+}
 
 /** `row:col` → the paragraph style each table cell's text sits in, read off
  *  the exported stories (`Name="col:row"` in IDML). */

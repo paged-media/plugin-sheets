@@ -1427,14 +1427,127 @@ export async function refreshLoweredTable(
   return { ...info, content: next, columnWidths: nextWidths, contentVersion, barIds };
 }
 
+// ── what a placed table shows, kept with the document ─────────────────────
+//
+// A table has no read door for its cells, so a refresh can only diff the
+// page against the content it last poured there. In a session that content
+// is in memory; for a LATER session (a reopened document) it is kept in a
+// container part named by the content hash the frame's binding records,
+// `placements/<hash>.json`. The binding rides the same batch as the content
+// it describes, so whichever version the document shows — after an undo
+// too — the part named by its binding is that content.
+
+/** The part a placed table's shown content is kept in. */
+function placementPart(hash: string): string {
+  return `placements/${hash}.json`;
+}
+
+/** Keep `content` as what a placed table shows (see above). Best effort: a
+ *  host without container parts keeps nothing, and a later session then
+ *  replaces a stale table instead of refreshing it. */
+export async function rememberShownContent(host: BundleHost, content: LoweredContent): Promise<void> {
+  if (!host.supports("storage.parts@1")) return;
+  try {
+    await host.parts.write(
+      placementPart(contentHash(content)),
+      new TextEncoder().encode(JSON.stringify(content)),
+    );
+  } catch (err) {
+    host.log.warn("placement record write failed", err);
+  }
+}
+
+/** The content a placed table's binding says it shows (`hash`), or null
+ *  when it was not kept (placed before records existed, or by a host
+ *  without container parts) or does not hash to `hash`. */
+export async function recallShownContent(
+  host: BundleHost,
+  hash: string,
+): Promise<LoweredContent | null> {
+  if (!host.supports("storage.parts@1")) return null;
+  try {
+    const bytes = await host.parts.read(placementPart(hash));
+    if (!bytes) return null;
+    const content = JSON.parse(new TextDecoder().decode(bytes)) as LoweredContent;
+    return contentHash(content) === hash ? content : null;
+  } catch (err) {
+    host.log.warn("placement record read failed", err);
+    return null;
+  }
+}
+
+/** Drop the kept content `hash` (no placed table shows it any more). */
+export async function forgetShownContent(host: BundleHost, hash: string): Promise<void> {
+  if (!host.supports("storage.parts@1")) return;
+  try {
+    await host.parts.delete(placementPart(hash));
+  } catch (err) {
+    host.log.warn("placement record delete failed", err);
+  }
+}
+
+/** A placed table's row and column counts as the host reports them
+ *  (`tableRowCount` counts header, body and footer rows), or null when the
+ *  host cannot say. */
+export async function tableShape(
+  host: BundleHost,
+  storyId: string,
+  tableId: string,
+): Promise<{ rows: number; cols: number } | null> {
+  let props: Awaited<ReturnType<BundleHost["document"]["elementProperties"]>>;
+  try {
+    props = await host.document.elementProperties({
+      kind: "table",
+      id: { story_id: storyId, table_id: tableId },
+    });
+  } catch (err) {
+    host.log.debug("tableShape: table properties read failed", err);
+    return null;
+  }
+  const count = (path: "tableRowCount" | "tableColumnCount"): number | null => {
+    const v = props?.entries.find((e) => e.path === path)?.value;
+    return v?.type === "length" && typeof v.value === "number" ? v.value : null;
+  };
+  const rows = count("tableRowCount");
+  const cols = count("tableColumnCount");
+  return rows === null || cols === null ? null : { rows, cols };
+}
+
+/** Whether a placed table can be refreshed IN PLACE from `shown` (the
+ *  content last poured into it): it still has exactly that content's rows
+ *  and columns. A table the host reshaped (a header or footer band, a row
+ *  or column inserted or deleted) cannot: the host reports the table's row
+ *  count but not where its bands sit, nor the cells' text, so the
+ *  workbook's rows cannot be told apart from the host's, and a refresh by
+ *  position would pour the workbook into the band. Replacing it is then the
+ *  only refresh that writes nothing into the host's rows (the band itself
+ *  is lost). True when the host cannot report the shape. */
+export async function refreshableInPlace(
+  host: BundleHost,
+  info: LoweredTableInfo,
+  shown: LoweredContent,
+): Promise<boolean> {
+  const shape = await tableShape(host, info.storyId, info.tableId);
+  if (!shape) return true;
+  if (shape.rows === shown.rows.length && shape.cols === shown.cols.length) return true;
+  host.log.warn(
+    `refresh: the table in frame ${info.frameId} has ${shape.rows}×${shape.cols} cells where ` +
+      `${shown.rows.length}×${shown.cols.length} were placed — rows or columns the host ` +
+      "added cannot be located, so the table is replaced",
+  );
+  return false;
+}
+
 /**
- * Replace a placed table whose current content is UNKNOWN (Wave 9: one a
- * later session rediscovered whose record says the page shows something
- * other than the workbook's lowering now). There is no read door for a
- * table's cells, so it cannot be diffed: with the 66 `deleteTable` door the
- * table is deleted and a fresh one inserted in the same story (the frame
- * stays); a pre-66 host gets the frame re-placed where it stands. Null when
- * nothing could be placed.
+ * Replace a placed table that cannot be refreshed in place: its current
+ * content is UNKNOWN (a later session found it stale and no record of what
+ * it shows was kept — see `rememberShownContent`), or the host reshaped it
+ * (`refreshableInPlace`: rows or columns the host added cannot be located).
+ * There is no read door for a table's cells or bands, so it cannot be
+ * diffed: with the 66 `deleteTable` door the table is deleted and a fresh
+ * one inserted in the same story (the frame stays; the table id, and
+ * anything the host added to the table, do not); a pre-66 host gets the
+ * frame re-placed where it stands. Null when nothing could be placed.
  */
 export async function replaceLoweredTable(
   host: BundleHost,

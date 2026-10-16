@@ -38,6 +38,7 @@ import type {
   ElementId,
   Mutation,
   PageId,
+  PageSummary,
 } from "@paged-media/plugin-api";
 import {
   chartGeometryToMutations,
@@ -95,13 +96,23 @@ export interface PlacedChart {
   geometryKey: string;
 }
 
-/** The chart-frame size a placed chart is drawn at. */
+/** The chart-frame size a placed chart is drawn at (unless its page cannot
+ *  hold it: {@link chartBoxOnPage}). */
 export const CHART_SIZE_PT: [number, number] = [CHART_W_PT, CHART_H_PT];
+
+/** The size placement bounds give a chart: their extent, or
+ *  {@link CHART_SIZE_PT} for a bare top-left. */
+export function chartSizeOf(bounds?: [number, number, number, number]): [number, number] {
+  if (!bounds) return CHART_SIZE_PT;
+  const [top, left, bottom, right] = bounds;
+  return right - left > 0 && bottom - top > 0 ? [right - left, bottom - top] : CHART_SIZE_PT;
+}
 
 /** Options for [`lowerChartToFrame`]. */
 export interface ChartLowerOptions {
-  /** Where the chart lands (top-left honoured; the size is the chart's).
-   *  Default: 24 pt inset on the active page. */
+  /** Where the chart lands: the top-left, and the size when the bounds have
+   *  an extent (else {@link CHART_SIZE_PT}). Default: 24 pt inset on the
+   *  active page. */
   placement?: { pageId: PageId; bounds: [number, number, number, number] };
   contentVersion?: number;
   /** Called with the placed chart's record on success. */
@@ -153,30 +164,98 @@ const CHART_GROUP_HANDLE = "chart";
 /** Gap (pt) between a placed chart and the selection it is placed beside. */
 export const CHART_GAP_PT = 12;
 
-/** Where a chart lands when something is selected: BESIDE it, never on it —
- *  below it when the chart fits the page there, else to its right, else
- *  below it regardless (a chart hanging past the page edge is visible and
- *  can be moved; one lying over the table it charts was the film's bug). The
- *  bounds carry the top-left only; the size is the chart's. Null with
- *  nothing usable selected (the caller's default placement applies). */
-export async function chartPlacementBesideSelection(
+/** A page as a chart placement sees it: its size and its margin box. */
+export interface ChartPage {
+  width: number;
+  height: number;
+  /** `[top, left, bottom, right]` margins, pt. */
+  margins: [number, number, number, number];
+}
+
+/**
+ * Where a new chart goes on `page`, as InDesign places new content: inside
+ * the page's margins; with `selection` (its page-local box), BESIDE it and
+ * never on it — below it when there is room, else above it, else to its
+ * right, else to its left, slid along that side to stay inside the
+ * margins. A chart the margin box cannot hold at `size` is shrunk
+ * proportionally to fit. When no side has room (the selection fills the
+ * page) it stays inside the margins below the selection's top edge. With
+ * no selection it takes the margin box's top-left corner. Pure.
+ */
+export function chartBoxOnPage(
+  page: ChartPage,
+  selection: { top: number; left: number; bottom: number; right: number } | null,
+  size: [number, number] = CHART_SIZE_PT,
+  gap: number = CHART_GAP_PT,
+): { top: number; left: number; width: number; height: number } {
+  const [mt, ml, mb, mr] = page.margins;
+  // A margin box with no room left is no box: the page's own edges then.
+  let area = { top: mt, left: ml, bottom: page.height - mb, right: page.width - mr };
+  if (area.bottom - area.top < 1 || area.right - area.left < 1) {
+    area = { top: 0, left: 0, bottom: page.height, right: page.width };
+  }
+  const scale = Math.min(1, (area.right - area.left) / size[0], (area.bottom - area.top) / size[1]);
+  const width = size[0] * scale;
+  const height = size[1] * scale;
+  const x = (v: number) => Math.min(Math.max(v, area.left), area.right - width);
+  const y = (v: number) => Math.min(Math.max(v, area.top), area.bottom - height);
+  if (!selection) return { top: area.top, left: area.left, width, height };
+  const EPS = 0.01;
+  const fitsY = (top: number) => top >= area.top - EPS && top + height <= area.bottom + EPS;
+  const fitsX = (left: number) => left >= area.left - EPS && left + width <= area.right + EPS;
+  const below = selection.bottom + gap;
+  const above = selection.top - gap - height;
+  const right = selection.right + gap;
+  const left = selection.left - gap - width;
+  const at = fitsY(below)
+    ? { top: below, left: x(selection.left) }
+    : fitsY(above)
+      ? { top: above, left: x(selection.left) }
+      : fitsX(right)
+        ? { top: y(selection.top), left: right }
+        : fitsX(left)
+          ? { top: y(selection.top), left }
+          : { top: y(below), left: x(selection.left) };
+  return { ...at, width, height };
+}
+
+/** Where a chart lands: beside what is selected ({@link chartBoxOnPage}),
+ *  else in the active page's margin box. The bounds carry the chart's size
+ *  (shrunk when the page cannot hold {@link CHART_SIZE_PT}). Null with no
+ *  page to place on. */
+export async function chartPlacement(
   host: BundleHost,
 ): Promise<{ pageId: PageId; bounds: [number, number, number, number] } | null> {
   const box = await selectionBox(host);
-  if (!box) return null;
-  const [w, h] = CHART_SIZE_PT;
-  let size: [number, number] = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  // ONE pages read serves the page to place on and its margins.
+  let pages: readonly PageSummary[] = [];
   try {
-    const pages = await host.document.collection<{ selfId: string; sizePt?: [number, number] }>("pages");
-    size = pages.find((p) => p.selfId === box.pageId)?.sizePt ?? size;
+    pages = await host.document.collection<PageSummary>("pages");
   } catch {
-    /* no page size: any spot "fits" — below the selection */
+    /* no page read: placed as before, without a page to fit */
   }
-  const fits = (top: number, left: number) => top + h <= size[1] && left + w <= size[0];
-  const below = { top: box.bottom + CHART_GAP_PT, left: box.left };
-  const right = { top: box.top, left: box.right + CHART_GAP_PT };
-  const at = fits(below.top, below.left) ? below : fits(right.top, right.left) ? right : below;
-  return { pageId: box.pageId, bounds: [at.top, at.left, at.top, at.left] };
+  const pageId =
+    box?.pageId ?? (await host.document.meta()).activePage ?? pages[0]?.selfId ?? null;
+  if (!pageId) return null;
+  let page: ChartPage | null = null;
+  {
+    const p = pages.find((x) => x.selfId === pageId);
+    if (p) {
+      page = {
+        width: p.sizePt[0],
+        height: p.sizePt[1],
+        margins: [p.marginTopPt ?? 0, p.marginLeftPt ?? 0, p.marginBottomPt ?? 0, p.marginRightPt ?? 0],
+      };
+    }
+  }
+  if (!page) {
+    const at = box
+      ? { top: box.bottom + CHART_GAP_PT, left: box.left }
+      : { top: CHART_INSET_PT, left: CHART_INSET_PT };
+    return { pageId, bounds: [at.top, at.left, at.top + CHART_H_PT, at.left + CHART_W_PT] };
+  }
+  const at = chartBoxOnPage(page, box);
+  return { pageId, bounds: [at.top, at.left, at.top + at.height, at.left + at.width] };
 }
 
 /** Every label of `geom`, measured at its own size with the host's shaper —
@@ -225,10 +304,12 @@ export async function lowerChartToFrame(
     return false;
   }
 
-  // Engine-computed geometry IR (the chart subsystem lives in Rust).
+  // Engine-computed geometry IR (the chart subsystem lives in Rust), at the
+  // placement's size when it gives one (a chart shrunk to fit its page).
+  const [w, h] = chartSizeOf(opts?.placement?.bounds);
   let geom;
   try {
-    geom = engine.getChartGeometry(chartIndex, CHART_W_PT, CHART_H_PT);
+    geom = engine.getChartGeometry(chartIndex, w, h);
   } catch (err) {
     host.log.warn("lowerChart: engine.getChartGeometry failed", err);
     return false;

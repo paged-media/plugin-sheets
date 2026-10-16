@@ -66,11 +66,15 @@ import {
   type StructuralEditKind,
 } from "./engine";
 import {
+  forgetShownContent,
   lowerPaginatedToChain,
   lowerSelectionToFrame,
   pageContent,
   placementForContent,
+  recallShownContent,
+  refreshableInPlace,
   refreshLoweredTable,
+  rememberShownContent,
   replaceLoweredTable,
   storyOfFrame,
   tableUnderFrame,
@@ -79,8 +83,8 @@ import {
   type LoweredTableInfo,
 } from "./lower";
 import {
-  CHART_SIZE_PT,
-  chartPlacementBesideSelection,
+  chartPlacement,
+  chartSizeOf,
   lowerChartToFrame,
   type PlacedChart,
 } from "./lower-chart";
@@ -592,6 +596,10 @@ export interface WorkbookSession {
    *  for a host save. (The plugin contract has no pre-save hook yet —
    *  RFI: a host `onWillSave` would call this.) Never rejects. */
   flushPersist(): Promise<void>;
+  /** Keep what the placed tables show in the document (`placements/`), so a
+   *  later session can refresh a stale table in place instead of replacing
+   *  it. The host's save hook and `dispose` do this; never rejects. */
+  flushPlacementRecords(): Promise<void>;
   /** Tear down: flush unsaved edits (the bytes are taken synchronously,
    *  the write completes in the background), free the engine, drop
    *  listeners. */
@@ -2051,8 +2059,81 @@ export function createWorkbookSession(
   // (protocol 66) the save waits for the pending write first. Without it,
   // the debounce, the flush on frame exit and the flush on dispose remain.
   const willSaveSub = onWillSave(host, () =>
-    flushPersist().catch((err) => host.log.warn("workbook persist before save failed", err)),
+    Promise.all([
+      flushPersist().catch((err) => host.log.warn("workbook persist before save failed", err)),
+      flushPlacementRecords().catch((err) =>
+        host.log.warn("placement records before save failed", err),
+      ),
+    ]).then(() => undefined),
   );
+
+  // ── what the placed tables show, kept for a later session ──────────────
+  //
+  // `placements/<hash>.json` (lower.ts `rememberShownContent`) lets a
+  // reopened document refresh a stale table in place. The records are
+  // written when the document is about to be saved (and on dispose), not on
+  // every placement or refresh: only what the tables show at save time is
+  // ever read back.
+  /** Hashes whose record the document holds (read back or written). */
+  const keptRecords = new Set<string>();
+  /** Hashes whose record this session wrote (it may drop them again). */
+  const ownRecords = new Set<string>();
+
+  /** Write the records of what the placed tables show now, and drop the
+   *  ones this session wrote that no table shows any more. */
+  async function flushPlacementRecords(
+    shown: Map<string, LoweredContent> = shownContents(),
+  ): Promise<void> {
+    for (const [hash, content] of shown) {
+      if (keptRecords.has(hash)) continue;
+      await rememberShownContent(host, content);
+      keptRecords.add(hash);
+      ownRecords.add(hash);
+    }
+    for (const hash of [...ownRecords]) {
+      if (shown.has(hash)) continue;
+      await forgetShownContent(host, hash);
+      ownRecords.delete(hash);
+      keptRecords.delete(hash);
+    }
+  }
+
+  /** What each placed table shows, by content hash. */
+  function shownContents(): Map<string, LoweredContent> {
+    const out = new Map<string, LoweredContent>();
+    for (const info of loweredTables.values()) {
+      if (info.content) out.set(contentHash(info.content), info.content);
+    }
+    return out;
+  }
+
+  // ── own writes vs the document changing under a placed table ───────────
+  //
+  // A placed table can be refreshed in place only while it still has the
+  // rows and columns this session last wrote (`refreshableInPlace`). That
+  // takes a read, so it is done only for a table the document may have
+  // changed since: one found again in a reopened document, or any table
+  // after a document change this session did not make (the host applies
+  // `insertHeaderRow`, an undo). A change event arrives with the write's
+  // reply, before the awaiting code resumes, so `ownWrites` attributes a
+  // session write's own events to it.
+  let ownWrites = 0;
+  const unverified = new Set<string>();
+  async function ownWrite<T>(write: () => Promise<T>): Promise<T> {
+    ownWrites += 1;
+    try {
+      return await write();
+    } finally {
+      ownWrites -= 1;
+    }
+  }
+  const foreignChangeSub =
+    typeof host.document?.onDidChange === "function"
+      ? host.document.onDidChange((e) => {
+          if (e.kind === "mutationApplied" && ownWrites > 0) return;
+          for (const frameId of loweredTables.keys()) unverified.add(frameId);
+        })
+      : null;
 
   /** Wave 4 — after a burst of edits, refresh what this session placed. */
   function scheduleRefresh(): void {
@@ -2087,23 +2168,6 @@ export function createWorkbookSession(
       for (const [frameId, info] of [...loweredTables]) {
         const name = sheetNameOf(info.sheet);
         if (name === null) continue;
-        if (!info.content) {
-          // A rediscovered table whose page content is unknown (Wave 9):
-          // replaced whole with the current lowering.
-          let next: LoweredContent;
-          try {
-            next = pageContent(engine, info.sheet, info.range);
-          } catch (err) {
-            host.log.warn(`refresh: could not lower ${info.range}`, err);
-            continue;
-          }
-          const replaced = await replaceLoweredTable(host, engine, info, next, version, name);
-          loweredTables.delete(frameId);
-          if (replaced) loweredTables.set(replaced.frameId, replaced);
-          if (lastLoweredTable?.frameId === frameId) lastLoweredTable = replaced;
-          if (lastFrameId === frameId) lastFrameId = replaced?.frameId ?? null;
-          continue;
-        }
         let next: LoweredContent;
         try {
           next = pageContent(engine, info.sheet, info.range);
@@ -2111,15 +2175,40 @@ export function createWorkbookSession(
           host.log.warn(`refresh: could not lower ${info.range}`, err);
           continue;
         }
-        if (
-          info.contentVersion === version ||
-          JSON.stringify(next) === JSON.stringify(info.content)
-        ) {
-          continue;
+        if (info.content) {
+          if (
+            info.contentVersion === version ||
+            JSON.stringify(next) === JSON.stringify(info.content)
+          ) {
+            continue;
+          }
+          // In place: only what changed is re-poured, and the table — its
+          // id, its column widths, anything the host formatted — stays. A
+          // table the document may have changed since this session last
+          // wrote it is checked first (one read).
+          if (!unverified.has(frameId) || (await refreshableInPlace(host, info, info.content))) {
+            const updated = await ownWrite(() =>
+              refreshLoweredTable(host, info, next, version, name),
+            );
+            loweredTables.set(frameId, updated);
+            unverified.delete(frameId);
+            if (lastLoweredTable?.frameId === frameId) lastLoweredTable = updated;
+            continue;
+          }
         }
-        const updated = await refreshLoweredTable(host, info, next, version, name);
-        loweredTables.set(frameId, updated);
-        if (lastLoweredTable?.frameId === frameId) lastLoweredTable = updated;
+        // Replaced whole, the one refresh that cannot write into rows that
+        // are not the workbook's: the page's content is unknown (a table
+        // placed before placement records were kept, or on a host without
+        // container parts), or the host reshaped the table
+        // (`refreshableInPlace`).
+        const replaced = await ownWrite(() =>
+          replaceLoweredTable(host, engine, info, next, version, name),
+        );
+        loweredTables.delete(frameId);
+        unverified.delete(frameId);
+        if (replaced) loweredTables.set(replaced.frameId, replaced);
+        if (lastLoweredTable?.frameId === frameId) lastLoweredTable = replaced;
+        if (lastFrameId === frameId) lastFrameId = replaced?.frameId ?? null;
       }
       const charts: PlacedChart[] = [];
       for (const placed of placedCharts) {
@@ -2130,7 +2219,7 @@ export function createWorkbookSession(
         let key: string;
         try {
           key = JSON.stringify(
-            engine.getChartGeometry(placed.chartIndex, ...CHART_SIZE_PT),
+            engine.getChartGeometry(placed.chartIndex, ...chartSizeOf(placed.bounds)),
           );
         } catch {
           charts.push(placed);
@@ -2232,13 +2321,21 @@ export function createWorkbookSession(
       }
       const current = contentHash(now) === rec.hash;
       if (!current) stale = true;
+      // What the page shows: the workbook's lowering when it is current,
+      // else the content kept when it was placed — so the refresh diffs in
+      // place rather than replacing the table.
+      const kept = await recallShownContent(host, rec.hash);
+      if (kept) keptRecords.add(rec.hash);
+      const shown = current ? now : (kept ?? undefined);
+      // The document may have changed this table since it was written.
+      unverified.add(frameId);
       loweredTables.set(frameId, {
         frameId,
         storyId: ids.storyId,
         tableId: ids.tableId,
         sheet: sheet.id,
         range: binding.data.range,
-        content: current ? now : undefined,
+        content: shown,
         columnWidths: rec.widths,
         contentVersion: binding.data.contentVersion,
       });
@@ -2620,12 +2717,11 @@ export function createWorkbookSession(
         host.log.warn("lowerSelection: could not lower the range", err);
         return null;
       }
-      const id = await lowerSelectionToFrame(
-        host,
-        state.engine,
-        state.activeSheet,
-        state.selectedRange,
-        {
+      const engine = state.engine;
+      const sheet = state.activeSheet;
+      const range = state.selectedRange;
+      const id = await ownWrite(() =>
+        lowerSelectionToFrame(host, engine, sheet, range, {
           placement: placement ?? undefined,
           // The placement's height is the workbook's rows; the lowering
           // sizes it to the table the engine lays out.
@@ -2638,7 +2734,7 @@ export function createWorkbookSession(
             lastLoweredTable = info;
             loweredTables.set(info.frameId, info);
           },
-        },
+        }),
       );
       if (id) lastFrameId = id; // remember the in-frame grid target (S-02)
       return id;
@@ -2837,10 +2933,11 @@ export function createWorkbookSession(
         return false;
       }
       // Beside what is selected — never on top of it (the film's chart
-      // landed over the table placed a moment before).
-      const beside = await chartPlacementBesideSelection(host);
+      // landed over the table placed a moment before) — and on the page,
+      // inside its margins.
+      const placement = await chartPlacement(host);
       return lowerChartToFrame(host, state.engine, chartIndex, {
-        placement: beside ?? undefined,
+        placement: placement ?? undefined,
         contentVersion: revision,
         onLowered: (placed) => {
           placedCharts.push(placed);
@@ -3461,6 +3558,12 @@ export function createWorkbookSession(
       }
     },
 
+    flushPlacementRecords() {
+      return flushPlacementRecords().catch((err) => {
+        host.log.warn("placement records failed", err);
+      });
+    },
+
     flushPersist() {
       return flushPersist().catch((err) => {
         host.log.warn("workbook persist failed", err);
@@ -4055,7 +4158,13 @@ export function createWorkbookSession(
 
     dispose() {
       historySub?.dispose();
+      foreignChangeSub?.dispose();
       willSaveSub?.dispose();
+      // What the placed tables show, kept for a later session (taken before
+      // the placements are forgotten; written in the background).
+      void flushPlacementRecords(shownContents()).catch((err) => {
+        host.log.warn("placement records on dispose failed", err);
+      });
       forgetPlacements();
       // Flush unsaved edits BEFORE the engine is freed: the bytes are
       // taken synchronously here; the write finishes in the background.
