@@ -44,6 +44,10 @@ sheet-format = { path = "../sheet-format" }
 # (deps = core); no cycle (xlsx -> parser -> core).
 sheet-parser = { path = "../sheet-parser" }
 zip.workspace = true
+# Not called directly: it selects zip's deflate backend (miniz_oxide), so a
+# save writes the same compressed bytes in every build (see the root
+# Cargo.toml).
+flate2.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true
 compact_str.workspace = true

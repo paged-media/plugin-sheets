@@ -323,8 +323,7 @@ pub fn csv_to_xlsx(text: &str, delim: Option<char>, locale: Locale, sheet_name: 
     let mut buf = Vec::new();
     {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let opts: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts = sheet_xlsx::write::part_options();
         for (name, body) in files.iter() {
             zip.start_file(*name, opts).expect("in-memory zip");
             zip.write_all(body.as_bytes()).expect("in-memory zip");

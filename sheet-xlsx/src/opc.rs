@@ -264,7 +264,9 @@ impl OpcContainer {
             if file.is_dir() {
                 continue;
             }
-            let name = file.name().to_owned();
+            // Valid UTF-8 bytes are read as UTF-8, anything else as CP437
+            // (zip 9; 2.x went by the entry's UTF-8 flag alone).
+            let name = file.name()?.into_owned();
             // The declared size is only a HINT, bounded by what the
             // compressed bytes could plausibly hold and by a fixed cap.
             let hint = file
