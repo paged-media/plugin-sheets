@@ -23,8 +23,8 @@
   },
   "devDependencies": {
     "@paged-media/canvas-wasm": "0.71.13",
-    "@paged-media/plugin-api": "0.2.45-canary.0",
-    "@paged-media/plugin-sdk": "0.2.45-canary.0",
+    "@paged-media/plugin-api": "0.2.58-canary.0",
+    "@paged-media/plugin-sdk": "0.2.58-canary.0",
     "@paged-media/sheet-host-model": "workspace:*",
     "@types/node": "20.19.39",
     "@types/react": "^18.3.31",
