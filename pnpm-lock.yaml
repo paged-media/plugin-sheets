@@ -18,8 +18,8 @@ importers:
   packages/sheet-bundle:
     devDependencies:
       '@paged-media/canvas-wasm':
-        specifier: 0.71.8
-        version: 0.71.8
+        specifier: 0.71.13
+        version: 0.71.13
       '@paged-media/plugin-api':
         specifier: 0.2.45-canary.0
         version: 0.2.45-canary.0
@@ -379,8 +379,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@paged-media/canvas-wasm@0.71.8':
-    resolution: {integrity: sha512-udP1g/5i7eIb8Xakn4HhN59LEQ22d6cbDOorMvYj/1LPbkKHkNJFPGB1XQA06ka2z//r23RfzfAGr0aDpL3cWQ==}
+  '@paged-media/canvas-wasm@0.71.13':
+    resolution: {integrity: sha512-OM8MnhSyi34MeO6ry4Lk//pvA7rTlxfNeD2/xMocYkw/LNhfLuyaapzBwdIvaUrLg76kdCJQYJAwcy3A/8tOgg==}
 
   '@paged-media/plugin-api@0.2.45-canary.0':
     resolution: {integrity: sha512-ptMkSHbV8Kw1plNO4U7oFET77TBge9Cj3HMLmhx1SyV+3aBauf2H/de8s5ngzkJdXZEEr3CRPT0DHPqB/8mHyQ==}
@@ -1105,7 +1105,7 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
-  '@paged-media/canvas-wasm@0.71.8': {}
+  '@paged-media/canvas-wasm@0.71.13': {}
 
   '@paged-media/plugin-api@0.2.45-canary.0':
     dependencies:

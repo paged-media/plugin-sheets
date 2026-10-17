@@ -298,3 +298,56 @@ export function tableRefreshOps(
   return { structure, text, decor: [...resets, ...nextDecor] };
 }
 
+/**
+ * Move the row-addressed ops of table `tableId` down by `by` rows: what a
+ * refresh writes when the host added a header band above the workbook's
+ * rows (`insertHeaderRow`), so the workbook's row 0 is the table's row
+ * `by`. Every op a placed table's pour or refresh emits that names a row is
+ * covered: row inserts and deletes, row heights, spans, cell-addressed text
+ * and style ops, and cell properties. Ops on other tables and ops that name
+ * no row (columns, mints, styles, metadata) are returned unchanged. A footer
+ * band needs no offset: it sits below the body, and a row inserted at the
+ * body's end lands above it.
+ */
+export function offsetTableRows(
+  ops: readonly Mutation[],
+  tableId: string,
+  by: number,
+): Mutation[] {
+  if (by === 0) return [...ops];
+  return ops.map((op): Mutation => {
+    switch (op.op) {
+      case "insertTableRow":
+      case "deleteTableRow":
+        return op.args.tableId === tableId
+          ? { ...op, args: { ...op.args, at: op.args.at + by } }
+          : op;
+      case "setRowHeight":
+      case "setCellSpan":
+        return op.args.tableId === tableId
+          ? ({ ...op, args: { ...op.args, row: op.args.row + by } } as Mutation)
+          : op;
+      case "insertText":
+      case "deleteRange":
+      case "applyStyle": {
+        const cell = op.args.cell;
+        return cell && cell.tableId === tableId
+          ? ({ ...op, args: { ...op.args, cell: { ...cell, row: cell.row + by } } } as Mutation)
+          : op;
+      }
+      case "setElementProperty": {
+        const el = op.args.elementId;
+        if (el.kind !== "tableCell" || el.id.table_id !== tableId) return op;
+        return {
+          ...op,
+          args: { ...op.args, elementId: { ...el, id: { ...el.id, row: el.id.row + by } } },
+        };
+      }
+      case "batch":
+        return { ...op, args: { ops: offsetTableRows(op.args.ops, tableId, by) } };
+      default:
+        return op;
+    }
+  });
+}
+

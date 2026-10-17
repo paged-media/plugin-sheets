@@ -73,6 +73,7 @@ import {
   tableCellOps,
   tableDecorOps,
   tableInsertOp,
+  offsetTableRows,
   tableRefreshOps,
   tableDataBarOps,
   cellAlignApplies,
@@ -588,6 +589,12 @@ export interface LoweredTableInfo {
   /** The data-bar paths drawn under the table (Wave 9) — a refresh deletes
    *  and redraws them. */
   barIds?: ElementId[];
+  /** The header rows the host added above the workbook's rows
+   *  (`insertHeaderRow`), as the engine last reported them: a refresh
+   *  writes the workbook's row 0 to the table's row `headerRows`, so the
+   *  band is kept. Absent: none (the engine reports bands since core
+   *  v0.71.13; on an older one a banded table is replaced). */
+  headerRows?: number;
 }
 
 /** Lane options for [`lowerSelectionToFrame`]. */
@@ -1265,6 +1272,7 @@ async function tableRefreshLanes(
   prevWidths: readonly number[],
   next: LoweredContent,
   nextWidths: readonly number[],
+  headerRows = 0,
 ): Promise<Mutation[][] | null> {
   if (
     JSON.stringify(prev) === JSON.stringify(next) &&
@@ -1310,7 +1318,11 @@ async function tableRefreshLanes(
             available: wantsAlign && paragraphs === null ? new Set() : undefined,
           }),
         ];
-  return [ops.structure, ops.text, decor, [...style, ...align]].filter((l) => l.length > 0);
+  // Below a host header band: the workbook's row 0 is the table's row
+  // `headerRows` (ops naming no row pass unchanged).
+  return [ops.structure, ops.text, decor, [...style, ...align]]
+    .filter((l) => l.length > 0)
+    .map((l) => offsetTableRows(l, tableId, headerRows));
 }
 
 /** Apply a placed table's in-place refresh as ONE `mutate` — the lanes of
@@ -1329,9 +1341,19 @@ async function applyTableRefresh(
   next: LoweredContent,
   nextWidths: readonly number[],
   tail: readonly Mutation[] = [],
+  headerRows = 0,
 ): Promise<{ calls: number; tailOutcome: MutationOutcome | null }> {
   const lanes =
-    (await tableRefreshLanes(host, storyId, tableId, prev, prevWidths, next, nextWidths)) ?? [];
+    (await tableRefreshLanes(
+      host,
+      storyId,
+      tableId,
+      prev,
+      prevWidths,
+      next,
+      nextWidths,
+      headerRows,
+    )) ?? [];
   const all = [...lanes.flat(), ...tail];
   if (all.length === 0) return { calls: 0, tailOutcome: null };
   const r = await host.document.mutate({ op: "batch", args: { ops: all } });
@@ -1374,7 +1396,9 @@ async function frameOrigin(
  * edges reset — the table is never duplicated. Its data bars (Wave 9) are
  * redrawn where the frame stands now, the old ones deleted in the same
  * batch. Re-stamps the frame's binding with `contentVersion`. One batch,
- * one undo step. Returns the updated record (the new baseline).
+ * one undo step. Returns the updated record (the new baseline). The
+ * workbook's rows are written below `info.headerRows` (a host header band,
+ * see {@link refreshBands}), which is left as it is.
  */
 export async function refreshLoweredTable(
   host: BundleHost,
@@ -1417,6 +1441,7 @@ export async function refreshLoweredTable(
     next,
     nextWidths,
     [...removals, ...drawn, stamp],
+    info.headerRows ?? 0,
   );
   // A refused tail left the old bars standing; an applied one replaced them.
   const barIds = !tailOutcome?.applied
@@ -1488,12 +1513,15 @@ export async function forgetShownContent(host: BundleHost, hash: string): Promis
 
 /** A placed table's row and column counts as the host reports them
  *  (`tableRowCount` counts header, body and footer rows), or null when the
- *  host cannot say. */
+ *  host cannot say. `header` and `footer` are the host's bands
+ *  (`tableHeaderRowCount` / `tableFooterRowCount`), present only where the
+ *  engine reports them (core v0.71.13 and later; an older engine lists
+ *  neither). */
 export async function tableShape(
   host: BundleHost,
   storyId: string,
   tableId: string,
-): Promise<{ rows: number; cols: number } | null> {
+): Promise<{ rows: number; cols: number; header?: number; footer?: number } | null> {
   let props: Awaited<ReturnType<BundleHost["document"]["elementProperties"]>>;
   try {
     props = await host.document.elementProperties({
@@ -1504,50 +1532,79 @@ export async function tableShape(
     host.log.debug("tableShape: table properties read failed", err);
     return null;
   }
-  const count = (path: "tableRowCount" | "tableColumnCount"): number | null => {
-    const v = props?.entries.find((e) => e.path === path)?.value;
+  const count = (path: string): number | null => {
+    const v = props?.entries.find((e) => (e.path as string) === path)?.value;
     return v?.type === "length" && typeof v.value === "number" ? v.value : null;
   };
   const rows = count("tableRowCount");
   const cols = count("tableColumnCount");
-  return rows === null || cols === null ? null : { rows, cols };
+  if (rows === null || cols === null) return null;
+  const header = count("tableHeaderRowCount");
+  const footer = count("tableFooterRowCount");
+  return header === null || footer === null ? { rows, cols } : { rows, cols, header, footer };
+}
+
+/** Where the workbook's rows sit in a placed table: below the host's
+ *  header band (`header` rows) and above its footer band (`footer` rows). */
+export interface TableBands {
+  header: number;
+  footer: number;
 }
 
 /** Whether a placed table can be refreshed IN PLACE from `shown` (the
- *  content last poured into it): it still has exactly that content's rows
- *  and columns. A table the host reshaped (a header or footer band, a row
- *  or column inserted or deleted) cannot: the host reports the table's row
- *  count but not where its bands sit, nor the cells' text, so the
- *  workbook's rows cannot be told apart from the host's, and a refresh by
- *  position would pour the workbook into the band. Replacing it is then the
- *  only refresh that writes nothing into the host's rows (the band itself
- *  is lost). True when the host cannot report the shape. */
-export async function refreshableInPlace(
+ *  content last poured into it), and where its rows sit if so.
+ *
+ *  Where the engine reports the table's header and footer bands (core
+ *  v0.71.13), the table can be refreshed when its body (rows outside the
+ *  bands) and its columns are exactly `shown`'s: the refresh writes the
+ *  body and keeps the bands the host added (`insertHeaderRow`,
+ *  `insertFooterRow`). Where it does not (an older engine), only a table
+ *  with exactly `shown`'s rows and columns can be, at no offset: the host
+ *  reports the row count but not where a band sits, so the workbook's
+ *  rows cannot be told apart from the host's, and a refresh by position
+ *  would pour the workbook into the band. Null when it cannot be refreshed
+ *  in place (rows or columns the host inserted into the body, or a band
+ *  on an older engine): replacing it is then the only refresh that writes
+ *  nothing into the host's rows. When the host cannot report the shape,
+ *  the bands last known (`info.headerRows`) are kept. */
+export async function refreshBands(
   host: BundleHost,
   info: LoweredTableInfo,
   shown: LoweredContent,
-): Promise<boolean> {
+): Promise<TableBands | null> {
   const shape = await tableShape(host, info.storyId, info.tableId);
-  if (!shape) return true;
-  if (shape.rows === shown.rows.length && shape.cols === shown.cols.length) return true;
+  if (!shape) return { header: info.headerRows ?? 0, footer: 0 };
+  const cols = shape.cols === shown.cols.length;
+  if (shape.header !== undefined && shape.footer !== undefined) {
+    const body = shape.rows - shape.header - shape.footer;
+    if (cols && body === shown.rows.length) return { header: shape.header, footer: shape.footer };
+    host.log.warn(
+      `refresh: the table in frame ${info.frameId} has ${body}×${shape.cols} body cells where ` +
+        `${shown.rows.length}×${shown.cols.length} were placed — rows or columns the host ` +
+        "inserted cannot be located, so the table is replaced",
+    );
+    return null;
+  }
+  if (cols && shape.rows === shown.rows.length) return { header: 0, footer: 0 };
   host.log.warn(
     `refresh: the table in frame ${info.frameId} has ${shape.rows}×${shape.cols} cells where ` +
       `${shown.rows.length}×${shown.cols.length} were placed — rows or columns the host ` +
       "added cannot be located, so the table is replaced",
   );
-  return false;
+  return null;
 }
 
 /**
  * Replace a placed table that cannot be refreshed in place: its current
  * content is UNKNOWN (a later session found it stale and no record of what
  * it shows was kept — see `rememberShownContent`), or the host reshaped it
- * (`refreshableInPlace`: rows or columns the host added cannot be located).
- * There is no read door for a table's cells or bands, so it cannot be
- * diffed: with the 66 `deleteTable` door the table is deleted and a fresh
- * one inserted in the same story (the frame stays; the table id, and
- * anything the host added to the table, do not); a pre-66 host gets the
- * frame re-placed where it stands. Null when nothing could be placed.
+ * (`refreshBands`: rows or columns the host inserted cannot be located, or a
+ * band on an engine that does not report bands). There is no read door for
+ * a table's cells, so it cannot be diffed: with the 66 `deleteTable` door
+ * the table is deleted and a fresh one inserted in the same story (the
+ * frame stays; the table id, and anything the host added to the table, do
+ * not); a pre-66 host gets the frame re-placed where it stands. Null when
+ * nothing could be placed.
  */
 export async function replaceLoweredTable(
   host: BundleHost,
@@ -1586,7 +1643,16 @@ export async function replaceLoweredTable(
         [tableBindingStamp(info.frameId, sheetName, info.range, contentVersion, info.storyId, tableId, next, widths)],
         at ? { ...at, widths } : undefined,
       );
-      return { ...info, tableId, content: next, columnWidths: widths, contentVersion, barIds };
+      // A fresh table: no band of the host's above its rows.
+      return {
+        ...info,
+        tableId,
+        content: next,
+        columnWidths: widths,
+        contentVersion,
+        barIds,
+        headerRows: undefined,
+      };
     }
     if (isUnknownVariant(r, "deleteTable")) doors.deleteTable = false;
     else host.log.warn("replace: deleteTable + insertTable rejected", r);
@@ -1833,11 +1899,15 @@ export interface ChainSubscription extends Disposable {
  * Subscribe to live re-pagination for a chain (Wave 2D, S-05; §8.5). Every
  * `host.document.onDidChange` event that carries `reflow` for a frame IN the
  * chain schedules a re-pagination, DEBOUNCED (`debounceMs`) so a resize drag
- * paginates once at its end. Events with NO `reflow` are the §8.5 transform
- * case (move/scale/rotate is display-only) and are IGNORED. Each pass
- * refreshes the tables of the previous one in place (pass `from` — the
- * `lowerPaginatedToChain` result — so the first reflow replaces what that
- * placed instead of adding to it).
+ * paginates once at its end, whatever committed the change: a `resizeFrame`
+ * (`mutationApplied`) or a frame resized by its handles (`gestureCommitted`,
+ * which carries the reflow from core v0.71.13 through plugin-sdk 0.2.58).
+ * The event is keyed off the field's presence: an older host reports a
+ * handle resize without it, and the split stays where it was, as before.
+ * Events with NO `reflow` are the §8.5 transform case (move/scale/rotate is
+ * display-only) and are IGNORED. Each pass refreshes the tables of the
+ * previous one in place (pass `from` — the `lowerPaginatedToChain` result —
+ * so the first reflow replaces what that placed instead of adding to it).
  */
 export function subscribeChainReflow(
   host: BundleHost,
@@ -1880,7 +1950,8 @@ export function subscribeChainReflow(
   };
 
   const sub = host.document.onDidChange((e) => {
-    // §8.5: no reflow → a pure transform → DO NOT re-paginate.
+    // §8.5: no reflow → a pure transform → DO NOT re-paginate. A resize
+    // reports one on a mutation and, from core v0.71.13, on a gesture.
     if (!e.reflow) return;
     if (chainFrameIds.size > 0 && !chainFrameIds.has(e.reflow.frameId)) return;
     if (timer !== null) clearTimeout(timer);

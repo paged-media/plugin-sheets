@@ -72,7 +72,7 @@ import {
   pageContent,
   placementForContent,
   recallShownContent,
-  refreshableInPlace,
+  refreshBands,
   refreshLoweredTable,
   rememberShownContent,
   replaceLoweredTable,
@@ -2110,10 +2110,11 @@ export function createWorkbookSession(
   // ── own writes vs the document changing under a placed table ───────────
   //
   // A placed table can be refreshed in place only while it still has the
-  // rows and columns this session last wrote (`refreshableInPlace`). That
-  // takes a read, so it is done only for a table the document may have
-  // changed since: one found again in a reopened document, or any table
-  // after a document change this session did not make (the host applies
+  // body rows and columns this session last wrote, and the refresh writes
+  // them below any header band the host added (`refreshBands`). That takes
+  // a read, so it is done only for a table the document may have changed
+  // since: one found again in a reopened document, or any table after a
+  // document change this session did not make (the host applies
   // `insertHeaderRow`, an undo). A change event arrives with the write's
   // reply, before the awaiting code resumes, so `ownWrites` attributes a
   // session write's own events to it.
@@ -2183,12 +2184,17 @@ export function createWorkbookSession(
             continue;
           }
           // In place: only what changed is re-poured, and the table — its
-          // id, its column widths, anything the host formatted — stays. A
-          // table the document may have changed since this session last
-          // wrote it is checked first (one read).
-          if (!unverified.has(frameId) || (await refreshableInPlace(host, info, info.content))) {
+          // id, its column widths, anything the host formatted, a header or
+          // footer band the host added — stays. A table the document may
+          // have changed since this session last wrote it is checked first
+          // (one read), which also says where its rows sit now.
+          const bands = unverified.has(frameId)
+            ? await refreshBands(host, info, info.content)
+            : { header: info.headerRows ?? 0, footer: 0 };
+          if (bands) {
+            const banded = { ...info, headerRows: bands.header || undefined };
             const updated = await ownWrite(() =>
-              refreshLoweredTable(host, info, next, version, name),
+              refreshLoweredTable(host, banded, next, version, name),
             );
             loweredTables.set(frameId, updated);
             unverified.delete(frameId);
@@ -2200,7 +2206,7 @@ export function createWorkbookSession(
         // are not the workbook's: the page's content is unknown (a table
         // placed before placement records were kept, or on a host without
         // container parts), or the host reshaped the table
-        // (`refreshableInPlace`).
+        // (`refreshBands`).
         const replaced = await ownWrite(() =>
           replaceLoweredTable(host, engine, info, next, version, name),
         );
@@ -3341,7 +3347,8 @@ export function createWorkbookSession(
         id: {
           story_id: lastLoweredTable.storyId,
           table_id: lastLoweredTable.tableId,
-          row: pos.row,
+          // Below a header band the host added, if any.
+          row: pos.row + (lastLoweredTable.headerRows ?? 0),
           col: pos.col,
         },
       };
