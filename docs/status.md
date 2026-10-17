@@ -1,9 +1,9 @@
 # Status
 
-What `paged.sheet` ships and what it does not, read from the code at commit `1a8ce82` (`main`,
-2026-10-13): `@paged-media/sheet` 0.1.0-canary.20, published 2026-10-13, with
-`@paged-media/plugin-api` and `@paged-media/plugin-sdk` `>=0.2.45-canary.0` as peers. The tests
-run against `@paged-media/canvas-wasm` 0.71.8. How the parts fit is in
+What `paged.sheet` ships and what it does not, read from the code on `main` at
+`@paged-media/sheet` 0.1.0-canary.23 (2026-10-17), with `@paged-media/plugin-api` and
+`@paged-media/plugin-sdk` `>=0.2.45-canary.0` as peers. The tests run against
+`@paged-media/canvas-wasm` 0.71.13 and the 0.2.58-canary.0 contract. How the parts fit is in
 [`architecture.md`](architecture.md). The analysis behind the 2026-10-04 round of work, and what
 changed against it, is in [`design/analysis-2026-10-04.md`](design/analysis-2026-10-04.md). What
 each published canary added is under [Releases](#releases).
@@ -72,13 +72,19 @@ each published canary added is under [Releases](#releases).
   content version stamped, all in one document write and one undo step. A table placed in an
   earlier session is found again on restore and refreshes the same way, in place: what each
   table shows is kept in the document (`placements/<hash>.json`, written by the save hook), so
-  the table keeps its id and whatever the host formatted. It is replaced when no such record
-  was kept, or when the host changed its rows or columns (a header or footer band, an inserted
-  row): the host reports a table's row count but not where its bands sit, so the workbook's rows
-  cannot be told apart from the host's, and a band does not survive the refresh.
+  the table keeps its id and whatever the host formatted. A header or footer band the host
+  added (`insertHeaderRow`, `insertFooterRow`) is kept: where the engine reports a table's band
+  sizes (`tableHeaderRowCount` / `tableFooterRowCount`, core v0.71.13), the refresh writes the
+  workbook's rows between the bands. The table is replaced when no such record was kept, when
+  the host inserted or deleted rows or columns in the body, or when it added a band on an
+  engine that does not report band sizes: there the workbook's rows cannot be told apart from
+  the host's, and the band does not survive the refresh.
 - **Pagination.** A command threads a range over linked frames, repeats the header rows with
   their formatting in every frame, and re-paginates when a frame is resized, refreshing its own
-  tables rather than adding new ones.
+  tables rather than adding new ones. A resize counts whether it is a `resizeFrame` or a drag of
+  the frame's handles; the second needs a host that reports a gesture's reflow (core v0.71.13
+  through plugin-sdk 0.2.58). On an older host a handle resize leaves the split where it was
+  until the next resize by command or the next workbook edit.
 - **Charts.** Ten kinds, read from the workbook or authored over a range, placed as vector paths
   and labelled text frames in one document write, grouped as one object, and replaced in one
   write when their data changes. Each label frame is sized to its text (measured with the
@@ -143,7 +149,9 @@ each published canary added is under [Releases](#releases).
   line short.
 - **Data bars** are page paths stacked one step under the table's frame: a frame that later had
   another item stacked directly over it gets its bars under that item. Paginated chains and
-  tables rediscovered from an earlier session draw no bars.
+  tables rediscovered from an earlier session draw no bars. Under a header band the host added,
+  the bars are drawn from the table's top, not from the first workbook row: no read reports the
+  band's height.
 - **Rediscovery** finds tables placed by this version; a table placed before the binding
   carried its table record is not found again. Charts and paginated chains are not
   rediscovered.
@@ -184,6 +192,9 @@ leaves the version unchanged publishes nothing; 0.1.0-canary.9 to .12 were never
 
 | Version | Published | Added |
 |---|---|---|
+| 0.1.0-canary.23 | not yet (a merge publishes it) | A range paginated over a frame chain re-splits when a chain frame is resized by its handles, not only by `resizeFrame`, on a host that reports a gesture's reflow (core v0.71.13, plugin-sdk 0.2.58). A stale placed table refreshed in place keeps a header or footer band the host added, on core v0.71.13, which reports band sizes. The real-engine tests move to canvas-wasm 0.71.13 and the contract to 0.2.58-canary.0; peers stay `>=0.2.45-canary.0`. |
+| 0.1.0-canary.22 | 2026-10-16 | A stale placed table refreshes in place, keeping its id and the host's formatting; a reshaped one is replaced, never written into. A new chart lands inside the page's margins. |
+| 0.1.0-canary.21 | 2026-10-16 | A spill saves as Excel's dynamic array and reloads live; a reopen over an unchanged spilled workbook writes nothing; the spill-range operator answers as Excel does. |
 | 0.1.0-canary.20 | 2026-10-13 | No blank line above a placed table on core v0.71.8, which puts the table in the frame's first paragraph, so the frame is sized to the rows alone. The real-engine tests move to canvas-wasm 0.71.8. |
 | 0.1.0-canary.19 | 2026-10-13 | A number literal beyond the double-precision range is a formula error instead of infinity. |
 | 0.1.0-canary.18 | 2026-10-13 | A placed table's frame is sized to the rows the engine lays out, so no row is overset. A placed chart is one grouped object, its labels sized to their text, beside the selection. The registry is read at build time with `serde_norway` instead of `serde_yaml`. |

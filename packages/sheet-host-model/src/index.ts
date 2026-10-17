@@ -182,6 +182,7 @@ export {
 
 export {
   NO_FILL_SWATCH,
+  offsetTableRows,
   tableRefreshOps,
   textOffsetLength,
   type TableRefreshOps,

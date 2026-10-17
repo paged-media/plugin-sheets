@@ -245,6 +245,97 @@ export async function exportedTableCells(h: HeadlessHost): Promise<Map<string, s
   return tables;
 }
 
+/** Each table of the exported document in story order: its `Self` id,
+ *  its row count (`<Row>` elements) and its header and footer bands
+ *  (`HeaderRowCount` / `FooterRowCount`, 0 when absent). */
+export async function exportedTableRows(
+  h: HeadlessHost,
+): Promise<{ self: string; rows: number; header: number; footer: number }[]> {
+  const out: { self: string; rows: number; header: number; footer: number }[] = [];
+  for (const [name, xml] of await exportedIdmlParts(h)) {
+    if (!name.startsWith("Stories/")) continue;
+    for (const t of xml.matchAll(/<Table\b([^>]*)>([\s\S]*?)<\/Table>/g)) {
+      const attr = (n: string) => new RegExp(`\\b${n}="([^"]*)"`).exec(t[1])?.[1];
+      out.push({
+        self: attr("Self") ?? "",
+        rows: [...t[2].matchAll(/<Row\b/g)].length,
+        header: Number(attr("HeaderRowCount") ?? 0),
+        footer: Number(attr("FooterRowCount") ?? 0),
+      });
+    }
+  }
+  return out;
+}
+
+/** Resize `frameId` by one of its handles the way the canvas does: a
+ *  gesture begun, moved by `delta` (pt, snapping off) and committed on the
+ *  engine through the host's client, not a `resizeFrame` mutation. Returns
+ *  the `gestureCommitted` reply. */
+export async function resizeByHandle(
+  h: HeadlessHost,
+  frameId: string,
+  handle: "north" | "south" | "east" | "west",
+  delta: [number, number],
+): Promise<{ kind: string; payload: Record<string, unknown> }> {
+  const client = (h.host as unknown as {
+    editor: {
+      client: {
+        send(m: unknown): Promise<{ kind: string; payload: Record<string, unknown> }>;
+      };
+    };
+  }).editor.client;
+  const begun = await client.send({
+    kind: "beginGesture",
+    payload: {
+      nodes: [{ kind: "textFrame", id: frameId }],
+      gesture: { kind: "resize", handle },
+    },
+  });
+  if (begun.kind !== "gestureBegun") throw new Error(`beginGesture: ${JSON.stringify(begun)}`);
+  const gesture = begun.payload.handle;
+  const moved = await client.send({
+    kind: "updateGesture",
+    payload: { handle: gesture, delta, modifiers: { shift: false, alt: false, disableSnap: true } },
+  });
+  if (moved.kind !== "gestureUpdated") throw new Error(`updateGesture: ${JSON.stringify(moved)}`);
+  const committed = await client.send({ kind: "commitGesture", payload: { handle: gesture } });
+  if (committed.kind !== "gestureCommitted") {
+    throw new Error(`commitGesture: ${JSON.stringify(committed)}`);
+  }
+  return committed;
+}
+
+/** The real host as an engine before core v0.71.13 answers it: a table's
+ *  properties list no header or footer band count. */
+export function withoutBandCounts(host: BundleHost): BundleHost {
+  const raw = host.document;
+  const document = new Proxy(raw, {
+    get(o, p, r) {
+      if (p === "elementProperties") {
+        return async (id: Parameters<typeof raw.elementProperties>[0]) => {
+          const props = await raw.elementProperties(id);
+          if (!props) return props;
+          return {
+            ...props,
+            entries: props.entries.filter(
+              (e) =>
+                (e.path as string) !== "tableHeaderRowCount" &&
+                (e.path as string) !== "tableFooterRowCount",
+            ),
+          };
+        };
+      }
+      return Reflect.get(o, p, r);
+    },
+  });
+  return new Proxy(host, {
+    get(o, p, r) {
+      if (p === "document") return document;
+      return Reflect.get(o, p, r);
+    },
+  });
+}
+
 /** The protocol-66 doors over a 0.64 host, for the Wave 9 scenarios that
  *  drive the 66 path (the pins stay at 0.2.37 until 66 is published):
  *

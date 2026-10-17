@@ -19,7 +19,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { LoweredContent } from "../src";
-import { NO_FILL_SWATCH, tableRefreshOps, textOffsetLength } from "../src";
+import {
+  NO_FILL_SWATCH,
+  cellAlignApplies,
+  cellCharacterStyleApplies,
+  offsetTableRows,
+  tableRefreshOps,
+  textOffsetLength,
+} from "../src";
 
 function content(
   texts: string[][],
@@ -104,5 +111,56 @@ describe("placed-table refresh replaces in place [sheet.lower.page]", () => {
 
   it("measures text offsets in UTF-8 bytes (core's story unit)", () => {
     expect(textOffsetLength("Süd")).toBe(4);
+  });
+
+  it("a host header band moves every row-addressed op below it, and nothing else [sheet.lower.page]", () => {
+    // The workbook's row 0 is the table's row 2 under a two-row band.
+    const prev = content([["Item", "Qty"], ["Pens", "3"]], { fillAt: [1, 1] });
+    const next = content([["Item", "Qty"], ["Pens", "4"], ["Ink", "9"]], { fillAt: [0, 0], height: 20 });
+    const lanes = tableRefreshOps(prev, next, "S", "T", [50, 50], [50, 60]);
+    const styles = [
+      ...cellCharacterStyleApplies(next, "S", "T", { includeDefault: true }),
+      ...cellAlignApplies(next, "S", "T", { includeDefault: true }),
+    ];
+    const ops = [...lanes.structure, ...lanes.text, ...lanes.decor, ...styles];
+    const moved = offsetTableRows(ops, "T", 2);
+    expect(moved).toHaveLength(ops.length);
+    const rowOf = (m: (typeof ops)[number]): number | null => {
+      const a = m.args as Record<string, unknown>;
+      if (m.op === "insertTableRow" || m.op === "deleteTableRow") return a.at as number;
+      if (m.op === "setRowHeight" || m.op === "setCellSpan") return a.row as number;
+      const cell = a.cell as { row: number } | undefined;
+      if (cell) return cell.row;
+      const el = a.elementId as { kind: string; id: { row: number } } | undefined;
+      return el?.kind === "tableCell" ? el.id.row : null;
+    };
+    let rowOps = 0;
+    ops.forEach((op, i) => {
+      const r = rowOf(op);
+      if (r === null) {
+        expect(moved[i]).toEqual(op);
+      } else {
+        rowOps += 1;
+        expect(rowOf(moved[i])).toBe(r + 2);
+        expect({ ...moved[i], args: { ...moved[i].args, at: 0, row: 0, cell: 0, elementId: 0 } })
+          .toEqual({ ...op, args: { ...op.args, at: 0, row: 0, cell: 0, elementId: 0 } });
+      }
+    });
+    // Every lane that names a row is in the fixture: inserts, heights, text,
+    // fills, styles; and the column widths (no row) are left alone.
+    expect(new Set(ops.filter((op) => rowOf(op) !== null).map((op) => op.op))).toEqual(
+      new Set(["insertTableRow", "setRowHeight", "deleteRange", "insertText", "setElementProperty", "applyStyle"]),
+    );
+    expect(rowOps).toBeGreaterThan(0);
+    expect(moved.filter((op) => op.op === "setColumnWidth")).toEqual(
+      ops.filter((op) => op.op === "setColumnWidth"),
+    );
+    // Another table's ops, and a zero offset, are untouched.
+    expect(offsetTableRows(ops, "Other", 2)).toEqual(ops);
+    expect(offsetTableRows(ops, "T", 0)).toEqual(ops);
+    // A batch is walked.
+    expect(offsetTableRows([{ op: "batch", args: { ops } }], "T", 2)).toEqual([
+      { op: "batch", args: { ops: moved } },
+    ]);
   });
 });

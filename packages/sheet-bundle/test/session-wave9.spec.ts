@@ -29,11 +29,13 @@ import {
   blankPageIdml,
   exportedIdmlParts,
   exportedTableCells,
+  exportedTableRows,
   openHost,
   settle,
   sheetHost,
   withDoors66,
   withSceneChannel,
+  withoutBandCounts,
   withoutDoors66,
 } from "./perf/workload";
 
@@ -345,11 +347,8 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
     expect(cells.get("2:1")).toBe("21");
   });
 
-  it("a table whose rows the host changed is replaced, never written into [sheet.plugin.persistence]", async () => {
-    // The host cannot report where a band sits (only the table's row count),
-    // so a refresh by position would pour the workbook into the band.
-    const a = await firstSession();
-    const { storyId, tableId } = await placedTableIds();
+  /** The host adds a header band to the placed table, with text in it. */
+  async function addHeaderBand(storyId: string, tableId: string): Promise<void> {
     const band = await host.document.mutate({
       op: "batch",
       args: {
@@ -360,6 +359,73 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
       },
     } as never);
     expect(band.applied).toBe(true);
+  }
+
+  it("a header band the host added survives a reopen: the body refreshes below it, same table [sheet.plugin.persistence]", async () => {
+    // Core v0.71.13 reports a table's header and footer bands, so the
+    // refresh can tell the host's rows from the workbook's.
+    const a = await firstSession();
+    const { storyId, tableId } = await placedTableIds();
+    await addHeaderBand(storyId, tableId);
+    // The workbook changes, is persisted and the document saved; nothing is
+    // refreshed onto the page in this session.
+    a.editCell(0, 1, 0, "unseen");
+    await a.flushPersist();
+    await a.flushPlacementRecords();
+    a.dispose();
+    const before = await exportedTableRows(h);
+    expect(before).toEqual([{ self: before[0].self, rows: 4, header: 1, footer: 0 }]);
+
+    const b = createWorkbookSession(host);
+    sessions.push(b);
+    expect(await b.restore()).toBe(true);
+    await b.refreshPlacements();
+    await settle();
+    const after = await exportedTableRows(h);
+    expect(after, "the same table, its band kept").toEqual(before);
+    expect((await placedTableIds()).tableId).toBe(tableId);
+    const cells = (await exportedTableCells(h))[0];
+    expect(cells.get("0:0"), "the band's text").toBe("HEAD");
+    // The workbook's rows, one row down ("00" is the number 0).
+    expect([cells.get("1:0"), cells.get("1:1")]).toEqual(["0", "1"]);
+    expect([cells.get("2:0"), cells.get("2:1")]).toEqual(["unseen", "11"]);
+    expect([cells.get("3:0"), cells.get("3:1")]).toEqual(["20", "21"]);
+  });
+
+  it("a header band the host added in this session survives the next refresh [sheet.plugin.persistence]", async () => {
+    const a = await firstSession();
+    const { storyId, tableId } = await placedTableIds();
+    await addHeaderBand(storyId, tableId);
+    a.editCell(0, 0, 0, "first");
+    await a.refreshPlacements();
+    await settle();
+    // A second edit refreshes from the band the first refresh found.
+    a.editCell(0, 2, 1, "later");
+    await a.refreshPlacements();
+    await settle();
+    const tables = await exportedTableRows(h);
+    expect(tables).toHaveLength(1);
+    expect(tables[0]).toMatchObject({ rows: 4, header: 1, footer: 0 });
+    expect((await placedTableIds()).tableId).toBe(tableId);
+    const cells = (await exportedTableCells(h))[0];
+    expect(cells.get("0:0")).toBe("HEAD");
+    expect([cells.get("1:0"), cells.get("1:1")]).toEqual(["first", "1"]);
+    expect([cells.get("2:0"), cells.get("2:1")]).toEqual(["10", "11"]);
+    expect([cells.get("3:0"), cells.get("3:1")]).toEqual(["20", "later"]);
+  });
+
+  it("an engine that reports no bands: a table whose rows the host changed is replaced, never written into [sheet.plugin.persistence]", async () => {
+    // Before core v0.71.13 the host reports a table's row count but not
+    // where a band sits, so a refresh by position would pour the workbook
+    // into the band.
+    const a = createWorkbookSession(withoutBandCounts(host));
+    sessions.push(a);
+    await a.import(await authorWorkbook(3, 2, (r, c) => `${r}${c}`), "p.xlsx");
+    a.setRange("A1:B3");
+    expect(await a.lowerSelection()).not.toBeNull();
+    await settle();
+    const { storyId, tableId } = await placedTableIds();
+    await addHeaderBand(storyId, tableId);
     a.editCell(0, 0, 0, "first");
     await a.refreshPlacements();
     await settle();
@@ -374,6 +440,23 @@ describe.skipIf(!ENGINE_BUILT)("wave 9 — placements from an earlier session", 
       "2:0": "20",
       "2:1": "21",
     });
+  });
+
+  it("a body row the host inserted cannot be located: the table is replaced [sheet.plugin.persistence]", async () => {
+    const a = await firstSession();
+    const { storyId, tableId } = await placedTableIds();
+    const row = await host.document.mutate({
+      op: "insertTableRow",
+      args: { storyId, tableId, at: 1 },
+    } as never);
+    expect(row.applied).toBe(true);
+    a.editCell(0, 0, 0, "first");
+    await a.refreshPlacements();
+    await settle();
+    const tables = await exportedTableRows(h);
+    expect(tables).toHaveLength(1);
+    expect(tables[0]).toMatchObject({ rows: 3, header: 0 });
+    expect((await exportedTableCells(h))[0].get("0:0")).toBe("first");
   });
 
   it("a later session over an unchanged spilled workbook leaves the placed table alone [sheet.calc.spill]", async () => {
