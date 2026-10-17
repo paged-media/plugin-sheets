@@ -517,7 +517,7 @@ fn minimal_xlsx(sheet_data: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default();
         let mut add = |name: &str, body: &str| {
             zip.start_file(name, opts).unwrap();
             zip.write_all(body.as_bytes()).unwrap();

@@ -61,7 +61,7 @@ fn parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         let mut f = zip.by_index(i).unwrap();
         let mut b = Vec::new();
         f.read_to_end(&mut b).unwrap();
-        out.insert(f.name().to_string(), b);
+        out.insert(f.name().unwrap().into_owned(), b);
     }
     out
 }
@@ -76,7 +76,7 @@ fn package(workbook_extra: &str, sheet_data: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default();
         let mut add = |name: &str, body: String| {
             zip.start_file(name, opts).unwrap();
             zip.write_all(body.as_bytes()).unwrap();

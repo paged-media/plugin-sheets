@@ -624,7 +624,7 @@ fn sheet_edit_filter_view_workbook_autofilter_round_trip() {
         let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default();
         for i in 0..zin.len() {
             let mut f = zin.by_index(i).unwrap();
-            let name = f.name().to_string();
+            let name = f.name().unwrap().into_owned();
             let mut data = Vec::new();
             f.read_to_end(&mut data).unwrap();
             if name == "xl/worksheets/sheet1.xml" {

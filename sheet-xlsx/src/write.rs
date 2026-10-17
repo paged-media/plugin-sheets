@@ -62,6 +62,30 @@ use std::io::Write;
 /// The `calcChain.xml` part name (always dropped).
 const CALC_CHAIN_PART: &str = "xl/calcChain.xml";
 
+/// The zip entry options for every part a package is written with.
+///
+/// Each field a zip library could fill in for us is stated, so the same
+/// workbook always saves to the same bytes, on every platform and across
+/// zip upgrades:
+///
+/// - Deflate at level 6 (flate2's default; the backend is pinned in the
+///   root Cargo.toml).
+/// - The DOS timestamp 1980-01-01 00:00:00, never the clock. `default()`
+///   reads the clock when zip's `time` feature is on.
+/// - "Made by" Unix. Since zip 7.2 the default follows the build platform,
+///   so a Windows build would write different headers.
+/// - Mode 0o100644 (a regular file, rw-r--r--) in the external attributes.
+/// - No zip64 extra and no data descriptor (`large_file` off).
+pub fn part_options() -> zip::write::SimpleFileOptions {
+    zip::write::SimpleFileOptions::DEFAULT
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(6))
+        .last_modified_time(zip::DateTime::DEFAULT)
+        .system(zip::System::Unix)
+        .unix_permissions(0o644)
+        .large_file(false)
+}
+
 /// The dynamic-array formulas of a save: `anchors` maps each anchor
 /// `(sheet, row, col)` to its area `(rows, cols)`; `cm` is the cell-metadata
 /// value that marks a formula dynamic (`None` when the package has no such
@@ -105,8 +129,7 @@ pub fn save(
     let buf = Vec::new();
     let cursor = std::io::Cursor::new(buf);
     let mut zip = zip::ZipWriter::new(cursor);
-    let opts: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let opts = part_options();
 
     // Worksheet part name → binding, once (was a scan per dirty sheet).
     let mut by_part: HashMap<&str, &SheetBinding> = HashMap::with_capacity(bindings.len());

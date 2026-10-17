@@ -2752,8 +2752,7 @@ fn empty_workbook_bytes() -> Vec<u8> {
     {
         let cursor = std::io::Cursor::new(&mut buf);
         let mut zip = zip::ZipWriter::new(cursor);
-        let opts: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts = sheet_xlsx::write::part_options();
         let mut add = |name: &str, body: &str| {
             zip.start_file(name, opts).unwrap();
             zip.write_all(body.as_bytes()).unwrap();

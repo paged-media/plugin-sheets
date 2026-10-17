@@ -78,7 +78,7 @@ fn unzip_parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
         if f.is_dir() {
             continue;
         }
-        let name = f.name().to_owned();
+        let name = f.name().unwrap().into_owned();
         let mut data = Vec::new();
         f.read_to_end(&mut data).unwrap();
         out.push((name, data));
@@ -272,14 +272,14 @@ fn sheet_xlsx_pivot_cache_preserved_byte_identical() {
     let mut injected = Vec::new();
     {
         let mut zout = zip::ZipWriter::new(std::io::Cursor::new(&mut injected));
-        let opts: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
         for i in 0..zin.len() {
             let mut f = zin.by_index(i).unwrap();
             if f.is_dir() {
                 continue;
             }
-            let name = f.name().to_string();
+            let name = f.name().unwrap().into_owned();
             let mut data = Vec::new();
             std::io::Read::read_to_end(&mut f, &mut data).unwrap();
             zout.start_file(name, opts).unwrap();
