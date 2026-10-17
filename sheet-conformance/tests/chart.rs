@@ -178,7 +178,7 @@ fn unzip(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
         if f.is_dir() {
             continue;
         }
-        let name = f.name().to_owned();
+        let name = f.name().unwrap().into_owned();
         let mut data = Vec::new();
         f.read_to_end(&mut data).unwrap();
         out.push((name, data));
