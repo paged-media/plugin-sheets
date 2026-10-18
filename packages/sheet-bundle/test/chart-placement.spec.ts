@@ -26,6 +26,7 @@
 import { describe, expect, it } from "vitest";
 
 import { chartBoxOnPage, type ChartPage } from "../src/lower-chart";
+import { selectionIsInView } from "../src/lower";
 
 // A Letter page with 36 pt margins: the margin box is 36..576 × 36..756.
 const LETTER: ChartPage = { width: 612, height: 792, margins: [36, 36, 36, 36] };
@@ -82,5 +83,35 @@ describe("chartBoxOnPage [sheet.chart.engine]", () => {
     const at = chartBoxOnPage(tight, null);
     expect([at.top, at.left]).toEqual([0, 0]);
     expect(at.top + at.height).toBeLessThanOrEqual(300);
+  });
+});
+
+// Which page new content goes to when something is selected: the
+// selection's while it is on the spread in view, the active page's once the
+// view has moved on. The showcase's chart wall lost five of its ten charts
+// to the facing page before this, and a range lowered on page 99 landed
+// on the table selected on page 98.
+describe("selectionIsInView [sheet.chart.engine]", () => {
+  const PAGES = [
+    { selfId: "p11", spreadId: "s6" },
+    { selfId: "p12", spreadId: "s6" },
+    { selfId: "p40", spreadId: "s20" },
+  ];
+
+  it("counts a selection on the active page, or with no active page known", () => {
+    expect(selectionIsInView(PAGES, "p12", "p12")).toBe(true);
+    expect(selectionIsInView(PAGES, "p12", null)).toBe(true);
+  });
+
+  it("counts a selection on the other page of the active spread", () => {
+    expect(selectionIsInView(PAGES, "p11", "p12")).toBe(true);
+  });
+
+  it("does not count a selection on another spread", () => {
+    expect(selectionIsInView(PAGES, "p12", "p40")).toBe(false);
+  });
+
+  it("counts the selection when a page carries no spread to compare", () => {
+    expect(selectionIsInView([{ selfId: "p12" }, { selfId: "p40" }], "p12", "p40")).toBe(true);
   });
 });

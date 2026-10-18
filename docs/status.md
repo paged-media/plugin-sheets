@@ -1,7 +1,7 @@
 # Status
 
 What `paged.sheet` ships and what it does not, read from the code on `main` at
-`@paged-media/sheet` 0.1.0-canary.23 (2026-10-17), with `@paged-media/plugin-api` and
+`@paged-media/sheet` 0.1.0-canary.24 (2026-10-18), with `@paged-media/plugin-api` and
 `@paged-media/plugin-sdk` `>=0.2.45-canary.0` as peers. The tests run against
 `@paged-media/canvas-wasm` 0.71.13 and the 0.2.58-canary.0 contract. How the parts fit is in
 [`architecture.md`](architecture.md). The analysis behind the 2026-10-04 round of work, and what
@@ -192,7 +192,8 @@ leaves the version unchanged publishes nothing; 0.1.0-canary.9 to .12 were never
 
 | Version | Published | Added |
 |---|---|---|
-| 0.1.0-canary.23 | not yet (a merge publishes it) | A range paginated over a frame chain re-splits when a chain frame is resized by its handles, not only by `resizeFrame`, on a host that reports a gesture's reflow (core v0.71.13, plugin-sdk 0.2.58). A stale placed table refreshed in place keeps a header or footer band the host added, on core v0.71.13, which reports band sizes. The real-engine tests move to canvas-wasm 0.71.13 and the contract to 0.2.58-canary.0; peers stay `>=0.2.45-canary.0`. |
+| 0.1.0-canary.24 | not yet (a merge publishes it) | A new chart or lowered range goes beside (or at) the selection only while the selection is on the spread in view; once the view has moved to another spread it goes to the active page, as InDesign places onto the spread in view. Before, a selection anywhere in the document took it there: a chart placed with the last one still selected on the facing spread landed on that spread. |
+| 0.1.0-canary.23 | 2026-10-17 | A range paginated over a frame chain re-splits when a chain frame is resized by its handles, not only by `resizeFrame`, on a host that reports a gesture's reflow (core v0.71.13, plugin-sdk 0.2.58). A stale placed table refreshed in place keeps a header or footer band the host added, on core v0.71.13, which reports band sizes. The real-engine tests move to canvas-wasm 0.71.13 and the contract to 0.2.58-canary.0; peers stay `>=0.2.45-canary.0`. |
 | 0.1.0-canary.22 | 2026-10-16 | A stale placed table refreshes in place, keeping its id and the host's formatting; a reshaped one is replaced, never written into. A new chart lands inside the page's margins. |
 | 0.1.0-canary.21 | 2026-10-16 | A spill saves as Excel's dynamic array and reloads live; a reopen over an unchanged spilled workbook writes nothing; the spill-range operator answers as Excel does. |
 | 0.1.0-canary.20 | 2026-10-13 | No blank line above a placed table on core v0.71.8, which puts the table in the frame's first paragraph, so the frame is sized to the rows alone. The real-engine tests move to canvas-wasm 0.71.8. |
