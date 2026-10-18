@@ -60,6 +60,7 @@ import type {
   Mutation,
   MutationOutcome,
   PageId,
+  PageSummary,
 } from "@paged-media/plugin-api";
 import {
   BINDING_KEY,
@@ -331,20 +332,62 @@ export async function selectionBox(
   };
 }
 
+/** Whether a selection on `selectionPage` still places new content, the
+ *  user being on `activePage`. New content goes where the user is: a
+ *  selection counts while it is on the active page's spread (a spread
+ *  view's other page included), and not once the view has moved to another
+ *  spread. Selected on page 12 and scrolled to page 40, the frame belongs
+ *  on page 40, as InDesign places onto the spread in view; placed beside
+ *  the selection instead, it landed on a page nobody was looking at. With
+ *  no active page known, or no spread to compare, the selection counts. */
+export function selectionIsInView(
+  pages: readonly Pick<PageSummary, "selfId" | "spreadId">[],
+  selectionPage: PageId,
+  activePage: PageId | null,
+): boolean {
+  if (!activePage || activePage === selectionPage) return true;
+  const spreadOf = (id: PageId) => pages.find((p) => p.selfId === id)?.spreadId ?? null;
+  const active = spreadOf(activePage);
+  const selected = spreadOf(selectionPage);
+  if (active === null || selected === null) return true;
+  return active === selected;
+}
+
+/** {@link selectionIsInView}, reading the pages only when the selection is
+ *  on another page than the active one. */
+async function selectionCounts(
+  host: BundleHost,
+  selectionPage: PageId,
+  activePage: PageId | null,
+): Promise<boolean> {
+  if (!activePage || activePage === selectionPage) return true;
+  try {
+    const pages = await host.document.collection<PageSummary>("pages");
+    return selectionIsInView(pages, selectionPage, activePage);
+  } catch {
+    return true;
+  }
+}
+
 /** A placement for `content` at the current selection, or the default one
- *  on the active page when nothing usable is selected. */
+ *  on the active page when nothing usable is selected, or the selection is
+ *  on another spread ({@link selectionIsInView}). */
 export async function placementForContent(
   host: BundleHost,
   content: LoweredContent,
 ): Promise<Placement | null> {
   const at = await selectionAnchor(host);
-  if (at) {
+  const active = (await host.document.meta()).activePage ?? null;
+  if (at && (await selectionCounts(host, at.pageId, active))) {
     const sized = defaultPlacement(at.pageId, content).bounds;
     const h = sized[2] - sized[0];
     const w = sized[3] - sized[1];
     return { pageId: at.pageId, bounds: [at.top, at.left, at.top + h, at.left + w] };
   }
-  const pageId = await activePageId(host);
+  // `meta` is read once: with no active page the first page, as
+  // `activePageId` falls back.
+  const pageId =
+    active ?? (await host.document.collection<{ selfId: string }>("pages"))[0]?.selfId ?? null;
   return pageId ? defaultPlacement(pageId, content) : null;
 }
 

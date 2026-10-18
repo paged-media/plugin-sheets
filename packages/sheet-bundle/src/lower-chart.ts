@@ -52,7 +52,7 @@ import {
 } from "../../sheet-host-model/src";
 
 import type { SheetEngine } from "./engine";
-import { selectionBox, storyIdsSnapshot } from "./lower";
+import { selectionBox, selectionIsInView, storyIdsSnapshot } from "./lower";
 import { doors66, noteMinted, readTreeIds } from "./protocol66";
 import { readKnownSwatchIds } from "./swatch-mints";
 
@@ -219,23 +219,26 @@ export function chartBoxOnPage(
   return { ...at, width, height };
 }
 
-/** Where a chart lands: beside what is selected ({@link chartBoxOnPage}),
+/** Where a chart lands: beside what is selected ({@link chartBoxOnPage})
+ *  while the selection is on the spread in view ({@link selectionIsInView}),
  *  else in the active page's margin box. The bounds carry the chart's size
  *  (shrunk when the page cannot hold {@link CHART_SIZE_PT}). Null with no
  *  page to place on. */
 export async function chartPlacement(
   host: BundleHost,
 ): Promise<{ pageId: PageId; bounds: [number, number, number, number] } | null> {
-  const box = await selectionBox(host);
-  // ONE pages read serves the page to place on and its margins.
+  const selected = await selectionBox(host);
+  // ONE pages read serves the spread check, the page to place on and its
+  // margins.
   let pages: readonly PageSummary[] = [];
   try {
     pages = await host.document.collection<PageSummary>("pages");
   } catch {
     /* no page read: placed as before, without a page to fit */
   }
-  const pageId =
-    box?.pageId ?? (await host.document.meta()).activePage ?? pages[0]?.selfId ?? null;
+  const active = (await host.document.meta()).activePage ?? null;
+  const box = selected && selectionIsInView(pages, selected.pageId, active) ? selected : null;
+  const pageId = box?.pageId ?? active ?? pages[0]?.selfId ?? null;
   if (!pageId) return null;
   let page: ChartPage | null = null;
   {
